@@ -25,15 +25,16 @@ ENV VIRTUAL_ENV=/opt/venv \
     PATH=/opt/venv/bin:$PATH
 RUN python -m venv "$VIRTUAL_ENV"
 
-# Layer 1: API deps. Copied in so the cache invalidates on requirements.txt change.
+# Layer 1: API deps. No --mount=type=cache: Railway's Metal builder requires
+# an id= on every cache mount and we'd rather have a portable Dockerfile than
+# chase that wart. uv is still fast without the cache; only cross-build reuse
+# is lost.
 COPY api/requirements.txt /tmp/req.txt
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install -r /tmp/req.txt
+RUN uv pip install -r /tmp/req.txt
 
 # Layer 2: pipecat deps. Copy the submodule into the image then install.
 COPY pipecat /tmp/pipecat
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install '/tmp/pipecat[cartesia,deepgram,openai,elevenlabs,groq,google,azure,sarvam,soundfile,silero,webrtc,speechmatics,openrouter,camb,mcp]' \
+RUN uv pip install '/tmp/pipecat[cartesia,deepgram,openai,elevenlabs,groq,google,azure,sarvam,soundfile,silero,webrtc,speechmatics,openrouter,camb,mcp]' \
  && uv pip uninstall opencv-python \
  && uv pip install opencv-python-headless \
  && python -c "import nltk; nltk.download('punkt_tab', download_dir='/opt/venv/nltk_data', quiet=True)"
