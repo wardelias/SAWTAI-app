@@ -235,15 +235,15 @@ export function EmbedDialog({
                                     {/* Domain Input */}
                                     <div className="flex gap-2">
                                         <Input
-                                                                                                <code className="text-blue-800 dark:text-blue-200">{`export function SawtAIAgent() {
+                                            placeholder="example.com or *.example.com"
                                             value={newDomain}
                                             onChange={(e) => setNewDomain(e.target.value)}
                                             onKeyPress={handleKeyPress}
                                         />
-        window.SawtAIWidget?.onCallStart(() => {
+                                        <Button
                                             type="button"
                                             size="icon"
-        window.SawtAIWidget?.onCallEnd(() => {
+                                            variant="outline"
                                             onClick={addDomain}
                                             disabled={!newDomain.trim()}
                                         >
@@ -251,11 +251,11 @@ export function EmbedDialog({
                                         </Button>
                                     </div>
 
-            <div id="sawtai-inline-container" className="min-h-[400px]">
+                                    {/* Domain List */}
                                     {domains.length > 0 && (
                                         <div className="space-y-2">
-            <button
-                onClick={() => window.SawtAIWidget?.start()}
+                                            {domains.map((domain, index) => (
+                                                <div
                                                     key={index}
                                                     className="flex items-center justify-between bg-muted/50 rounded-lg px-3 py-2"
                                                 >
@@ -263,7 +263,7 @@ export function EmbedDialog({
                                                     <Button
                                                         type="button"
                                                         size="icon"
-`}</code>
+                                                        variant="ghost"
                                                         className="h-6 w-6"
                                                         onClick={() => removeDomain(domain)}
                                                     >
@@ -450,37 +450,37 @@ export function EmbedDialog({
                                                     Mirror the call status into a variable you control, then render whatever UI you like from it. The status values are <code className="text-xs">idle</code>, <code className="text-xs">connecting</code>, <code className="text-xs">connected</code>, <code className="text-xs">failed</code>.
                                                 </p>
                                                 <pre className="text-xs overflow-x-auto">
-                                                                                                        <code className="text-blue-800 dark:text-blue-200">{`// Vanilla JS — keep your own state, render however you want
+                                                    <code className="text-blue-800 dark:text-blue-200">{`// Vanilla JS — keep your own state, render however you want
 let callStatus = 'idle';
 
 window.SawtAIWidget?.onStatusChange((status) => {
-    callStatus = status;
-    // ...trigger your render here (re-paint DOM, dispatch event, etc.)
+  callStatus = status;
+  // ...trigger your render here (re-paint DOM, dispatch event, etc.)
 });
 
 document.getElementById('talk-btn').addEventListener('click', () => {
-    if (callStatus === 'connected' || callStatus === 'connecting') {
-        window.SawtAIWidget.end();
-    } else {
-        window.SawtAIWidget.start();
-    }
+  if (callStatus === 'connected' || callStatus === 'connecting') {
+    window.SawtAIWidget.end();
+  } else {
+    window.SawtAIWidget.start();
+  }
 });`}</code>
                                                 </pre>
                                                 <p className="text-xs text-blue-900/80 dark:text-blue-100/80 mt-3 mb-2">React:</p>
                                                 <pre className="text-xs overflow-x-auto">
-                                                                                                        <code className="text-blue-800 dark:text-blue-200">{`function TalkButton() {
-    const [status, setStatus] = useState('idle');
+                                                    <code className="text-blue-800 dark:text-blue-200">{`function TalkButton() {
+  const [status, setStatus] = useState('idle');
 
-    useEffect(() => {
-        window.SawtAIWidget?.onStatusChange(setStatus);
-    }, []);
+  useEffect(() => {
+    window.SawtAIWidget?.onStatusChange(setStatus);
+  }, []);
 
-    const isLive = status === 'connected' || status === 'connecting';
-    return (
-        <button onClick={() => isLive ? window.SawtAIWidget.end() : window.SawtAIWidget.start()}>
-            {/* render anything you want from \`status\` */}
-        </button>
-    );
+  const isLive = status === 'connected' || status === 'connecting';
+  return (
+    <button onClick={() => isLive ? window.SawtAIWidget.end() : window.SawtAIWidget.start()}>
+      {/* render anything you want from \`status\` */}
+    </button>
+  );
 }`}</code>
                                                 </pre>
                                             </div>
@@ -503,36 +503,36 @@ document.getElementById('talk-btn').addEventListener('click', () => {
 
                                             <div className="rounded-lg bg-blue-50 dark:bg-blue-950/20 p-4 border border-blue-200 dark:border-blue-800">
                                                 <h4 className="font-medium mb-2 text-blue-900 dark:text-blue-100">Example React Component</h4>
-                                                                                                <pre className="text-xs overflow-x-auto">
-                                                                                                        <code className="text-blue-800 dark:text-blue-200">{`export function SawtAIAgent() {
-    const [isCallActive, setIsCallActive] = useState(false);
+                                                <pre className="text-xs overflow-x-auto">
+                                                    <code className="text-blue-800 dark:text-blue-200">{`export function SawtAIAgent() {
+  const [isCallActive, setIsCallActive] = useState(false);
 
-    useEffect(() => {
-        // Widget will auto-initialize when script loads
-        window.SawtAIWidget?.onCallStart(() => {
-            setIsCallActive(true);
-        });
-        window.SawtAIWidget?.onCallEnd(() => {
-            setIsCallActive(false);
-        });
-    }, []);
+  useEffect(() => {
+    // Widget will auto-initialize when script loads
+    window.SawtAIWidget?.onCallStart(() => {
+      setIsCallActive(true);
+    });
+    window.SawtAIWidget?.onCallEnd(() => {
+      setIsCallActive(false);
+    });
+  }, []);
 
-    return (
-        <div className="my-8">
-            <h2>Talk to Our Agent</h2>
-            <div id="sawtai-inline-container" className="min-h-[400px]">
-                {/* Widget renders here */}
-            </div>
-            <button
-                onClick={() => window.SawtAIWidget?.start()}
-                disabled={isCallActive}
-            >
-                Start Call
-            </button>
-        </div>
-    );
+  return (
+    <div className="my-8">
+      <h2>Talk to Our Agent</h2>
+      <div id="sawtai-inline-container" className="min-h-[400px]">
+        {/* Widget renders here */}
+      </div>
+      <button
+        onClick={() => window.SawtAIWidget?.start()}
+        disabled={isCallActive}
+      >
+        Start Call
+      </button>
+    </div>
+  );
 }`}</code>
-                                                                                                </pre>
+                                                </pre>
                                             </div>
                                         </div>
                                     )}
