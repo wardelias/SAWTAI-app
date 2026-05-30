@@ -90,8 +90,6 @@ COPY --chown=dograh:dograh ./scripts/start_services_docker.sh ./scripts/start_se
 
 COPY --from=ts-deps --chown=dograh:dograh /ts_validator/node_modules ./api/mcp_server/ts_validator/node_modules
 
-COPY --chown=dograh:dograh ./docs ./docs
-
 ENV PYTHONPATH=/app
 
 ENV LOG_TO_FILE=false
