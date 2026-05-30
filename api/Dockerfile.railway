@@ -1,15 +1,14 @@
 # syntax=docker/dockerfile:1
 # Railway-compatible Dockerfile.
 #
-# Mirrors api/Dockerfile but replaces BuildKit bind mounts (--mount=type=bind)
-# with plain COPY, because Railway's Metal builder rejects bind mounts:
-#   "flag '--mount=type=bind,...' is missing a type=cache argument
-#    (other mount types are not supported)"
-#
-# Only --mount=type=cache is allowed on Metal, so we copy sources into the
-# image instead of bind-mounting them at build time.
+# Differences from api/Dockerfile:
+# 1. No --mount=type=bind (Metal builder only allows --mount=type=cache with an id=)
+# 2. No --mount=type=cache (Metal builder requires id= on each; dropped for portability)
+# 3. ts-deps stage removed — Railway's build context drops api/mcp_server/ts_validator
+#    when building non-runner stages. Instead, npm ci runs in the runner stage after
+#    COPY ./api, which reliably includes ts_validator.
 
-# Stage 1: Builder - Install Python dependencies into a venv via uv
+# Stage 1: Builder — install Python dependencies into a venv via uv
 FROM python:3.13-slim AS builder
 
 WORKDIR /app
@@ -25,34 +24,22 @@ ENV VIRTUAL_ENV=/opt/venv \
     PATH=/opt/venv/bin:$PATH
 RUN python -m venv "$VIRTUAL_ENV"
 
-# Layer 1: API deps. No --mount=type=cache: Railway's Metal builder requires
-# an id= on every cache mount and we'd rather have a portable Dockerfile than
-# chase that wart. uv is still fast without the cache; only cross-build reuse
-# is lost.
 COPY api/requirements.txt /tmp/req.txt
 RUN uv pip install -r /tmp/req.txt
 
-# Layer 2: pipecat deps. Copy the submodule into the image then install.
 COPY pipecat /tmp/pipecat
 RUN uv pip install '/tmp/pipecat[cartesia,deepgram,openai,elevenlabs,groq,google,azure,sarvam,soundfile,silero,webrtc,speechmatics,openrouter,camb,mcp]' \
  && uv pip uninstall opencv-python \
  && uv pip install opencv-python-headless \
  && python -c "import nltk; nltk.download('punkt_tab', download_dir='/opt/venv/nltk_data', quiet=True)"
 
-# Strip caches/tests/stubs to keep the venv lean before COPY --from in stage 4.
 RUN find /opt/venv -type f -name '*.pyc' -delete && \
     find /opt/venv -type d -name '__pycache__' -prune -exec rm -rf {} + && \
     find /opt/venv -type f -name '*.pyo' -delete && \
     find /opt/venv -type d \( -name tests -o -name test -o -name examples \) -prune -exec rm -rf {} + && \
     find /opt/venv -name '*.pyi' -delete
 
-# Stage 2: Node deps for ts_validator
-FROM node:22-slim AS ts-deps
-WORKDIR /ts_validator
-COPY api/mcp_server/ts_validator/package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
-
-# Stage 3: Static ffmpeg binary
+# Stage 2: Static ffmpeg binary
 FROM debian:trixie-slim AS ffmpeg-static
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -63,7 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && mv /tmp/ffmpeg/ffmpeg /tmp/ffmpeg/ffprobe /usr/local/bin/ \
     && chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
 
-# Stage 4: Runtime
+# Stage 3: Runtime
 FROM python:3.13-slim AS runner
 
 WORKDIR /app
@@ -75,7 +62,10 @@ RUN groupadd --system dograh \
 COPY --from=ffmpeg-static /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg-static /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 
+# node binary + npm for ts_validator (MCP TypeScript bridge)
 COPY --from=node:22-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:22-slim /usr/local/bin/npm /usr/local/bin/npm
+COPY --from=node:22-slim /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 
 COPY --from=builder /opt/venv /opt/venv
 
@@ -88,7 +78,12 @@ ENV PYTHONUNBUFFERED=1
 COPY --chown=dograh:dograh ./api ./api
 COPY --chown=dograh:dograh ./scripts/start_services_docker.sh ./scripts/start_services_docker.sh
 
-COPY --from=ts-deps --chown=dograh:dograh /ts_validator/node_modules ./api/mcp_server/ts_validator/node_modules
+# Install ts_validator node_modules now that ./api is in the image.
+# Must run as root before USER dograh so npm can write to the directory.
+RUN cd /app/api/mcp_server/ts_validator \
+ && npm ci --omit=dev \
+ && npm cache clean --force \
+ && chown -R dograh:dograh /app/api/mcp_server/ts_validator/node_modules
 
 ENV PYTHONPATH=/app
 
