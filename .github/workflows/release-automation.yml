@@ -1,7 +1,9 @@
 name: Release Please
 
 on:
-  workflow_dispatch:  # disabled: requires RELEASE_PLEASE_TOKEN secret not present in this fork
+  push:
+    branches:
+      - main
 
 permissions:
   contents: write
