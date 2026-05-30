@@ -1,6 +1,6 @@
 /**
- * Dograh Voice Widget
- * Embeddable voice call widget for Dograh workflows
+ * SawtAI Voice Widget
+ * Embeddable voice call widget for SawtAI workflows
  * Version: 1.0.0
  */
 
@@ -50,7 +50,7 @@
     // Get token from script URL
     const script = document.currentScript || document.querySelector('script[src*="dograh-widget.js"]');
     if (!script) {
-      console.error('Dograh Widget: Script not found');
+      console.error('SawtAI Widget: Script not found');
       return;
     }
 
@@ -61,7 +61,7 @@
     const environment = scriptUrl.searchParams.get('environment');
 
     if (!token) {
-      console.error('Dograh Widget: No token found in script URL');
+      console.error('SawtAI Widget: No token found in script URL');
       return;
     }
 
@@ -121,7 +121,7 @@
         autoStart: configData.auto_start || false
       };
     } catch (error) {
-      console.error('Dograh Widget: Failed to fetch configuration', error);
+      console.error('SawtAI Widget: Failed to fetch configuration', error);
       return;
     }
 
@@ -157,7 +157,7 @@
     try {
       return JSON.parse(contextStr);
     } catch (e) {
-      console.warn('Dograh Widget: Invalid context variables', e);
+      console.warn('SawtAI Widget: Invalid context variables', e);
       return {};
     }
   }
@@ -340,8 +340,8 @@
   function createInlineWidget() {
     // Find container element
     const container = document.getElementById(state.config.containerId);
-    if (!container) {
-      console.error(`Dograh Widget: Container element with id "${state.config.containerId}" not found`);
+      if (!container) {
+        console.error(`SawtAI Widget: Container element with id "${state.config.containerId}" not found`);
       if (state.callbacks.onError) {
         state.callbacks.onError(new Error('Container element not found'));
       }
@@ -657,6 +657,7 @@
 
     } catch (error) {
       console.error('Dograh Widget: Failed to start call', error);
+        console.error('SawtAI Widget: Failed to start call', error);
       updateStatus('failed', 'Connection failed', error.message || 'Please check your microphone and try again');
 
       // Trigger error callback
@@ -702,6 +703,7 @@
   async function fetchTurnCredentials() {
     if (!state.sessionToken) {
       console.warn('Dograh Widget: No session token available for TURN credentials');
+        console.warn('SawtAI Widget: No session token available for TURN credentials');
       return;
     }
 
@@ -1032,6 +1034,11 @@
       }
     }
   };
+
+  // Backwards-compatible alias for the new brand name
+  try {
+    window.SawtAIWidget = window.DograhWidget;
+  } catch (e) {}
 
   // Auto-initialize on DOM ready
   if (document.readyState === 'loading') {
