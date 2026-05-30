@@ -20,3 +20,4 @@ def __getattr__(name: str) -> DBClient:
             _db_client = DBClient()
         return _db_client
     raise AttributeError(f"module 'api.db' has no attribute {name!r}")
+
