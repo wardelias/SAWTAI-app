@@ -56,6 +56,7 @@ class UserConfigurationValidator:
             ServiceProviders.GOOGLE_VERTEX_REALTIME.value: self._check_google_vertex_realtime_api_key,
             ServiceProviders.ASSEMBLYAI.value: self._check_assemblyai_api_key,
             ServiceProviders.GLADIA.value: self._check_gladia_api_key,
+            ServiceProviders.SONIOX.value: self._check_soniox_api_key,
             ServiceProviders.RIME.value: self._check_rime_api_key,
             ServiceProviders.MINIMAX.value: self._check_minimax_api_key,
         }
@@ -375,6 +376,11 @@ class UserConfigurationValidator:
         return True
 
     def _check_gladia_api_key(self, model: str, api_key: str) -> bool:
+        return True
+
+    def _check_soniox_api_key(self, model: str, api_key: str) -> bool:
+        # Soniox doesn't expose a cheap key-validation endpoint; trust the key at
+        # save time and surface auth errors at first call (same as Gladia/Rime).
         return True
 
     def _check_rime_api_key(self, model: str, api_key: str) -> bool:

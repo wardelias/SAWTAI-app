@@ -52,6 +52,7 @@ from pipecat.services.sarvam.tts import SarvamTTSService, SarvamTTSSettings
 from pipecat.services.speaches.llm import SpeachesLLMService, SpeachesLLMSettings
 from pipecat.services.speaches.stt import SpeachesSTTService, SpeachesSTTSettings
 from pipecat.services.speaches.tts import SpeachesTTSService, SpeachesTTSSettings
+from pipecat.services.soniox.stt import SonioxSTTService
 from pipecat.services.speechmatics.stt import (
     SpeechmaticsSTTService,
     SpeechmaticsSTTSettings,
@@ -246,6 +247,35 @@ def create_stt_service(
             ),
             sample_rate=audio_config.transport_in_sample_rate,
         )
+    elif user_config.stt.provider == ServiceProviders.SONIOX.value:
+        from pipecat.services.soniox.stt import SonioxContextObject
+
+        # Soniox biases recognition with a list of language *hints* rather than a
+        # single language. "multi" (or unset) means auto-detect across all
+        # supported languages, which is Soniox's default behaviour.
+        language = getattr(user_config.stt, "language", None) or "multi"
+        language_hints = None
+        if language != "multi":
+            try:
+                language_hints = [Language(language)]
+            except ValueError:
+                logger.warning(
+                    f"Unrecognized Soniox language hint '{language}'; falling back to auto-detect"
+                )
+
+        settings_kwargs = {
+            "model": user_config.stt.model,
+            "language_hints": language_hints,
+        }
+        # Forward keyterms as Soniox context terms to boost recognition.
+        if keyterms:
+            settings_kwargs["context"] = SonioxContextObject(terms=keyterms)
+
+        return SonioxSTTService(
+            api_key=user_config.stt.api_key,
+            settings=SonioxSTTService.Settings(**settings_kwargs),
+            sample_rate=audio_config.transport_in_sample_rate,
+        )
     else:
         raise HTTPException(
             status_code=400, detail=f"Invalid STT provider {user_config.stt.provider}"
@@ -343,11 +373,22 @@ def create_tts_service(user_config, audio_config: "AudioConfig"):
         generation_config = (
             GenerationConfig(**gen_config_kwargs) if gen_config_kwargs else None
         )
+        # Map the language string to pipecat's Language enum.
+        # Falls back to Language.EN if unset or unrecognised.
+        language_code = getattr(user_config.tts, "language", None) or "en"
+        try:
+            cartesia_language = Language(language_code)
+        except ValueError:
+            logger.warning(
+                f"Unrecognised Cartesia language '{language_code}', falling back to 'en'"
+            )
+            cartesia_language = Language.EN
         return CartesiaTTSService(
             api_key=user_config.tts.api_key,
             settings=CartesiaTTSSettings(
                 voice=user_config.tts.voice,
                 model=user_config.tts.model,
+                language=cartesia_language,
                 **(
                     {"generation_config": generation_config}
                     if generation_config

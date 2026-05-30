@@ -57,6 +57,7 @@ class ServiceProviders(str, Enum):
     SPEACHES = "speaches"
     ASSEMBLYAI = "assemblyai"
     GLADIA = "gladia"
+    SONIOX = "soniox"
     RIME = "rime"
     MINIMAX = "minimax"
     GOOGLE_VERTEX = "google_vertex"
@@ -81,6 +82,7 @@ class BaseServiceConfiguration(BaseModel):
         ServiceProviders.SPEACHES,
         ServiceProviders.ASSEMBLYAI,
         ServiceProviders.GLADIA,
+        ServiceProviders.SONIOX,
         ServiceProviders.RIME,
         ServiceProviders.MINIMAX,
         ServiceProviders.GOOGLE_VERTEX,
@@ -231,6 +233,11 @@ GOOGLE_CLOUD_PROVIDER_MODEL_CONFIG = provider_model_config("Google Cloud")
 SPEECHMATICS_PROVIDER_MODEL_CONFIG = provider_model_config("Speechmatics")
 ASSEMBLYAI_PROVIDER_MODEL_CONFIG = provider_model_config("AssemblyAI")
 GLADIA_PROVIDER_MODEL_CONFIG = provider_model_config("Gladia")
+SONIOX_PROVIDER_MODEL_CONFIG = provider_model_config(
+    "Soniox",
+    description="Real-time multilingual speech-to-text over WebSocket.",
+    provider_docs_url="https://soniox.com/docs/speech-to-text/api-reference/websocket-api",
+)
 SPEACHES_PROVIDER_MODEL_CONFIG = provider_model_config(
     "Local Models (Speaches)",
     description=(
@@ -824,7 +831,13 @@ class DograhTTSService(BaseTTSConfiguration):
     speed: float = Field(default=1.0, ge=0.5, le=2.0, description="Speed of the voice.")
 
 
-CARTESIA_TTS_MODELS = ["sonic-3"]
+CARTESIA_TTS_MODELS = ["sonic-3", "sonic-3.5"]
+CARTESIA_TTS_LANGUAGES = [
+    "en", "he", "ar", "bg", "bn", "cs", "da", "de", "el", "es",
+    "fi", "fr", "gu", "hi", "hr", "hu", "id", "it", "ja", "kn",
+    "ko", "ml", "mr", "ms", "nl", "no", "pa", "pl", "pt", "ro",
+    "ru", "sk", "sv", "ta", "te", "th", "tl", "tr", "uk", "vi", "zh",
+]
 
 
 @register_tts
@@ -839,6 +852,11 @@ class CartesiaTTSConfiguration(BaseTTSConfiguration):
     voice: str = Field(
         default="3faa81ae-d3d8-4ab1-9e44-e50e46d33c30",
         description="Cartesia voice UUID from your Cartesia dashboard.",
+    )
+    language: str = Field(
+        default="en",
+        description="BCP-47 language code for synthesis. Set to 'he' for Hebrew, 'ar' for Arabic, etc.",
+        json_schema_extra={"examples": CARTESIA_TTS_LANGUAGES},
     )
     speed: float = Field(default=1.0, ge=0.6, le=1.5, description="Speed of the voice.")
     volume: float = Field(
@@ -1227,6 +1245,45 @@ class GladiaSTTConfiguration(BaseSTTConfiguration):
     )
 
 
+SONIOX_STT_MODELS = ["stt-rt-v4"]
+# 'multi' lets Soniox auto-detect across all supported languages (the default).
+# The rest are language hints sent to bias recognition toward a single language.
+SONIOX_STT_LANGUAGES = [
+    "multi",
+    "en",
+    "es",
+    "fr",
+    "de",
+    "it",
+    "pt",
+    "nl",
+    "ar",
+    "hi",
+    "ja",
+    "ko",
+    "zh",
+    "ru",
+    "tr",
+    "uk",
+]
+
+
+@register_stt
+class SonioxSTTConfiguration(BaseSTTConfiguration):
+    model_config = SONIOX_PROVIDER_MODEL_CONFIG
+    provider: Literal[ServiceProviders.SONIOX] = ServiceProviders.SONIOX
+    model: str = Field(
+        default="stt-rt-v4",
+        description="Soniox real-time STT model.",
+        json_schema_extra={"examples": SONIOX_STT_MODELS, "allow_custom_input": True},
+    )
+    language: str = Field(
+        default="multi",
+        description="Language hint; use 'multi' for auto-detect across languages.",
+        json_schema_extra={"examples": SONIOX_STT_LANGUAGES, "allow_custom_input": True},
+    )
+
+
 STTConfig = Annotated[
     Union[
         DeepgramSTTConfiguration,
@@ -1239,6 +1296,7 @@ STTConfig = Annotated[
         SpeachesSTTConfiguration,
         AssemblyAISTTConfiguration,
         GladiaSTTConfiguration,
+        SonioxSTTConfiguration,
     ],
     Field(discriminator="provider"),
 ]
