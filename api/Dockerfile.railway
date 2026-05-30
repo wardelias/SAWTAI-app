@@ -29,9 +29,10 @@ RUN python -m venv "$VIRTUAL_ENV"
 COPY api/requirements.txt /tmp/req.txt
 RUN uv pip install -r /tmp/req.txt
 
-# Pipecat deps (submodule copied into build context)
-COPY pipecat /tmp/pipecat
-RUN uv pip install '/tmp/pipecat[cartesia,deepgram,openai,elevenlabs,groq,google,azure,sarvam,soundfile,silero,webrtc,speechmatics,openrouter,camb,mcp]' \
+# Pipecat deps — install directly from the dograh fork on GitHub so we don't
+# need the git submodule in the build context (Railway doesn't clone submodules).
+RUN uv pip install \
+    'pipecat-ai[cartesia,deepgram,openai,elevenlabs,groq,google,azure,sarvam,soundfile,silero,webrtc,speechmatics,openrouter,camb,mcp] @ git+https://github.com/dograh-hq/pipecat.git@b0ac013a08cf74131a93afc5213af6b4802e5871' \
  && uv pip uninstall opencv-python \
  && uv pip install opencv-python-headless \
  && python -c "import nltk; nltk.download('punkt_tab', download_dir='/opt/venv/nltk_data', quiet=True)"
