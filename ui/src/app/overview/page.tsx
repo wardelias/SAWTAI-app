@@ -2,47 +2,13 @@
 
 import Link from 'next/link';
 
-import { GitHubStarBadge } from '@/components/layout/GitHubStarBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { useAuth } from '@/lib/auth';
 
 export default function OverviewPage() {
-    const { user, provider } = useAuth();
-    const isOSSMode = provider !== 'stack';
-
     return (
         <div className="container mx-auto px-4 py-8">
             <div className="max-w-4xl mx-auto">
-                {/* Welcome Card */}
-                <Card className="mb-8">
-                    <CardHeader>
-                        <CardTitle className="text-3xl">
-                            {isOSSMode ? (
-                                "Welcome to Dograh"
-                            ) : (
-                                `Welcome${user?.displayName ? `, ${user.displayName.split(' ')[0]}` : ''}!`
-                            )}
-                        </CardTitle>
-                        <CardDescription className="text-lg mt-2">
-                            {isOSSMode ? (
-                                <>
-                                    Open source alternative to Vapi. Help us support the project by giving us a star on GitHub.
-                                </>
-                            ) : (
-                                "Get started with building voice AI workflows"
-                            )}
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        {isOSSMode && (
-                            <div className="mb-6">
-                                <GitHubStarBadge label="Star us on GitHub" showCount source="overview_page" />
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
-
                 {/* Quick Actions */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <Card>
@@ -83,7 +49,7 @@ export default function OverviewPage() {
                     <CardHeader>
                         <CardTitle>Resources</CardTitle>
                         <CardDescription>
-                            Get help and learn more about Dograh
+                               Get help and learn more about SawtAI
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
