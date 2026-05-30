@@ -76,7 +76,6 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 COPY --chown=dograh:dograh ./api ./api
-COPY --chown=dograh:dograh ./scripts/start_services_docker.sh ./scripts/start_services_docker.sh
 
 # Install ts_validator node_modules now that ./api is in the image.
 # Must run as root before USER dograh so npm can write to the directory.
@@ -91,6 +90,6 @@ ENV LOG_TO_FILE=false
 
 USER dograh
 
+# PORT is injected by Railway. startCommand in railway.json runs migrations
+# then starts uvicorn on $PORT (falls back to 8000 for non-Railway envs).
 EXPOSE 8000
-
-CMD ["./scripts/start_services_docker.sh"]
