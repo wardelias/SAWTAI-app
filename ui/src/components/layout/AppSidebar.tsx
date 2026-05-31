@@ -16,6 +16,7 @@ import {
   type LucideIcon,
   Megaphone,
   Phone,
+  Target,
   TrendingUp,
   Workflow,
   Wrench,
@@ -87,6 +88,11 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         title: "Campaigns",
         url: "/campaigns",
         icon: Megaphone,
+      },
+      {
+        title: "Marketing",
+        url: "/marketing",
+        icon: Target,
       },
       {
         title: "Models",

@@ -1,7 +1,7 @@
 "use client";
 
 import { formatDistanceToNow } from 'date-fns';
-import { ArrowRight, Clock, Coins, Phone, Timer } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, Clock, Coins, Phone, PhoneOutgoing, RotateCcw, Timer, Voicemail } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
@@ -17,6 +17,34 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
 const RECENT_CALLS_LIMIT = 6;
+const NEEDS_ACTION_LIMIT = 4;
+
+type ActionInfo = {
+    reason: string;
+    cta: string;
+    icon: typeof AlertTriangle;
+};
+
+// Map a run's disposition to a follow-up action. Returns null when the call
+// completed normally and needs no attention.
+function getActionInfo(disposition?: string | null): ActionInfo | null {
+    if (!disposition) return null;
+    const code = disposition.toLowerCase();
+
+    if (code === 'voicemail_detected') {
+        return { reason: 'Reached voicemail', cta: 'Call back', icon: Voicemail };
+    }
+    if (code === 'user_idle_max_duration_exceeded') {
+        return { reason: 'Caller went idle', cta: 'Follow up', icon: PhoneOutgoing };
+    }
+    if (code.includes('error')) {
+        return { reason: 'Call ended with an error', cta: 'Retry', icon: RotateCcw };
+    }
+    if (code === 'unknown') {
+        return { reason: 'Unclear outcome', cta: 'Review', icon: AlertTriangle };
+    }
+    return null;
+}
 
 function formatDuration(seconds: number) {
     const safe = Math.max(0, Math.round(seconds));
@@ -68,6 +96,11 @@ export default function OverviewPage() {
     const avgDuration = totalCalls > 0 ? totalDuration / totalCalls : 0;
     const totalTokens = usage?.total_dograh_tokens ?? 0;
     const recentCalls = usage?.runs.slice(0, RECENT_CALLS_LIMIT) ?? [];
+
+    const needsAction = (usage?.runs ?? [])
+        .map((run) => ({ run, action: getActionInfo(run.disposition) }))
+        .filter((item): item is { run: WorkflowRunUsageResponse; action: ActionInfo } => item.action !== null)
+        .slice(0, NEEDS_ACTION_LIMIT);
 
     const stats: StatCard[] = [
         {
@@ -141,6 +174,84 @@ export default function OverviewPage() {
                         );
                     })}
                 </div>
+
+                {/* Needs you */}
+                <Card className="border-amber-500/40 bg-amber-500/[0.03]">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                        <div className="space-y-1">
+                            <CardTitle className="flex items-center gap-2">
+                                <AlertTriangle className="h-4 w-4 text-amber-500" />
+                                Needs You
+                                {!isLoading && needsAction.length > 0 && (
+                                    <Badge variant="secondary" className="bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                                        {needsAction.length}
+                                    </Badge>
+                                )}
+                            </CardTitle>
+                            <CardDescription>Calls that ended without a clean outcome and may need a follow-up.</CardDescription>
+                        </div>
+                    </CardHeader>
+                    <CardContent>
+                        {isLoading ? (
+                            <div className="space-y-2">
+                                {Array.from({ length: 2 }).map((_, i) => (
+                                    <div key={i} className="h-16 animate-pulse rounded-lg bg-muted" />
+                                ))}
+                            </div>
+                        ) : needsAction.length === 0 ? (
+                            <div className="flex items-center gap-3 rounded-lg border border-dashed border-emerald-500/30 bg-emerald-500/[0.04] p-6 text-sm text-muted-foreground">
+                                <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500" />
+                                All clear — no calls need your attention right now.
+                            </div>
+                        ) : (
+                            <ul className="space-y-2">
+                                {needsAction.map(({ run, action }) => {
+                                    const ActionIcon = action.icon;
+                                    const phone =
+                                        (run.call_type === 'inbound' ? run.caller_number : run.called_number) || null;
+                                    return (
+                                        <li
+                                            key={run.id}
+                                            className="group flex cursor-pointer items-center gap-4 rounded-lg border border-amber-500/20 bg-background/60 px-3 py-3 transition-colors hover:bg-accent/50"
+                                            onClick={() => handleRowClick(run)}
+                                        >
+                                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                                                <ActionIcon className="h-5 w-5" />
+                                            </div>
+
+                                            <div className="min-w-0 flex-1">
+                                                <div className="flex items-center gap-2">
+                                                    <p className="truncate font-medium">{action.reason}</p>
+                                                    <span className="text-xs text-muted-foreground">#{run.id}</span>
+                                                </div>
+                                                <p className="truncate text-sm text-muted-foreground">
+                                                    {(run.workflow_name || 'Unknown agent') + (phone ? ` · ${phone}` : '')}
+                                                </p>
+                                            </div>
+
+                                            <span className="hidden shrink-0 text-xs text-muted-foreground sm:block">
+                                                {formatDistanceToNow(new Date(run.created_at), { addSuffix: true })}
+                                            </span>
+
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                className="shrink-0 border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-300"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleRowClick(run);
+                                                }}
+                                            >
+                                                {action.cta}
+                                                <ArrowRight className="ml-1 h-3.5 w-3.5" />
+                                            </Button>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        )}
+                    </CardContent>
+                </Card>
 
                 {/* Recent calls */}
                 <Card>
