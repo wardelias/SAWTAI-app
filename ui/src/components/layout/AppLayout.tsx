@@ -1,16 +1,87 @@
 "use client";
 
-import { Menu } from "lucide-react";
+import { CircleDollarSign, LogOut, Menu, Settings, User } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import posthog from "posthog-js";
+import { usePathname, useRouter } from "next/navigation";
 import React, { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar";
-import { PostHogEvent } from "@/constants/posthog-events";
+import type { LocalUser } from "@/lib/auth";
+import { useAuth } from "@/lib/auth";
 
 import { AppSidebar } from "./AppSidebar";
+
+function ProfileDropdown() {
+  const router = useRouter();
+  const { provider, user, logout } = useAuth();
+
+  const initials = (
+    user?.displayName ||
+    (user as LocalUser | undefined)?.email ||
+    (user as { primaryEmail?: string })?.primaryEmail ||
+    ""
+  )
+    .split(/[\s@]/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((s: string) => s[0]?.toUpperCase())
+    .join("") || "U";
+
+  const email =
+    (user as LocalUser | undefined)?.email ||
+    (user as { primaryEmail?: string })?.primaryEmail;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-8 w-8 cursor-pointer rounded-full border">
+          <span className="text-xs font-medium">{initials}</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="bottom" align="end" className="w-56">
+        <DropdownMenuLabel className="font-normal">
+          <div className="flex flex-col space-y-1">
+            {user?.displayName && (
+              <p className="text-sm font-medium">{user.displayName}</p>
+            )}
+            {email && (
+              <p className="text-xs text-muted-foreground">{email}</p>
+            )}
+          </div>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {provider === "stack" && (
+          <DropdownMenuItem onClick={() => router.push("/handler/account-settings")} className="cursor-pointer">
+            <User className="mr-2 h-4 w-4" />
+            Account settings
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem onClick={() => router.push("/settings")} className="cursor-pointer">
+          <Settings className="mr-2 h-4 w-4" />
+          Platform Settings
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => router.push("/usage")} className="cursor-pointer">
+          <CircleDollarSign className="mr-2 h-4 w-4" />
+          Usage
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => logout()} className="cursor-pointer text-destructive focus:text-destructive">
+          <LogOut className="mr-2 h-4 w-4" />
+          Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 function AppHeader() {
   const { toggleSidebar } = useSidebar();
@@ -24,20 +95,7 @@ function AppHeader() {
         <Link href="/" className="text-lg font-bold md:hidden">SawtAI</Link>
       </div>
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="sm" asChild>
-          <a
-            href="https://join.slack.com/t/dograh-community/shared_invite/zt-3czr47sw5-MSg1J0kJ7IMPOCHF~03auQ"
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => posthog.capture(PostHogEvent.SLACK_COMMUNITY_CLICKED, { source: "app_header" })}
-            className="flex items-center gap-2"
-          >
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zm1.271 0a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zm0 1.271a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zm10.122 2.521a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zm-1.268 0a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zm-2.523 10.122a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zm0-1.268a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z" />
-            </svg>
-            <span className="hidden sm:inline">Join Slack</span>
-          </a>
-        </Button>
+        <ProfileDropdown />
       </div>
     </header>
   );
