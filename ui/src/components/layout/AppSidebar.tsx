@@ -74,6 +74,11 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         url: "/calendar",
         icon: CalendarDays,
       },
+      {
+        title: "Marketing",
+        url: "/marketing",
+        icon: Target,
+      },
     ],
   },
   {
@@ -88,11 +93,6 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         title: "Campaigns",
         url: "/campaigns",
         icon: Megaphone,
-      },
-      {
-        title: "Marketing",
-        url: "/marketing",
-        icon: Target,
       },
       {
         title: "Models",
