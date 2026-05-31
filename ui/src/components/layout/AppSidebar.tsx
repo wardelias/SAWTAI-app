@@ -6,6 +6,7 @@ import {
   ArrowUpCircle,
   AudioLines,
   Brain,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
   Database,
@@ -20,7 +21,7 @@ import {
   Wrench,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import React, { useRef } from "react";
 
 import ThemeToggle from "@/components/ThemeSwitcher";
@@ -66,6 +67,11 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         title: "Overview",
         url: "/overview",
         icon: Home,
+      },
+      {
+        title: "Calendar",
+        url: "/calendar",
+        icon: CalendarDays,
       },
     ],
   },
