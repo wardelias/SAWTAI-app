@@ -1,6 +1,6 @@
 "use client";
 
-import { CircleDollarSign, LogOut, Menu, Settings, User } from "lucide-react";
+import { AlertTriangle, CircleDollarSign, LogOut, Menu, RefreshCw, Settings, User } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import React, { ReactNode } from "react";
@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar";
+import { useAppConfig } from "@/context/AppConfigContext";
 import type { LocalUser } from "@/lib/auth";
 import { useAuth } from "@/lib/auth";
 
@@ -101,6 +102,46 @@ function AppHeader() {
   );
 }
 
+function BackendStatusBanner() {
+  const { config, loading, refresh } = useAppConfig();
+
+  if (!config || config.backendStatus === "reachable") {
+    return null;
+  }
+
+  const backendUrl = config.backendUrl && config.backendUrl !== "unknown"
+    ? config.backendUrl
+    : "the configured backend";
+  const message = config.backendMessage || `Backend is not reachable at ${backendUrl}.`;
+
+  return (
+    <div
+      role="alert"
+      className="border-b border-amber-300 bg-amber-50 px-4 py-3 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100"
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">Backend connection failed</p>
+            <p className="break-words text-sm">{message}</p>
+          </div>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void refresh()}
+          disabled={loading}
+          className="h-8 shrink-0 border-amber-400 bg-transparent text-amber-950 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-100 dark:hover:bg-amber-900/40"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Retry
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 interface AppLayoutProps {
   children: ReactNode;
   headerActions?: ReactNode;
@@ -129,6 +170,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
         <div className="flex min-h-screen w-full">
           <AppSidebar />
           <SidebarInset className="flex-1">
+            <BackendStatusBanner />
             {!isWorkflowEditor && <AppHeader />}
             {/* Optional header area for specific pages */}
             {headerActions && (
@@ -160,6 +202,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
         </div>
       ) : (
         <div className="flex-1 w-full">
+          <BackendStatusBanner />
           {children}
         </div>
       )}
