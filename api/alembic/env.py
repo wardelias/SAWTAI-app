@@ -98,6 +98,9 @@ async def run_migrations_online():
     connectable = create_async_engine(
         get_url(),
         poolclass=pool.NullPool,
+        # Hard timeout so alembic fails fast with a real error instead of
+        # hanging forever when asyncpg can't complete the connection handshake.
+        connect_args={"timeout": 30},
     )
 
     async with connectable.connect() as connection:

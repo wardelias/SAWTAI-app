@@ -1,23 +1,21 @@
-from api.db.db_client import DBClient
+from __future__ import annotations
 
-# Lazy singleton — only instantiated on first access, not at import time.
+# Fully lazy — neither DBClient nor any of its 20 imported client modules
+# are imported at package-load time. This means `from api.db.models import Base`
+# (used by alembic/env.py) no longer triggers any DB connection code.
 #
-# Previously this was `db_client = DBClient()` at module level, which meant
-# importing *any* symbol from the api.db package (including `api.db.models.Base`
-# in alembic/env.py) would immediately open a DB connection. On Railway this
-# causes alembic to hang silently before migrations even start because the
-# connection attempt blocks on the DB being ready.
-#
-# With __getattr__, `from api.db import db_client` still works everywhere in
-# the app, but the connection is deferred until the first actual access.
-_db_client: DBClient | None = None
+# `from api.db import db_client` still works everywhere in the app — Python
+# calls __getattr__ when the name isn't found in the module dict, which imports
+# DBClient and instantiates it on first access only.
+
+_db_client = None
 
 
-def __getattr__(name: str) -> DBClient:
+def __getattr__(name: str):  # noqa: ANN202
     global _db_client
     if name == "db_client":
         if _db_client is None:
+            from api.db.db_client import DBClient  # deferred import
             _db_client = DBClient()
         return _db_client
     raise AttributeError(f"module 'api.db' has no attribute {name!r}")
-
