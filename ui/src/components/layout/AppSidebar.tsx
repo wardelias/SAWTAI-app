@@ -75,6 +75,11 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         icon: CalendarDays,
       },
       {
+        title: "Campaigns",
+        url: "/campaigns",
+        icon: Megaphone,
+      },
+      {
         title: "Marketing",
         url: "/marketing",
         icon: Target,
@@ -88,11 +93,6 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         title: "Voice Agents",
         url: "/workflow",
         icon: Workflow,
-      },
-      {
-        title: "Campaigns",
-        url: "/campaigns",
-        icon: Megaphone,
       },
       {
         title: "Models",
