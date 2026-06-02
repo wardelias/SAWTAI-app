@@ -150,8 +150,20 @@ class CustomToolManager:
             schemas: list[FunctionSchema] = []
             for tool in tools:
                 if tool.category == ToolCategory.CALCULATOR.value:
-                    # Built-in calculator: return pre-defined schemas
                     for tool_def in get_calculator_tools():
+                        func = tool_def["function"]
+                        schemas.append(
+                            get_function_schema(
+                                func["name"],
+                                func["description"],
+                                properties=func["parameters"]["properties"],
+                                required=func["parameters"]["required"],
+                            )
+                        )
+                    continue
+
+                if tool.category == ToolCategory.BOOK_MEETING.value:
+                    for tool_def in get_book_meeting_tools():
                         func = tool_def["function"]
                         schemas.append(
                             get_function_schema(
@@ -197,19 +209,6 @@ class CustomToolManager:
                 f"Loaded {len(schemas)} custom tools for node: "
                 f"{[s.name for s in schemas]}"
             )
-
-            # Always inject the built-in book_meeting tool for every agent.
-            for tool_def in get_book_meeting_tools():
-                func = tool_def["function"]
-                schemas.append(
-                    get_function_schema(
-                        func["name"],
-                        func["description"],
-                        properties=func["parameters"]["properties"],
-                        required=func["parameters"]["required"],
-                    )
-                )
-
             return schemas
 
         except Exception as e:
@@ -242,10 +241,12 @@ class CustomToolManager:
             for tool in tools:
                 if tool.category == ToolCategory.CALCULATOR.value:
                     self._register_calculator_handler()
-                    logger.debug(
-                        f"Registered calculator tool handler "
-                        f"(tool_uuid: {tool.tool_uuid})"
-                    )
+                    logger.debug(f"Registered calculator handler (tool_uuid: {tool.tool_uuid})")
+                    continue
+
+                if tool.category == ToolCategory.BOOK_MEETING.value:
+                    self._register_book_meeting_handler()
+                    logger.debug(f"Registered book_meeting handler (tool_uuid: {tool.tool_uuid})")
                     continue
 
                 if tool.category == ToolCategory.MCP.value:
@@ -290,16 +291,13 @@ class CustomToolManager:
                     f"(tool_uuid: {tool.tool_uuid})"
                 )
 
-            # Always register the built-in book_meeting handler.
-            self._register_book_meeting_handler()
-
         except Exception as e:
             logger.error(f"Failed to register custom tool handlers: {e}")
 
     def _register_book_meeting_handler(self) -> None:
-        """Register the built-in book_meeting function with the LLM.
+        """Register the book_meeting function handler with the LLM.
 
-        Always injected — no per-workflow configuration needed.
+        Called when a node has the book_meeting tool in its tool_uuids.
         Creates a meeting in the org's calendar linked to the current run.
         """
         engine = self._engine
