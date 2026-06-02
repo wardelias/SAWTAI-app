@@ -135,6 +135,7 @@ class ToolCategory(Enum):
     NATIVE = "native"  # Built-in integrations (future: dtmf_input)
     INTEGRATION = "integration"  # Third-party integrations (future: Google Calendar, Salesforce, etc.)
     MCP = "mcp"  # Customer-provided MCP server exposing a tool catalog
+    BOOK_MEETING = "book_meeting"  # Built-in: book a calendar meeting during a call
 
 
 class ToolStatus(Enum):

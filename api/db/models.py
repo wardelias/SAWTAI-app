@@ -1296,3 +1296,32 @@ class KnowledgeBaseChunkModel(Base):
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
     )
+
+
+class MeetingModel(Base):
+    __tablename__ = "meetings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
+    )
+    title = Column(String, nullable=False)
+    attendee = Column(String, nullable=False)
+    phone = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)
+    start_time = Column(DateTime(timezone=True), nullable=False)
+    duration_minutes = Column(Integer, nullable=False, default=30)
+    booked_by = Column(
+        String, nullable=False, default="user"
+    )  # "agent" | "user"
+    workflow_run_id = Column(
+        Integer, ForeignKey("workflow_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+    organization = relationship("OrganizationModel")
+
+    __table_args__ = (
+        Index("ix_meetings_organization_id", "organization_id"),
+        Index("ix_meetings_start_time", "start_time"),
+    )
