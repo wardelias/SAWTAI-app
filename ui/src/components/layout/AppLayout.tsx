@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import React, { ReactNode } from "react";
 
+import { SawtLogo } from "@/components/SawtLogo";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -93,7 +94,9 @@ function AppHeader() {
         <Button variant="ghost" size="icon" onClick={toggleSidebar} aria-label="Open menu" className="md:hidden">
           <Menu className="h-5 w-5" />
         </Button>
-        <Link href="/" className="text-lg font-bold md:hidden">SawtAI</Link>
+        <Link href="/" className="md:hidden" aria-label="SawtAI">
+          <SawtLogo className="h-9 w-auto" />
+        </Link>
       </div>
       <div className="flex items-center gap-3">
         <ProfileDropdown />

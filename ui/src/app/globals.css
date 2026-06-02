@@ -135,3 +135,29 @@
 .animate-spin-slow {
   animation: spin-slow 3s linear infinite;
 }
+
+.sawt-logo__bar {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.sawt-logo--animating .sawt-logo__bar {
+  animation: sawt-eq 0.5s ease-in-out infinite;
+  animation-delay: calc(var(--sawt-i) * -0.035s);
+}
+
+@keyframes sawt-eq {
+  0%,
+  100% {
+    transform: scaleY(0.62);
+  }
+  50% {
+    transform: scaleY(1.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sawt-logo--animating .sawt-logo__bar {
+    animation: none;
+  }
+}
