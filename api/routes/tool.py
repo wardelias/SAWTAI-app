@@ -118,7 +118,10 @@ async def list_tools(
     if category:
         validate_category(category)
 
-    await _ensure_book_meeting_tool(user.selected_organization_id)
+    try:
+        await _ensure_book_meeting_tool(user.selected_organization_id)
+    except Exception:
+        pass  # never break listing if seed fails
 
     tools = await db_client.get_tools_for_organization(
         user.selected_organization_id,
