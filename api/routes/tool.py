@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from api.db import db_client
 from api.db.models import UserModel
 from api.enums import ToolCategory, ToolStatus
+from api.services.workflow.tools.book_meeting import BOOK_MEETING_DEFINITION
 from api.schemas.tool import (
     CalculatorToolDefinition,
     CreatedByResponse,
@@ -117,6 +118,8 @@ async def list_tools(
     if category:
         validate_category(category)
 
+    await _ensure_book_meeting_tool(user.selected_organization_id)
+
     tools = await db_client.get_tools_for_organization(
         user.selected_organization_id,
         status=status,
@@ -124,6 +127,32 @@ async def list_tools(
     )
 
     return [build_tool_response(tool) for tool in tools]
+
+
+async def _ensure_book_meeting_tool(organization_id: int) -> None:
+    """Seed the built-in book_meeting tool for an org if it doesn't exist yet.
+
+    Called on every list_tools request so existing orgs get it automatically
+    without requiring a data migration.
+    """
+    existing = await db_client.get_tools_for_organization(
+        organization_id,
+        category=ToolCategory.BOOK_MEETING.value,
+        status=ToolStatus.ACTIVE.value,
+    )
+    if existing:
+        return
+
+    await db_client.create_tool(
+        organization_id=organization_id,
+        user_id=None,  # system-seeded; created_by is nullable
+        name="Book Meeting",
+        description="Book a calendar meeting on the caller's behalf during a live call.",
+        category=ToolCategory.BOOK_MEETING.value,
+        definition=BOOK_MEETING_DEFINITION,
+        icon="calendar",
+        icon_color="#6366f1",
+    )
 
 
 @router.post(

@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, CheckCircle2, ExternalLink, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
+import { ExternalLink, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -311,43 +311,6 @@ export default function ToolsPage() {
                             {error}
                         </div>
                     )}
-
-                    {/* Built-in system tools — always available, no configuration needed */}
-                    <Card className="mb-6 border-primary/20 bg-primary/[0.02]">
-                        <CardHeader>
-                            <div>
-                                <CardTitle className="flex items-center gap-2 text-base">
-                                    <CheckCircle2 className="h-4 w-4 text-primary" />
-                                    Built-in Tools
-                                </CardTitle>
-                                <CardDescription>
-                                    These tools are automatically available to every voice agent — no setup required.
-                                </CardDescription>
-                            </div>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="flex items-start gap-4 rounded-lg border border-primary/15 bg-background/60 p-4">
-                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                                    <CalendarDays className="h-5 w-5" />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <p className="font-medium">Book Meeting</p>
-                                        <Badge className="bg-primary/10 text-primary hover:bg-primary/10 text-[10px] uppercase tracking-wide">
-                                            Always on
-                                        </Badge>
-                                    </div>
-                                    <p className="text-sm text-muted-foreground mt-0.5">
-                                        Lets the agent book a calendar meeting on the caller&apos;s behalf during a live call.
-                                        Confirms the date, time, and purpose with the caller, then creates the meeting in your Calendar.
-                                    </p>
-                                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                                        <span><span className="font-mono bg-muted rounded px-1">title</span> · <span className="font-mono bg-muted rounded px-1">attendee_name</span> · <span className="font-mono bg-muted rounded px-1">date</span> · <span className="font-mono bg-muted rounded px-1">time</span> · <span className="font-mono bg-muted rounded px-1">duration_minutes</span> · <span className="font-mono bg-muted rounded px-1">notes</span></span>
-                                    </div>
-                                </div>
-                            </div>
-                        </CardContent>
-                    </Card>
 
                     <Card className="mb-6">
                         <CardHeader>
