@@ -138,11 +138,21 @@ async def _ensure_book_meeting_tool(organization_id: int) -> None:
     Called on every list_tools request so existing orgs get it automatically
     without requiring a data migration.
     """
+    # Check ALL statuses — if a book_meeting tool exists in any state don't seed again.
     existing = await db_client.get_tools_for_organization(
         organization_id,
         category=ToolCategory.BOOK_MEETING.value,
-        status=ToolStatus.ACTIVE.value,
+        status="active,archived,draft",
     )
+
+    # Clean up any duplicates created before the idempotency fix.
+    if len(existing) > 1:
+        # Keep the most recently created one, archive the rest silently.
+        keep = max(existing, key=lambda t: t.id)
+        for dupe in existing:
+            if dupe.id != keep.id:
+                await db_client.archive_tool(dupe.tool_uuid, organization_id)
+
     if existing:
         return
 
