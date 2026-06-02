@@ -27,6 +27,7 @@ from api.services.pipecat.audio_playback import play_audio, play_audio_loop
 from api.services.telephony.call_transfer_manager import get_call_transfer_manager
 from api.services.telephony.factory import get_telephony_provider_for_run
 from api.services.telephony.transfer_event_protocol import TransferContext
+from api.services.workflow.tools.book_meeting import get_book_meeting_tools
 from api.services.workflow.tools.calculator import get_calculator_tools, safe_calculator
 from api.services.workflow.tools.custom_tool import (
     execute_http_tool,
@@ -196,6 +197,19 @@ class CustomToolManager:
                 f"Loaded {len(schemas)} custom tools for node: "
                 f"{[s.name for s in schemas]}"
             )
+
+            # Always inject the built-in book_meeting tool for every agent.
+            for tool_def in get_book_meeting_tools():
+                func = tool_def["function"]
+                schemas.append(
+                    get_function_schema(
+                        func["name"],
+                        func["description"],
+                        properties=func["parameters"]["properties"],
+                        required=func["parameters"]["required"],
+                    )
+                )
+
             return schemas
 
         except Exception as e:
@@ -276,8 +290,85 @@ class CustomToolManager:
                     f"(tool_uuid: {tool.tool_uuid})"
                 )
 
+            # Always register the built-in book_meeting handler.
+            self._register_book_meeting_handler()
+
         except Exception as e:
             logger.error(f"Failed to register custom tool handlers: {e}")
+
+    def _register_book_meeting_handler(self) -> None:
+        """Register the built-in book_meeting function with the LLM.
+
+        Always injected — no per-workflow configuration needed.
+        Creates a meeting in the org's calendar linked to the current run.
+        """
+        engine = self._engine
+
+        async def book_meeting_func(function_call_params: FunctionCallParams) -> None:
+            logger.info("LLM Function Call EXECUTED: book_meeting")
+            args = function_call_params.arguments
+            try:
+                organization_id = await engine._get_organization_id()
+                if not organization_id:
+                    await function_call_params.result_callback(
+                        {"error": "Cannot book meeting: organization not found."}
+                    )
+                    return
+
+                # Build the start datetime from date + time args.
+                from datetime import datetime, timezone
+                date_str = args.get("date", "")
+                time_str = args.get("time", "00:00")
+                try:
+                    start_time = datetime.strptime(
+                        f"{date_str} {time_str}", "%Y-%m-%d %H:%M"
+                    ).replace(tzinfo=timezone.utc)
+                except ValueError:
+                    await function_call_params.result_callback(
+                        {"error": f"Invalid date/time format: '{date_str} {time_str}'. Use YYYY-MM-DD and HH:MM."}
+                    )
+                    return
+
+                attendee = args.get("attendee_name", "Unknown caller")
+                # Enrich attendee with caller phone if available.
+                caller_phone = engine._call_context_vars.get("caller_number")
+                if caller_phone and caller_phone not in attendee:
+                    attendee = f"{attendee} ({caller_phone})"
+
+                meeting = await db_client.create_meeting(
+                    organization_id=organization_id,
+                    title=args.get("title", "Meeting"),
+                    attendee=attendee,
+                    start_time=start_time,
+                    duration_minutes=int(args.get("duration_minutes", 30)),
+                    phone=caller_phone,
+                    notes=args.get("notes"),
+                    booked_by="agent",
+                    workflow_run_id=engine._workflow_run_id,
+                )
+
+                logger.info(
+                    f"Meeting booked: id={meeting.id} org={organization_id} "
+                    f"run={engine._workflow_run_id} start={start_time}"
+                )
+                await function_call_params.result_callback(
+                    {
+                        "success": True,
+                        "meeting_id": meeting.id,
+                        "title": meeting.title,
+                        "start_time": meeting.start_time.isoformat(),
+                        "duration_minutes": meeting.duration_minutes,
+                        "attendee": meeting.attendee,
+                    }
+                )
+            except Exception as exc:
+                logger.error(f"book_meeting tool error: {exc}")
+                await function_call_params.result_callback(
+                    {"error": f"Failed to book meeting: {exc}"}
+                )
+
+        engine.llm.register_function("book_meeting", book_meeting_func)
+        logger.debug("Registered built-in book_meeting handler")
 
     def _create_handler(self, tool: Any, function_name: str):
         """Create a handler function for a tool based on its category.
