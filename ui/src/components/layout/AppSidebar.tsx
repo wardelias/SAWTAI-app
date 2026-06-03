@@ -65,7 +65,7 @@ import { useAppConfig } from "@/context/AppConfigContext";
 import { useTelephonyConfigWarnings } from "@/context/TelephonyConfigWarningsContext";
 import { useUserConfig } from "@/context/UserConfigContext";
 import { useLatestReleaseVersion } from "@/hooks/useLatestReleaseVersion";
-import { useAuth, type LocalUser } from "@/lib/auth";
+import { type LocalUser,useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 type SidebarNavItem = {
