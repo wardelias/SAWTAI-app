@@ -1,105 +1,29 @@
 "use client";
 
-import { AlertTriangle, CircleDollarSign, LogOut, Menu, RefreshCw, Settings, User } from "lucide-react";
+import { AlertTriangle, Menu, RefreshCw } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import React, { ReactNode } from "react";
 
 import { SawtLogo } from "@/components/SawtLogo";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar";
 import { useAppConfig } from "@/context/AppConfigContext";
-import type { LocalUser } from "@/lib/auth";
-import { useAuth } from "@/lib/auth";
 
 import { AppSidebar } from "./AppSidebar";
-
-function ProfileDropdown() {
-  const router = useRouter();
-  const { provider, user, logout } = useAuth();
-
-  const initials = (
-    user?.displayName ||
-    (user as LocalUser | undefined)?.email ||
-    (user as { primaryEmail?: string })?.primaryEmail ||
-    ""
-  )
-    .split(/[\s@]/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((s: string) => s[0]?.toUpperCase())
-    .join("") || "U";
-
-  const email =
-    (user as LocalUser | undefined)?.email ||
-    (user as { primaryEmail?: string })?.primaryEmail;
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-8 w-8 cursor-pointer rounded-full border">
-          <span className="text-xs font-medium">{initials}</span>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent side="bottom" align="end" className="w-56">
-        <DropdownMenuLabel className="font-normal">
-          <div className="flex flex-col space-y-1">
-            {user?.displayName && (
-              <p className="text-sm font-medium">{user.displayName}</p>
-            )}
-            {email && (
-              <p className="text-xs text-muted-foreground">{email}</p>
-            )}
-          </div>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {provider === "stack" && (
-          <DropdownMenuItem onClick={() => router.push("/handler/account-settings")} className="cursor-pointer">
-            <User className="mr-2 h-4 w-4" />
-            Account settings
-          </DropdownMenuItem>
-        )}
-        <DropdownMenuItem onClick={() => router.push("/settings")} className="cursor-pointer">
-          <Settings className="mr-2 h-4 w-4" />
-          Platform Settings
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => router.push("/usage")} className="cursor-pointer">
-          <CircleDollarSign className="mr-2 h-4 w-4" />
-          Usage
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => logout()} className="cursor-pointer text-destructive focus:text-destructive">
-          <LogOut className="mr-2 h-4 w-4" />
-          Sign out
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
 
 function AppHeader() {
   const { toggleSidebar } = useSidebar();
 
   return (
-    <header className="sticky top-0 z-50 flex items-center justify-between border-b bg-background px-4 py-2">
+    <header className="sticky top-0 z-50 flex items-center justify-between border-b bg-background px-4 py-2 md:hidden">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={toggleSidebar} aria-label="Open menu" className="md:hidden">
+        <Button variant="ghost" size="icon" onClick={toggleSidebar} aria-label="Open menu">
           <Menu className="h-5 w-5" />
         </Button>
-        <Link href="/" className="md:hidden" aria-label="SawtAI">
+        <Link href="/" aria-label="SawtAI">
           <SawtLogo className="h-9 w-auto" />
         </Link>
-      </div>
-      <div className="flex items-center gap-3">
-        <ProfileDropdown />
       </div>
     </header>
   );
