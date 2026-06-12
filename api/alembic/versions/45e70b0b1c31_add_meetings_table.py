@@ -28,7 +28,9 @@ def upgrade() -> None:
         sa.Column("phone", sa.String(), nullable=True),
         sa.Column("notes", sa.Text(), nullable=True),
         sa.Column("start_time", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("duration_minutes", sa.Integer(), nullable=False, server_default="30"),
+        sa.Column(
+            "duration_minutes", sa.Integer(), nullable=False, server_default="30"
+        ),
         sa.Column("booked_by", sa.String(), nullable=False, server_default="user"),
         sa.Column("workflow_run_id", sa.Integer(), nullable=True),
         sa.Column(

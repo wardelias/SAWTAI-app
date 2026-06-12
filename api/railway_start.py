@@ -4,6 +4,7 @@ Replaces the shell &&-chain in railway.json startCommand. Python handles
 everything so there are no shell quoting issues, stderr is merged with
 stdout, and errors are always visible in Railway Deploy Logs.
 """
+
 import os
 import subprocess
 import sys
@@ -28,10 +29,15 @@ for var in ("DATABASE_URL", "REDIS_URL", "OSS_JWT_SECRET"):
     # Print host only (no passwords)
     if var == "DATABASE_URL":
         from urllib.parse import urlparse
+
         p = urlparse(val)
-        print(f"[start] DATABASE_URL host={p.hostname} port={p.port} db={p.path.lstrip('/')}", flush=True)
+        print(
+            f"[start] DATABASE_URL host={p.hostname} port={p.port} db={p.path.lstrip('/')}",
+            flush=True,
+        )
     elif var == "REDIS_URL":
         from urllib.parse import urlparse
+
         p = urlparse(val)
         print(f"[start] REDIS_URL host={p.hostname} port={p.port}", flush=True)
     else:

@@ -7,7 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from api.db import db_client
 from api.db.models import UserModel
-from api.schemas.meeting import CreateMeetingRequest, MeetingListResponse, MeetingResponse
+from api.schemas.meeting import (
+    CreateMeetingRequest,
+    MeetingListResponse,
+    MeetingResponse,
+)
 from api.services.auth.depends import get_user
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])

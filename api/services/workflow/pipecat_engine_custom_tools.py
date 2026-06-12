@@ -241,12 +241,16 @@ class CustomToolManager:
             for tool in tools:
                 if tool.category == ToolCategory.CALCULATOR.value:
                     self._register_calculator_handler()
-                    logger.debug(f"Registered calculator handler (tool_uuid: {tool.tool_uuid})")
+                    logger.debug(
+                        f"Registered calculator handler (tool_uuid: {tool.tool_uuid})"
+                    )
                     continue
 
                 if tool.category == ToolCategory.BOOK_MEETING.value:
                     self._register_book_meeting_handler()
-                    logger.debug(f"Registered book_meeting handler (tool_uuid: {tool.tool_uuid})")
+                    logger.debug(
+                        f"Registered book_meeting handler (tool_uuid: {tool.tool_uuid})"
+                    )
                     continue
 
                 if tool.category == ToolCategory.MCP.value:
@@ -315,6 +319,7 @@ class CustomToolManager:
 
                 # Build the start datetime from date + time args.
                 from datetime import datetime, timezone
+
                 date_str = args.get("date", "")
                 time_str = args.get("time", "00:00")
                 try:
@@ -323,7 +328,9 @@ class CustomToolManager:
                     ).replace(tzinfo=timezone.utc)
                 except ValueError:
                     await function_call_params.result_callback(
-                        {"error": f"Invalid date/time format: '{date_str} {time_str}'. Use YYYY-MM-DD and HH:MM."}
+                        {
+                            "error": f"Invalid date/time format: '{date_str} {time_str}'. Use YYYY-MM-DD and HH:MM."
+                        }
                     )
                     return
 

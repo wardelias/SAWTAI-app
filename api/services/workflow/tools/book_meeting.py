@@ -56,6 +56,7 @@ BOOK_MEETING_DEFINITION: Dict[str, Any] = {
 # LLM function schema (OpenAI tool-call format, used at pipeline runtime)
 # ---------------------------------------------------------------------------
 
+
 def get_book_meeting_tools() -> List[Dict[str, Any]]:
     return [
         {

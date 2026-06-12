@@ -1311,9 +1311,7 @@ class MeetingModel(Base):
     notes = Column(Text, nullable=True)
     start_time = Column(DateTime(timezone=True), nullable=False)
     duration_minutes = Column(Integer, nullable=False, default=30)
-    booked_by = Column(
-        String, nullable=False, default="user"
-    )  # "agent" | "user"
+    booked_by = Column(String, nullable=False, default="user")  # "agent" | "user"
     workflow_run_id = Column(
         Integer, ForeignKey("workflow_runs.id", ondelete="SET NULL"), nullable=True
     )
