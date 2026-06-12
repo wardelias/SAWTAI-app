@@ -6,6 +6,7 @@ from loguru import logger
 
 from api.constants import MPS_API_URL
 from api.services.configuration.registry import ServiceProviders
+from api.services.pipecat.hamsa_tts import HamsaTTSService
 from api.services.pipecat.minimax_tts import MiniMaxOwnedSessionTTSService
 from api.utils.url_security import validate_user_configured_service_url
 from pipecat.services.assemblyai.stt import AssemblyAISTTService, AssemblyAISTTSettings
@@ -49,10 +50,10 @@ from pipecat.services.openrouter.llm import OpenRouterLLMService, OpenRouterLLMS
 from pipecat.services.rime.tts import RimeTTSService, RimeTTSSettings
 from pipecat.services.sarvam.stt import SarvamSTTService, SarvamSTTSettings
 from pipecat.services.sarvam.tts import SarvamTTSService, SarvamTTSSettings
+from pipecat.services.soniox.stt import SonioxSTTService
 from pipecat.services.speaches.llm import SpeachesLLMService, SpeachesLLMSettings
 from pipecat.services.speaches.stt import SpeachesSTTService, SpeachesSTTSettings
 from pipecat.services.speaches.tts import SpeachesTTSService, SpeachesTTSSettings
-from pipecat.services.soniox.stt import SonioxSTTService
 from pipecat.services.speechmatics.stt import (
     SpeechmaticsSTTService,
     SpeechmaticsSTTSettings,
@@ -528,6 +529,20 @@ def create_tts_service(user_config, audio_config: "AudioConfig"):
                 model=user_config.tts.model,
                 voice=voice,
                 speed=speed,
+            ),
+            text_filters=[xml_function_tag_filter],
+            skip_aggregator_types=["recording_router", "recording"],
+            silence_time_s=1.0,
+        )
+    elif user_config.tts.provider == ServiceProviders.HAMSA.value:
+        voice = getattr(user_config.tts, "voice", None) or "Salem"
+        dialect = getattr(user_config.tts, "dialect", None) or "msa"
+        return HamsaTTSService(
+            api_key=user_config.tts.api_key,
+            settings=HamsaTTSService.Settings(
+                model=user_config.tts.model,
+                voice=voice,
+                dialect=dialect,
             ),
             text_filters=[xml_function_tag_filter],
             skip_aggregator_types=["recording_router", "recording"],

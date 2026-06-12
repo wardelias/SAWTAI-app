@@ -59,6 +59,7 @@ class UserConfigurationValidator:
             ServiceProviders.SONIOX.value: self._check_soniox_api_key,
             ServiceProviders.RIME.value: self._check_rime_api_key,
             ServiceProviders.MINIMAX.value: self._check_minimax_api_key,
+            ServiceProviders.HAMSA.value: self._check_hamsa_api_key,
         }
 
     async def validate(
@@ -388,5 +389,10 @@ class UserConfigurationValidator:
 
     def _check_minimax_api_key(self, model: str, api_key: str) -> bool:
         # MiniMax doesn't publish a cheap key-validation endpoint; trust the key
+        # at save time and surface auth errors at first call (same as Rime/Sarvam).
+        return True
+
+    def _check_hamsa_api_key(self, model: str, api_key: str) -> bool:
+        # Hamsa doesn't publish a cheap key-validation endpoint; trust the key
         # at save time and surface auth errors at first call (same as Rime/Sarvam).
         return True

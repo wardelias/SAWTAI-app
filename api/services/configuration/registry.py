@@ -60,6 +60,7 @@ class ServiceProviders(str, Enum):
     SONIOX = "soniox"
     RIME = "rime"
     MINIMAX = "minimax"
+    HAMSA = "hamsa"
     GOOGLE_VERTEX = "google_vertex"
     OPENAI_REALTIME = "openai_realtime"
     GROK_REALTIME = "grok_realtime"
@@ -85,6 +86,7 @@ class BaseServiceConfiguration(BaseModel):
         ServiceProviders.SONIOX,
         ServiceProviders.RIME,
         ServiceProviders.MINIMAX,
+        ServiceProviders.HAMSA,
         ServiceProviders.GOOGLE_VERTEX,
         ServiceProviders.OPENAI_REALTIME,
         ServiceProviders.GROK_REALTIME,
@@ -833,10 +835,47 @@ class DograhTTSService(BaseTTSConfiguration):
 
 CARTESIA_TTS_MODELS = ["sonic-3", "sonic-3.5"]
 CARTESIA_TTS_LANGUAGES = [
-    "en", "he", "ar", "bg", "bn", "cs", "da", "de", "el", "es",
-    "fi", "fr", "gu", "hi", "hr", "hu", "id", "it", "ja", "kn",
-    "ko", "ml", "mr", "ms", "nl", "no", "pa", "pl", "pt", "ro",
-    "ru", "sk", "sv", "ta", "te", "th", "tl", "tr", "uk", "vi", "zh",
+    "en",
+    "he",
+    "ar",
+    "bg",
+    "bn",
+    "cs",
+    "da",
+    "de",
+    "el",
+    "es",
+    "fi",
+    "fr",
+    "gu",
+    "hi",
+    "hr",
+    "hu",
+    "id",
+    "it",
+    "ja",
+    "kn",
+    "ko",
+    "ml",
+    "mr",
+    "ms",
+    "nl",
+    "no",
+    "pa",
+    "pl",
+    "pt",
+    "ro",
+    "ru",
+    "sk",
+    "sv",
+    "ta",
+    "te",
+    "th",
+    "tl",
+    "tr",
+    "uk",
+    "vi",
+    "zh",
 ]
 
 
@@ -1011,6 +1050,82 @@ class MiniMaxTTSConfiguration(BaseTTSConfiguration):
     )
 
 
+HAMSA_PROVIDER_MODEL_CONFIG = provider_model_config(
+    "Hamsa",
+    description=(
+        "Arabic-focused TTS with per-dialect voices and Arabic/English code-switching."
+    ),
+    provider_docs_url="https://docs.tryhamsa.com/text-to-speech/introduction",
+)
+
+HAMSA_TTS_MODELS = ["default"]
+HAMSA_TTS_DIALECTS = [
+    "msa",  # Modern Standard Arabic
+    "pls",  # Palestinian
+    "egy",  # Egyptian
+    "syr",  # Syrian
+    "irq",  # Iraqi
+    "jor",  # Jordanian
+    "leb",  # Lebanese
+    "ksa",  # Saudi
+    "uae",  # Emirati
+    "bah",  # Bahraini
+    "qat",  # Qatari
+    "kuw",  # Kuwaiti
+    "oma",  # Omani
+    "ar-sa",  # Arabic - Gulf
+    "en",  # English
+]
+# Prebuilt voices grouped by dialect (the voice must match the dialect).
+HAMSA_TTS_VOICES_BY_DIALECT = {
+    "msa": ["Salem", "Tamim"],
+    "pls": ["Amjad", "Layan"],
+    "egy": ["Mariam", "Samir"],
+    "syr": ["Dalal", "Mais"],
+    "irq": ["Lyali", "Fatma"],
+    "jor": ["Lana", "Jasem"],
+    "leb": ["Carla", "Majd"],
+    "ksa": ["Hiba", "Fahd"],
+    "uae": ["Salma", "Dima"],
+    "bah": ["Mazen", "Ruba"],
+    "qat": ["Deema", "Faisal"],
+    "kuw": ["Mai", "Hatem"],
+    "oma": ["Aisha", "Jaber"],
+    "ar-sa": ["Khalid", "Rahma"],
+    "en": ["Emma", "James"],
+}
+HAMSA_TTS_VOICES = [
+    voice for voices in HAMSA_TTS_VOICES_BY_DIALECT.values() for voice in voices
+]
+
+
+@register_tts
+class HamsaTTSConfiguration(BaseTTSConfiguration):
+    model_config = HAMSA_PROVIDER_MODEL_CONFIG
+    provider: Literal[ServiceProviders.HAMSA] = ServiceProviders.HAMSA
+    model: str = Field(
+        default="default",
+        description="Hamsa TTS model (single model; leave as 'default').",
+        json_schema_extra={"examples": HAMSA_TTS_MODELS},
+    )
+    voice: str = Field(
+        default="Salem",
+        description=(
+            "Hamsa voice name (must belong to the selected dialect) or a "
+            "custom cloned-voice UUID."
+        ),
+        json_schema_extra={"examples": HAMSA_TTS_VOICES, "allow_custom_input": True},
+    )
+    dialect: str = Field(
+        default="msa",
+        description=(
+            "Hamsa dialect code: 'msa' (Modern Standard Arabic), 'egy' "
+            "(Egyptian), 'ksa' (Saudi), 'en' (English), etc."
+        ),
+        json_schema_extra={"examples": HAMSA_TTS_DIALECTS},
+    )
+
+
 TTSConfig = Annotated[
     Union[
         DeepgramTTSConfiguration,
@@ -1024,6 +1139,7 @@ TTSConfig = Annotated[
         RimeTTSConfiguration,
         SpeachesTTSConfiguration,
         MiniMaxTTSConfiguration,
+        HamsaTTSConfiguration,
     ],
     Field(discriminator="provider"),
 ]
@@ -1280,7 +1396,10 @@ class SonioxSTTConfiguration(BaseSTTConfiguration):
     language: str = Field(
         default="multi",
         description="Language hint; use 'multi' for auto-detect across languages.",
-        json_schema_extra={"examples": SONIOX_STT_LANGUAGES, "allow_custom_input": True},
+        json_schema_extra={
+            "examples": SONIOX_STT_LANGUAGES,
+            "allow_custom_input": True,
+        },
     )
 
 

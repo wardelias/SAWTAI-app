@@ -1038,7 +1038,7 @@
   // Backwards-compatible alias for the new brand name
   try {
     window.SawtAIWidget = window.DograhWidget;
-  } catch (e) {}
+  } catch {}
 
   // Auto-initialize on DOM ready
   if (document.readyState === 'loading') {
