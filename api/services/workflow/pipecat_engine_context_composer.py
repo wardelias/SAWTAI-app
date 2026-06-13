@@ -46,16 +46,32 @@ RULES:
 - *NEVER* mix modes in a single response, since we rely on the markers to decide whether to play using TTS or Pre-recorded audio."""
 
 
+# ---------------------------------------------------------------------------
+# Caller profile note (voice-based gender detection)
+# ---------------------------------------------------------------------------
+
+CALLER_PROFILE_NOTE_TEMPLATE = """\
+CALLER PROFILE:
+The caller's voice suggests they are most likely {gender}. When speaking a \
+grammatically gendered language (such as Arabic or Hebrew), address the \
+caller using the corresponding {gender} second-person forms (verb \
+conjugations, pronouns, and adjectives). If the caller states or clearly \
+implies a different gender, follow their lead instead of this note. Never \
+mention this inference to the caller."""
+
+
 def compose_system_prompt_for_node(
     *,
     node: "Node",
     workflow: "WorkflowGraph",
     format_prompt: Callable[[str], str],
     has_recordings: bool,
+    caller_profile_note: Optional[str] = None,
 ) -> str:
     """Compose the full system prompt text for a workflow node.
 
-    Combines the global prompt, node-specific prompt, and (when recordings
+    Combines the global prompt, node-specific prompt, optional caller
+    profile note (from voice-based gender detection), and (when recordings
     are enabled anywhere in the workflow) the recording response mode
     instructions into a single string.
 
@@ -64,6 +80,8 @@ def compose_system_prompt_for_node(
         workflow: The full workflow graph (needed for global node prompt).
         format_prompt: Callable to render template variables in prompts.
         has_recordings: Whether any node in the workflow uses recordings.
+        caller_profile_note: Optional note about the caller (e.g. detected
+            gender) appended to every node prompt once known.
 
     Returns:
         The composed system prompt text.
@@ -76,6 +94,9 @@ def compose_system_prompt_for_node(
     formatted_node_prompt = format_prompt(node.prompt)
 
     parts = [p for p in (global_prompt, formatted_node_prompt) if p]
+
+    if caller_profile_note:
+        parts.append(caller_profile_note)
 
     if has_recordings and "RECORDING_ID:" in formatted_node_prompt:
         parts.append(RECORDING_RESPONSE_MODE_INSTRUCTIONS)

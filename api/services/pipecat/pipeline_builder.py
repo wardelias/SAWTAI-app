@@ -37,6 +37,7 @@ def build_pipeline(
     pipeline_metrics_aggregator,
     voicemail_detector=None,
     recording_router=None,
+    gender_detector=None,
 ):
     """Build the main pipeline with all components.
 
@@ -48,12 +49,19 @@ def build_pipeline(
         recording_router: Optional RecordingRouterProcessor. When provided,
             inserts between callback processor and TTS to route between
             pre-recorded audio playback and dynamic TTS.
+        gender_detector: Optional VoiceGenderDetector. When provided, inserts
+            directly after transport input so it only sees caller audio.
     """
     # Build processors list with optional voicemail detection
     processors = [
         transport.input(),  # Transport user input
-        stt,
     ]
+
+    if gender_detector:
+        logger.info("Adding voice gender detector to pipeline")
+        processors.append(gender_detector)
+
+    processors.append(stt)
 
     # Insert voicemail detector after STT if enabled
     # Note: We intentionally do NOT use voicemail_detector.gate() to allow TTS
@@ -103,6 +111,7 @@ def build_realtime_pipeline(
     pipeline_engine_callback_processor,
     pipeline_metrics_aggregator,
     voicemail_detector=None,
+    gender_detector=None,
 ):
     """Build a pipeline for realtime (speech-to-speech) LLM services.
 
@@ -131,9 +140,18 @@ def build_realtime_pipeline(
     """
     processors = [
         transport.input(),
-        user_context_aggregator,
-        realtime_llm,
     ]
+
+    if gender_detector:
+        logger.info("Adding voice gender detector to realtime pipeline")
+        processors.append(gender_detector)
+
+    processors.extend(
+        [
+            user_context_aggregator,
+            realtime_llm,
+        ]
+    )
 
     if voicemail_detector:
         logger.info("Adding native voicemail detector to realtime pipeline")

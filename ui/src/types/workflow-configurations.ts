@@ -24,6 +24,16 @@ export const DEFAULT_VOICEMAIL_DETECTION_CONFIGURATION: VoicemailDetectionConfig
     long_speech_timeout: 8.0,
 };
 
+export interface VoiceGenderDetectionConfiguration {
+    enabled: boolean;
+}
+
+// Detection runs by default on the backend (VOICE_GENDER_DETECTION_ENABLED),
+// so the UI treats an absent config as enabled.
+export const DEFAULT_VOICE_GENDER_DETECTION_CONFIGURATION: VoiceGenderDetectionConfiguration = {
+    enabled: true,
+};
+
 export interface ModelOverrides {
     llm?: {
         provider?: string;
@@ -62,6 +72,7 @@ export interface WorkflowConfigurations {
     turn_stop_strategy: TurnStopStrategy;  // Strategy for detecting end of user turn
     dictionary?: string;  // Comma-separated words for voice agent to listen for
     voicemail_detection?: VoicemailDetectionConfiguration;
+    voice_gender_detection?: VoiceGenderDetectionConfiguration;  // Estimate caller gender from voice pitch for gendered-language adaptation
     context_compaction_enabled?: boolean;  // Summarize context on node transitions to remove stale tool calls
     model_overrides?: ModelOverrides;  // Per-workflow model configuration overrides
     [key: string]: unknown;  // Allow additional properties for future configurations

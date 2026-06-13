@@ -1,4 +1,5 @@
 import asyncio
+import os
 from typing import Optional
 
 from fastapi import HTTPException
@@ -7,6 +8,7 @@ from loguru import logger
 from api.db import db_client
 from api.enums import WorkflowRunMode
 from api.services.configuration.registry import ServiceProviders
+from api.services.gender.voice_gender_detector import VoiceGenderDetector
 from api.services.integrations import (
     IntegrationRuntimeContext,
     create_runtime_sessions,
@@ -713,6 +715,25 @@ async def _run_pipeline(
             )
         )
 
+    # Voice-based gender detection: estimates caller gender from voice pitch
+    # so agents can use correct gendered address forms (Arabic, Hebrew, ...).
+    # Enabled by default; disable globally with VOICE_GENDER_DETECTION_ENABLED=false
+    # or per workflow via workflow_configurations.voice_gender_detection.enabled.
+    gender_detector = None
+    gender_config = (workflow.workflow_configurations or {}).get(
+        "voice_gender_detection", {}
+    )
+    gender_detection_enabled = gender_config.get(
+        "enabled",
+        os.getenv("VOICE_GENDER_DETECTION_ENABLED", "true").lower() == "true",
+    )
+    if gender_detection_enabled:
+        # Seed the template var so {{caller_gender}} renders before detection.
+        merged_call_context_vars.setdefault("caller_gender", "unknown")
+        gender_detector = VoiceGenderDetector(
+            on_gender_detected=engine.handle_caller_gender_detected,
+        )
+
     # Build the pipeline
     if is_realtime:
         pipeline = build_realtime_pipeline(
@@ -724,6 +745,7 @@ async def _run_pipeline(
             pipeline_engine_callback_processor,
             pipeline_metrics_aggregator,
             voicemail_detector=voicemail_detector,
+            gender_detector=gender_detector,
         )
     else:
         pipeline = build_pipeline(
@@ -738,6 +760,7 @@ async def _run_pipeline(
             pipeline_metrics_aggregator,
             voicemail_detector=voicemail_detector,
             recording_router=recording_router,
+            gender_detector=gender_detector,
         )
 
     # Create pipeline task with audio configuration

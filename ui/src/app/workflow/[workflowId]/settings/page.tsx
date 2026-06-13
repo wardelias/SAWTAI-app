@@ -271,6 +271,9 @@ function GeneralSection({
     const [contextCompactionEnabled, setContextCompactionEnabled] = useState(
         workflowConfigurations.context_compaction_enabled ?? false,
     );
+    const [voiceGenderDetectionEnabled, setVoiceGenderDetectionEnabled] = useState(
+        workflowConfigurations.voice_gender_detection?.enabled ?? true,
+    );
     const [isSaving, setIsSaving] = useState(false);
     const [isUploadingAudio, setIsUploadingAudio] = useState(false);
     const [audioUploadError, setAudioUploadError] = useState<string | null>(null);
@@ -286,9 +289,10 @@ function GeneralSection({
             maxUserIdleTimeout !== (workflowConfigurations.max_user_idle_timeout || 10) ||
             smartTurnStopSecs !== (workflowConfigurations.smart_turn_stop_secs || 2) ||
             turnStopStrategy !== (workflowConfigurations.turn_stop_strategy || "transcription") ||
-            contextCompactionEnabled !== (workflowConfigurations.context_compaction_enabled ?? false)
+            contextCompactionEnabled !== (workflowConfigurations.context_compaction_enabled ?? false) ||
+            voiceGenderDetectionEnabled !== (workflowConfigurations.voice_gender_detection?.enabled ?? true)
         );
-    }, [name, workflowName, ambientNoiseConfig, maxCallDuration, maxUserIdleTimeout, smartTurnStopSecs, turnStopStrategy, contextCompactionEnabled, workflowConfigurations]);
+    }, [name, workflowName, ambientNoiseConfig, maxCallDuration, maxUserIdleTimeout, smartTurnStopSecs, turnStopStrategy, contextCompactionEnabled, voiceGenderDetectionEnabled, workflowConfigurations]);
 
     useUnsavedChanges("general", isDirty);
 
@@ -362,6 +366,7 @@ function GeneralSection({
                     smart_turn_stop_secs: smartTurnStopSecs,
                     turn_stop_strategy: turnStopStrategy,
                     context_compaction_enabled: contextCompactionEnabled,
+                    voice_gender_detection: { enabled: voiceGenderDetectionEnabled },
                 },
                 name,
             );
@@ -594,6 +599,28 @@ function GeneralSection({
                             id="context-compaction-enabled"
                             checked={contextCompactionEnabled}
                             onCheckedChange={setContextCompactionEnabled}
+                        />
+                    </div>
+                </div>
+
+                <Separator />
+
+                {/* Voice Gender Detection */}
+                <div className="space-y-4">
+                    <div>
+                        <h3 className="text-sm font-medium">Caller Gender Adaptation</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Estimate the caller&apos;s gender from their voice pitch in the first few seconds of the call, so the agent can use the correct gendered forms in grammatically gendered languages (Arabic, Hebrew). When the voice is ambiguous, the agent keeps neutral address rather than risk misgendering.
+                        </p>
+                    </div>
+                    <div className="flex items-center justify-between">
+                        <Label htmlFor="voice-gender-detection-enabled" className="text-sm">
+                            Enable Caller Gender Adaptation
+                        </Label>
+                        <Switch
+                            id="voice-gender-detection-enabled"
+                            checked={voiceGenderDetectionEnabled}
+                            onCheckedChange={setVoiceGenderDetectionEnabled}
                         />
                     </div>
                 </div>
