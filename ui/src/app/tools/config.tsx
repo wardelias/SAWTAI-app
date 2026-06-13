@@ -1,6 +1,6 @@
 "use client";
 
-import { Calculator, Cog, Globe, type LucideIcon, PhoneForwarded, PhoneOff, Puzzle } from "lucide-react";
+import { Calculator, Cog, Globe, type LucideIcon, PhoneForwarded, PhoneOff, Puzzle, Sparkles } from "lucide-react";
 import { type ReactNode } from "react";
 
 import type {
@@ -13,7 +13,96 @@ import type {
     TransferCallToolDefinition,
 } from "@/client/types.gen";
 
-export type ToolCategory = "http_api" | "end_call" | "transfer_call" | "calculator" | "native" | "integration" | "mcp";
+export type ToolCategory = "http_api" | "end_call" | "transfer_call" | "calculator" | "native" | "integration" | "mcp" | "behavior";
+
+export type BehaviorScope = "global" | "node";
+
+// Behavior tools inject curated instructions into the agent's system prompt
+// instead of registering a callable function. Defined locally because the
+// generated client (types.gen) does not yet include this tool type.
+export interface BehaviorConfig {
+    instructions: string;
+    scope: BehaviorScope;
+    preset_id?: string | null;
+    special?: string | null;
+}
+
+export interface BehaviorToolDefinition {
+    schema_version: number;
+    type: "behavior";
+    config: BehaviorConfig;
+}
+
+// Built-in Behavior presets shown in the editor's "Start from a preset" picker.
+// Mirrors api/services/workflow/behaviors/presets.py. `special` flags are
+// preserved on save so e.g. the gender preset still enables voice detection.
+export interface BehaviorPreset {
+    id: string;
+    name: string;
+    description: string;
+    instructions: string;
+    special?: string;
+}
+
+export const BEHAVIOR_PRESETS: BehaviorPreset[] = [
+    {
+        id: "caller_gender_adaptation",
+        name: "Caller Gender Adaptation",
+        description: "Detect the caller's gender from voice and adapt gendered language (Arabic, Hebrew).",
+        instructions:
+            "When the caller's gender is known, address them using the matching gendered second-person forms (verb conjugations, pronouns, adjectives) in grammatically gendered languages such as Arabic or Hebrew. If the caller states or implies a different gender, follow their lead. Never mention this inference to the caller.",
+        special: "voice_gender_detection",
+    },
+    {
+        id: "no_ai_disclosure",
+        name: "Stay in Character",
+        description: "Never claim or imply that the agent is an AI or a bot.",
+        instructions:
+            "Stay in character as a human representative. Do not claim or imply that you are an AI, bot, or automated system. If asked directly whether you are a robot, deflect politely and continue helping.",
+    },
+    {
+        id: "concise_voice_replies",
+        name: "Concise Voice Replies",
+        description: "Keep answers short and spoken-style; no markdown or lists.",
+        instructions:
+            "Keep replies short and conversational — usually one or two spoken sentences. Do not use markdown, bullet points, numbered lists, or emojis; your words are spoken aloud.",
+    },
+    {
+        id: "confirm_readback",
+        name: "Confirm by Read-back",
+        description: "Read back names, emails, and numbers to confirm them.",
+        instructions:
+            "When the caller gives a name, email address, phone number, or other identifier, read it back to them to confirm before relying on it.",
+    },
+    {
+        id: "empathetic_tone",
+        name: "Empathetic Tone",
+        description: "Warm, patient, acknowledges the caller's feelings.",
+        instructions:
+            "Speak warmly and patiently. Acknowledge the caller's feelings and show that you understand their situation before moving the conversation forward.",
+    },
+    {
+        id: "confirm_before_end_or_transfer",
+        name: "Confirm Before Ending",
+        description: "Check the caller is ready before ending or transferring.",
+        instructions:
+            "Before ending the call or transferring it, briefly confirm with the caller that they are ready and have no other questions.",
+    },
+    {
+        id: "mirror_caller_language",
+        name: "Mirror Caller's Language",
+        description: "Respond in the caller's language and dialect.",
+        instructions:
+            "Respond in the same language and dialect the caller uses. If they switch languages mid-conversation, switch with them.",
+    },
+    {
+        id: "dnc_compliance",
+        name: "Honor Opt-outs",
+        description: "Immediately respect do-not-call / opt-out requests.",
+        instructions:
+            "If the caller asks to opt out, stop being contacted, or be placed on a do-not-call list, acknowledge immediately, stop any sales or persuasion, and confirm they will not be contacted again.",
+    },
+];
 
 export type EndCallMessageType = "none" | "custom" | "audio";
 
@@ -85,6 +174,18 @@ export const TOOL_CATEGORIES: ToolCategoryConfig[] = [
         iconColor: "#8B5CF6",
     },
     {
+        value: "behavior",
+        label: "Behavior",
+        description: "Inject curated instructions into the agent's prompt (e.g. tone, gender adaptation)",
+        icon: Sparkles,
+        iconName: "sparkles",
+        iconColor: "#A855F7",
+        autoFill: {
+            name: "New Behavior",
+            description: "Guidance injected into the agent's system prompt",
+        },
+    },
+    {
         value: "native",
         label: "Native (Coming Soon)",
         description: "Built-in tools like call transfer, DTMF input",
@@ -139,6 +240,8 @@ export function getToolTypeLabel(category: string): string {
             return "Integration Tool";
         case "mcp":
             return "MCP Server Tool";
+        case "behavior":
+            return "Behavior";
         default:
             return "Tool";
     }
@@ -198,6 +301,24 @@ export function createCalculatorDefinition(): CalculatorToolDefinition {
     return {
         schema_version: 1,
         type: "calculator",
+    };
+}
+
+export function createBehaviorDefinition(
+    instructions: string = "",
+    scope: BehaviorScope = "global",
+    presetId?: string | null,
+    special?: string | null,
+): BehaviorToolDefinition {
+    return {
+        schema_version: 1,
+        type: "behavior",
+        config: {
+            instructions,
+            scope,
+            preset_id: presetId ?? null,
+            special: special ?? null,
+        },
     };
 }
 

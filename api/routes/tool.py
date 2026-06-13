@@ -9,6 +9,7 @@ from api.db.models import UserModel
 from api.enums import ToolCategory, ToolStatus
 from api.services.workflow.tools.book_meeting import BOOK_MEETING_DEFINITION
 from api.schemas.tool import (
+    BehaviorPresetResponse,
     CalculatorToolDefinition,
     CreatedByResponse,
     CreateToolRequest,
@@ -130,6 +131,22 @@ async def list_tools(
     )
 
     return [build_tool_response(tool) for tool in tools]
+
+
+@router.get(
+    "/behavior-presets",
+    **sdk_expose(
+        method="list_behavior_presets",
+        description="List built-in Behavior presets available to seed behavior tools.",
+    ),
+)
+async def list_behavior_presets(
+    user: UserModel = Depends(get_user),
+) -> List[BehaviorPresetResponse]:
+    """List the built-in Behavior presets (ready-made prompt-instruction tools)."""
+    from api.services.workflow.behaviors.presets import BEHAVIOR_PRESETS
+
+    return [BehaviorPresetResponse(**preset.to_dict()) for preset in BEHAVIOR_PRESETS]
 
 
 async def _ensure_book_meeting_tool(organization_id: int) -> None:

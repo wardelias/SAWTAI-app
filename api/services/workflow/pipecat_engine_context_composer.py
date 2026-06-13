@@ -60,6 +60,9 @@ implies a different gender, follow their lead instead of this note. Never \
 mention this inference to the caller."""
 
 
+BEHAVIOR_GUIDELINES_HEADER = "BEHAVIOR GUIDELINES:"
+
+
 def compose_system_prompt_for_node(
     *,
     node: "Node",
@@ -67,6 +70,7 @@ def compose_system_prompt_for_node(
     format_prompt: Callable[[str], str],
     has_recordings: bool,
     caller_profile_note: Optional[str] = None,
+    behavior_instructions: Optional[list[str]] = None,
 ) -> str:
     """Compose the full system prompt text for a workflow node.
 
@@ -97,6 +101,12 @@ def compose_system_prompt_for_node(
 
     if caller_profile_note:
         parts.append(caller_profile_note)
+
+    if behavior_instructions:
+        cleaned = [instr.strip() for instr in behavior_instructions if instr and instr.strip()]
+        if cleaned:
+            bullets = "\n".join(f"- {instr}" for instr in cleaned)
+            parts.append(f"{BEHAVIOR_GUIDELINES_HEADER}\n{bullets}")
 
     if has_recordings and "RECORDING_ID:" in formatted_node_prompt:
         parts.append(RECORDING_RESPONSE_MODE_INSTRUCTIONS)

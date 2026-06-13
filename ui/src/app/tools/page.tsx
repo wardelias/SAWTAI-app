@@ -42,6 +42,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/lib/auth";
 
 import {
+    createBehaviorDefinition,
     createMcpDefinition,
     createToolDefinition,
     getCategoryConfig,
@@ -135,15 +136,19 @@ export default function ToolsPage() {
 
             const definition = newToolCategory === "mcp"
                 ? createMcpDefinition(mcpUrl, mcpCredentialUuid, mcpToolsFilter)
-                : createToolDefinition(newToolCategory);
+                : newToolCategory === "behavior"
+                    ? createBehaviorDefinition("")
+                    : createToolDefinition(newToolCategory);
 
             const requestBody: CreateToolRequest = {
                 name: newToolName,
                 description: newToolDescription || undefined,
-                category: newToolCategory,
+                // Cast: the generated client does not yet include the behavior
+                // category/definition type (run `npm run generate-client`).
+                category: newToolCategory as CreateToolRequest["category"],
                 icon: categoryConfig?.iconName || "globe",
                 icon_color: categoryConfig?.iconColor || "#3B82F6",
-                definition,
+                definition: definition as CreateToolRequest["definition"],
             };
 
             const response = await createToolApiV1ToolsPost({
@@ -263,6 +268,8 @@ export default function ToolsPage() {
                 return <Badge variant="outline">Integration</Badge>;
             case "mcp":
                 return <Badge variant="outline">MCP</Badge>;
+            case "behavior":
+                return <Badge variant="secondary">Behavior</Badge>;
             default:
                 return <Badge variant="outline">{category}</Badge>;
         }

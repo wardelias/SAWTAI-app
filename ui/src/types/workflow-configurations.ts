@@ -73,6 +73,7 @@ export interface WorkflowConfigurations {
     dictionary?: string;  // Comma-separated words for voice agent to listen for
     voicemail_detection?: VoicemailDetectionConfiguration;
     voice_gender_detection?: VoiceGenderDetectionConfiguration;  // Estimate caller gender from voice pitch for gendered-language adaptation
+    behaviors?: string[];  // tool_uuids of Behavior tools enabled globally for the whole agent
     context_compaction_enabled?: boolean;  // Summarize context on node transitions to remove stale tool calls
     model_overrides?: ModelOverrides;  // Per-workflow model configuration overrides
     [key: string]: unknown;  // Allow additional properties for future configurations

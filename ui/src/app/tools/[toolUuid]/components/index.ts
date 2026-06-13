@@ -1,3 +1,4 @@
+export { BehaviorToolConfig, type BehaviorToolConfigProps } from "./BehaviorToolConfig";
 export { BuiltinToolConfig, type BuiltinToolConfigProps } from "./BuiltinToolConfig";
 export { EndCallToolConfig, type EndCallToolConfigProps } from "./EndCallToolConfig";
 export { HttpApiToolConfig, type HttpApiToolConfigProps } from "./HttpApiToolConfig";
