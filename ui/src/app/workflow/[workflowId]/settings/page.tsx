@@ -47,9 +47,12 @@ import { useAuth } from "@/lib/auth";
 import logger from "@/lib/logger";
 import {
     type AmbientNoiseConfiguration,
+    DEFAULT_VOICE_GENDER_DETECTION_CONFIGURATION,
     DEFAULT_VOICEMAIL_DETECTION_CONFIGURATION,
     DEFAULT_WORKFLOW_CONFIGURATIONS,
     type TurnStopStrategy,
+    type VoiceGenderBackend,
+    type VoiceGenderDetectionConfiguration,
     type VoicemailDetectionConfiguration,
     type WorkflowConfigurations,
 } from "@/types/workflow-configurations";
@@ -289,6 +292,9 @@ function GeneralSection({
     const [contextCompactionEnabled, setContextCompactionEnabled] = useState(
         workflowConfigurations.context_compaction_enabled ?? false,
     );
+    const [voiceGenderConfig, setVoiceGenderConfig] = useState<VoiceGenderDetectionConfiguration>(
+        workflowConfigurations.voice_gender_detection || DEFAULT_VOICE_GENDER_DETECTION_CONFIGURATION,
+    );
     const [isSaving, setIsSaving] = useState(false);
     const [isUploadingAudio, setIsUploadingAudio] = useState(false);
     const [audioUploadError, setAudioUploadError] = useState<string | null>(null);
@@ -297,6 +303,8 @@ function GeneralSection({
 
     const isDirty = useMemo(() => {
         const initAmbient = workflowConfigurations.ambient_noise_configuration || DEFAULT_AMBIENT_NOISE_CONFIG;
+        const initVoiceGender =
+            workflowConfigurations.voice_gender_detection || DEFAULT_VOICE_GENDER_DETECTION_CONFIGURATION;
         return (
             name !== workflowName ||
             JSON.stringify(ambientNoiseConfig) !== JSON.stringify(initAmbient) ||
@@ -304,9 +312,10 @@ function GeneralSection({
             maxUserIdleTimeout !== (workflowConfigurations.max_user_idle_timeout || 10) ||
             smartTurnStopSecs !== (workflowConfigurations.smart_turn_stop_secs || 2) ||
             turnStopStrategy !== (workflowConfigurations.turn_stop_strategy || "transcription") ||
-            contextCompactionEnabled !== (workflowConfigurations.context_compaction_enabled ?? false)
+            contextCompactionEnabled !== (workflowConfigurations.context_compaction_enabled ?? false) ||
+            JSON.stringify(voiceGenderConfig) !== JSON.stringify(initVoiceGender)
         );
-    }, [name, workflowName, ambientNoiseConfig, maxCallDuration, maxUserIdleTimeout, smartTurnStopSecs, turnStopStrategy, contextCompactionEnabled, workflowConfigurations]);
+    }, [name, workflowName, ambientNoiseConfig, maxCallDuration, maxUserIdleTimeout, smartTurnStopSecs, turnStopStrategy, contextCompactionEnabled, voiceGenderConfig, workflowConfigurations]);
 
     useUnsavedChanges("general", isDirty);
 
@@ -380,6 +389,7 @@ function GeneralSection({
                     smart_turn_stop_secs: smartTurnStopSecs,
                     turn_stop_strategy: turnStopStrategy,
                     context_compaction_enabled: contextCompactionEnabled,
+                    voice_gender_detection: voiceGenderConfig,
                 },
                 name,
             );
@@ -614,6 +624,55 @@ function GeneralSection({
                             onCheckedChange={setContextCompactionEnabled}
                         />
                     </div>
+                </div>
+
+                <Separator />
+
+                {/* Voice Gender Detection */}
+                <div className="space-y-4">
+                    <div>
+                        <h3 className="text-sm font-medium">Voice Gender Detection</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Estimate the caller&apos;s gender from their voice so the agent can use the
+                            correct gendered address forms in languages like Arabic and Hebrew.
+                        </p>
+                    </div>
+                    <div className="flex items-center justify-between">
+                        <Label htmlFor="voice-gender-enabled" className="text-sm">
+                            Enable Voice Gender Detection
+                        </Label>
+                        <Switch
+                            id="voice-gender-enabled"
+                            checked={voiceGenderConfig.enabled}
+                            onCheckedChange={(checked) =>
+                                setVoiceGenderConfig((prev) => ({ ...prev, enabled: checked }))
+                            }
+                        />
+                    </div>
+                    {voiceGenderConfig.enabled && (
+                        <div className="space-y-2">
+                            <Label htmlFor="voice_gender_backend" className="text-xs">Classifier</Label>
+                            <Select
+                                value={voiceGenderConfig.backend || "ecapa"}
+                                onValueChange={(value: VoiceGenderBackend) =>
+                                    setVoiceGenderConfig((prev) => ({ ...prev, backend: value }))
+                                }
+                            >
+                                <SelectTrigger id="voice_gender_backend">
+                                    <SelectValue placeholder="Select classifier" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="ecapa">Neural (ECAPA) — most accurate</SelectItem>
+                                    <SelectItem value="f0">Pitch (F0) — lightweight</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground">
+                                {(voiceGenderConfig.backend || "ecapa") === "ecapa"
+                                    ? "Neural ECAPA-TDNN model. Most accurate, especially for ambiguous voices; loads a small model on the server."
+                                    : "Pitch-based heuristic. No model, lowest overhead, robust on telephony audio, but less accurate near the male/female pitch overlap."}
+                            </p>
+                        </div>
+                    )}
                 </div>
 
                 <Separator />

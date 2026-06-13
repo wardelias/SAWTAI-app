@@ -29,6 +29,15 @@ This installs only what the harness needs (pipecat core + aiortc for WebRTC +
 FastAPI/uvicorn). It does **not** install deepgram, so the long-path blocker
 does not apply.
 
+> To also run the **F0-vs-ECAPA comparison harness** (`scripts/gender_compare/`),
+> add the neural backend's dependencies to the same venv:
+>
+> ```powershell
+> .\.venv-gender\Scripts\python -m pip install torch torchaudio huggingface_hub safetensors
+> ```
+>
+> The first ECAPA decision downloads the model weights (~tens of MB), then caches them.
+
 > If `aiortc` fails to build on Python 3.13, use a 3.12 interpreter for the
 > venv (`py -3.12 -m venv .venv-gender`) — aiortc ships prebuilt wheels there.
 

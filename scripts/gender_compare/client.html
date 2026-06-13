@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Voice Gender Detection — F0 vs ECAPA</title>
+<style>
+  :root {
+    --bg: #0f1115; --card: #181b22; --line: #2a2f3a; --text: #e7e9ee;
+    --muted: #9aa3b2; --male: #4f9dff; --female: #ff6fae; --ok: #2ecc71;
+    --warn: #f1c40f; --accent: #6c8cff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg); color: var(--text); display: flex; justify-content: center;
+    min-height: 100vh; padding: 32px 16px;
+  }
+  .wrap { width: 100%; max-width: 760px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 24px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 24px; margin-bottom: 16px;
+  }
+  button {
+    font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 12px 20px;
+    cursor: pointer; background: var(--accent); color: #fff; transition: opacity .15s;
+  }
+  button:disabled { opacity: .45; cursor: default; }
+  button.secondary { background: #2a2f3a; color: var(--text); }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .status { color: var(--muted); font-size: 14px; min-height: 20px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    background: #555; margin-right: 8px; vertical-align: middle; }
+  .dot.live { background: var(--ok); box-shadow: 0 0 0 4px rgba(46,204,113,.18); }
+  .dot.err { background: #e74c3c; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 620px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  .panel .tag { font-size: 12px; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); }
+  .panel .name { font-size: 15px; font-weight: 700; margin: 2px 0 12px; }
+  .verdict { font-size: 30px; font-weight: 700; letter-spacing: .3px; margin: 4px 0; }
+  .verdict.male { color: var(--male); }
+  .verdict.female { color: var(--female); }
+  .verdict.unknown, .verdict.pending { color: var(--muted); }
+  .conf { font-size: 14px; color: var(--muted); }
+  .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+  .metric { background: #11141b; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+  .metric .k { font-size: 11px; color: var(--muted); }
+  .metric .v { font-size: 15px; font-weight: 600; margin-top: 2px; }
+  .banner { margin-top: 14px; padding: 10px 12px; border-radius: 10px; font-size: 13px; }
+  .banner.ok { background: rgba(46,204,113,.12); border: 1px solid rgba(46,204,113,.4); }
+  .banner.warn { background: rgba(241,196,15,.12); border: 1px solid rgba(241,196,15,.4); }
+  .banner.pending { background: #11141b; border: 1px solid var(--line); color: var(--muted); }
+  .agree { margin-top: 16px; padding: 14px 16px; border-radius: 12px; font-size: 15px; font-weight: 600; text-align: center; }
+  .agree.match { background: rgba(46,204,113,.12); border: 1px solid rgba(46,204,113,.4); }
+  .agree.mismatch { background: rgba(231,76,60,.14); border: 1px solid rgba(231,76,60,.5); }
+  .agree.pending { background: #11141b; border: 1px solid var(--line); color: var(--muted); font-weight: 500; }
+  .hidden { display: none; }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 14px; }
+  .meter { height: 8px; border-radius: 6px; background: #11141b; overflow: hidden; margin-top: 6px; }
+  .meter > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .08s; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Voice Gender Detection — F0 vs ECAPA</h1>
+  <p class="sub">Talk for a few seconds. The same live mic audio runs through both production backends so you can compare them head to head.</p>
+
+  <div class="card">
+    <div class="row">
+      <button id="connect">Start listening</button>
+      <button id="again" class="secondary hidden">Test again</button>
+    </div>
+    <div class="status" id="status" style="margin-top:14px;">
+      <span class="dot" id="dot"></span><span id="statusText">Idle — click “Start listening”.</span>
+    </div>
+    <div class="hint">Mic input level <div class="meter"><span id="level"></span></div></div>
+  </div>
+
+  <div class="grid">
+    <div class="panel" id="panel-f0">
+      <div class="tag">Backend</div>
+      <div class="name">F0 — pitch (current)</div>
+      <div class="verdict pending" id="f0-verdict">—</div>
+      <div class="conf" id="f0-conf">waiting…</div>
+      <div class="metrics">
+        <div class="metric"><div class="k">Median pitch (F0)</div><div class="v" id="f0-f0">—</div></div>
+        <div class="metric"><div class="k">Confidence</div><div class="v" id="f0-c">—</div></div>
+        <div class="metric"><div class="k">Voiced used</div><div class="v" id="f0-v">—</div></div>
+        <div class="metric"><div class="k">Threshold</div><div class="v" id="f0-t">—</div></div>
+      </div>
+      <div class="banner pending" id="f0-banner">No decision yet.</div>
+    </div>
+
+    <div class="panel" id="panel-ecapa">
+      <div class="tag">Backend</div>
+      <div class="name">ECAPA — neural (candidate)</div>
+      <div class="verdict pending" id="ecapa-verdict">—</div>
+      <div class="conf" id="ecapa-conf">waiting…</div>
+      <div class="metrics">
+        <div class="metric"><div class="k">Median pitch (F0)</div><div class="v" id="ecapa-f0">n/a</div></div>
+        <div class="metric"><div class="k">Confidence (softmax)</div><div class="v" id="ecapa-c">—</div></div>
+        <div class="metric"><div class="k">Voiced used</div><div class="v" id="ecapa-v">—</div></div>
+        <div class="metric"><div class="k">Threshold</div><div class="v" id="ecapa-t">—</div></div>
+      </div>
+      <div class="banner pending" id="ecapa-banner">No decision yet (first run downloads the model).</div>
+    </div>
+  </div>
+
+  <div class="agree pending" id="agree">Agreement: waiting for both backends…</div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let pc = null, stream = null, audioCtx = null, levelRAF = null;
+const results = { f0: null, ecapa: null };
+
+function setStatus(text, cls) {
+  $("statusText").textContent = text;
+  $("dot").className = "dot" + (cls ? " " + cls : "");
+}
+
+function renderPanel(b, msg) {
+  const v = $(`${b}-verdict`);
+  v.textContent = msg.gender;
+  v.className = "verdict " + msg.gender;
+  $(`${b}-conf`).textContent = `${Math.round(msg.confidence * 100)}% confidence`;
+  if (b === "f0") $(`${b}-f0`).textContent = msg.median_f0_hz > 0 ? msg.median_f0_hz.toFixed(1) + " Hz" : "—";
+  $(`${b}-c`).textContent = msg.confidence.toFixed(2);
+  $(`${b}-v`).textContent = msg.voiced_seconds.toFixed(1) + " s";
+  $(`${b}-t`).textContent = "≥ " + msg.threshold.toFixed(2);
+  const banner = $(`${b}-banner`);
+  if (msg.actionable) {
+    banner.className = "banner ok";
+    banner.textContent = `✅ Above threshold — agent WOULD use ${msg.gender} gendered forms.`;
+  } else {
+    banner.className = "banner warn";
+    banner.textContent = `⚠️ Below threshold / unknown — agent stays NEUTRAL.`;
+  }
+}
+
+function renderAgreement() {
+  const a = $("agree");
+  const f = results.f0, e = results.ecapa;
+  if (!f || !e) {
+    a.className = "agree pending";
+    a.textContent = "Agreement: waiting for both backends…";
+    return;
+  }
+  if (f.gender === e.gender) {
+    a.className = "agree match";
+    a.textContent = `✅ Backends AGREE: ${f.gender} (F0 ${Math.round(f.confidence*100)}% · ECAPA ${Math.round(e.confidence*100)}%)`;
+  } else {
+    a.className = "agree mismatch";
+    a.textContent = `❌ Backends DISAGREE — F0: ${f.gender} (${Math.round(f.confidence*100)}%) vs ECAPA: ${e.gender} (${Math.round(e.confidence*100)}%)`;
+  }
+}
+
+function handleMessage(raw) {
+  let msg;
+  try { msg = JSON.parse(raw); } catch { return; }
+  if (msg.type === "gender-result") {
+    results[msg.backend] = msg;
+    renderPanel(msg.backend, msg);
+    renderAgreement();
+    if (results.f0 && results.ecapa) {
+      setStatus("Both backends decided. Click “Test again” to retry.", "live");
+      $("again").classList.remove("hidden");
+    }
+  } else if (msg.type === "status" && msg.value === "listening") {
+    setStatus("Listening… keep talking until both decide.", "live");
+  }
+}
+
+function startLevelMeter(mediaStream) {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const src = audioCtx.createMediaStreamSource(mediaStream);
+  const analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 512;
+  src.connect(analyser);
+  const buf = new Uint8Array(analyser.fftSize);
+  const tick = () => {
+    analyser.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) { const d = (buf[i] - 128) / 128; sum += d * d; }
+    const rms = Math.sqrt(sum / buf.length);
+    $("level").style.width = Math.min(100, rms * 280) + "%";
+    levelRAF = requestAnimationFrame(tick);
+  };
+  tick();
+}
+
+function resetPanels() {
+  results.f0 = null; results.ecapa = null;
+  for (const b of ["f0", "ecapa"]) {
+    const v = $(`${b}-verdict`); v.textContent = "—"; v.className = "verdict pending";
+    $(`${b}-conf`).textContent = "waiting…";
+    $(`${b}-c`).textContent = "—"; $(`${b}-v`).textContent = "—"; $(`${b}-t`).textContent = "—";
+    if (b === "f0") $(`${b}-f0`).textContent = "—";
+    const banner = $(`${b}-banner`); banner.className = "banner pending"; banner.textContent = "No decision yet.";
+  }
+  renderAgreement();
+}
+
+async function connect() {
+  $("connect").disabled = true;
+  $("again").classList.add("hidden");
+  resetPanels();
+  setStatus("Requesting microphone…");
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (e) {
+    setStatus("Microphone permission denied.", "err");
+    $("connect").disabled = false;
+    return;
+  }
+  startLevelMeter(stream);
+
+  pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+  const dc = pc.createDataChannel("messages");
+  dc.onmessage = (e) => handleMessage(e.data);
+
+  stream.getAudioTracks().forEach((t) => pc.addTrack(t, stream));
+
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === "connected") setStatus("Connected — start talking.", "live");
+    else if (["failed", "disconnected", "closed"].includes(pc.connectionState))
+      setStatus("Connection " + pc.connectionState + ".", "err");
+  };
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  // Non-trickle: wait for ICE gathering to finish, then post the full SDP.
+  await new Promise((resolve) => {
+    if (pc.iceGatheringState === "complete") return resolve();
+    const check = () => {
+      if (pc.iceGatheringState === "complete") {
+        pc.removeEventListener("icegatheringstatechange", check);
+        resolve();
+      }
+    };
+    pc.addEventListener("icegatheringstatechange", check);
+    setTimeout(resolve, 3000);
+  });
+
+  setStatus("Connecting…");
+  const resp = await fetch("/api/offer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type }),
+  });
+  const answer = await resp.json();
+  await pc.setRemoteDescription(answer);
+}
+
+function teardown() {
+  if (levelRAF) cancelAnimationFrame(levelRAF);
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+  if (pc) { pc.close(); pc = null; }
+  $("level").style.width = "0%";
+}
+
+$("connect").addEventListener("click", connect);
+$("again").addEventListener("click", async () => {
+  teardown();
+  await connect();
+});
+window.addEventListener("beforeunload", teardown);
+</script>
+</body>
+</html>

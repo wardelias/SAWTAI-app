@@ -22,8 +22,9 @@ are reported with low confidence so the agent keeps neutral address instead
 of misgendering the caller.
 """
 
+import asyncio
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional, Protocol, runtime_checkable
 
 import numpy as np
 from loguru import logger
@@ -60,6 +61,22 @@ class GenderEstimate:
     confidence: float  # 0.0 - 1.0
     median_f0_hz: float  # 0.0 when unknown
     voiced_seconds: float  # how much voiced speech informed the estimate
+
+
+@runtime_checkable
+class GenderClassifier(Protocol):
+    """Streaming gender-classifier backend interface.
+
+    Both :class:`F0GenderClassifier` and the neural ``ECAPAGenderClassifier``
+    implement this so :class:`VoiceGenderDetector` can use either backend.
+    """
+
+    @property
+    def result(self) -> Optional[GenderEstimate]: ...
+
+    def add_audio(
+        self, pcm: bytes, sample_rate: int, num_channels: int = 1
+    ) -> Optional[GenderEstimate]: ...
 
 
 def estimate_window_f0(window: np.ndarray, sample_rate: int) -> Optional[float]:
@@ -231,11 +248,14 @@ class VoiceGenderDetector(FrameProcessor):
         self,
         *,
         on_gender_detected: Callable[[GenderEstimate], Awaitable[None]],
+        classifier: Optional["GenderClassifier"] = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self._on_gender_detected = on_gender_detected
-        self._classifier = F0GenderClassifier()
+        # Default to the pitch-based backend; swap in any classifier exposing the
+        # same ``add_audio(...) -> Optional[GenderEstimate]`` / ``result`` interface.
+        self._classifier = classifier or F0GenderClassifier()
         self._done = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
@@ -247,9 +267,19 @@ class VoiceGenderDetector(FrameProcessor):
             and isinstance(frame, InputAudioRawFrame)
         ):
             try:
-                estimate = self._classifier.add_audio(
-                    frame.audio, frame.sample_rate, frame.num_channels
-                )
+                # Heavy backends (neural inference) run off the event loop so a
+                # forward pass can't stall audio; cheap backends (F0) run inline.
+                if getattr(self._classifier, "offload_to_thread", False):
+                    estimate = await asyncio.to_thread(
+                        self._classifier.add_audio,
+                        frame.audio,
+                        frame.sample_rate,
+                        frame.num_channels,
+                    )
+                else:
+                    estimate = self._classifier.add_audio(
+                        frame.audio, frame.sample_rate, frame.num_channels
+                    )
             except Exception as e:
                 logger.warning(f"Voice gender detection failed, disabling: {e}")
                 self._done = True
@@ -270,3 +300,24 @@ class VoiceGenderDetector(FrameProcessor):
                         logger.error(f"on_gender_detected callback failed: {e}")
 
         await self.push_frame(frame, direction)
+
+
+def make_gender_classifier(backend: str) -> GenderClassifier:
+    """Build a gender-classifier backend by name.
+
+    ``"ecapa"`` → neural ``ECAPAGenderClassifier`` (ECAPA-TDNN, more accurate, pulls
+    torch) — the live-pipeline default. ``"f0"`` → pitch-based :class:`F0GenderClassifier`
+    (no model, telephony-robust, lightweight fallback). The neural module is imported
+    lazily so torch only loads when the ECAPA backend is actually selected. Unknown or
+    empty values fall back to F0 with a warning (the safe, dependency-free choice).
+    """
+    normalized = (backend or "f0").strip().lower()
+    if normalized == "ecapa":
+        from api.services.gender.neural_gender_detector import ECAPAGenderClassifier
+
+        return ECAPAGenderClassifier()
+    if normalized != "f0":
+        logger.warning(
+            f"Unknown voice gender backend '{backend}', falling back to 'f0'"
+        )
+    return F0GenderClassifier()

@@ -8,7 +8,10 @@ from loguru import logger
 from api.db import db_client
 from api.enums import WorkflowRunMode
 from api.services.configuration.registry import ServiceProviders
-from api.services.gender.voice_gender_detector import VoiceGenderDetector
+from api.services.gender.voice_gender_detector import (
+    VoiceGenderDetector,
+    make_gender_classifier,
+)
 from api.services.workflow.behaviors.resolver import extract_behaviors
 from api.services.integrations import (
     IntegrationRuntimeContext,
@@ -767,8 +770,9 @@ async def _run_pipeline(
             )
         )
 
-    # Voice-based gender detection: estimates caller gender from voice pitch
-    # so agents can use correct gendered address forms (Arabic, Hebrew, ...).
+    # Voice-based gender detection: estimates caller gender from their voice so
+    # agents can use correct gendered address forms (Arabic, Hebrew, ...). Uses the
+    # neural "ecapa" backend by default; "f0" (pitch) is the lightweight fallback.
     # Enabled by default; disable globally with VOICE_GENDER_DETECTION_ENABLED=false
     # or per workflow via workflow_configurations.voice_gender_detection.enabled.
     # Resolve global (workflow-level) Behavior tools: their instructions are
@@ -805,9 +809,22 @@ async def _run_pipeline(
     if gender_detection_enabled:
         # Seed the template var so {{caller_gender}} renders before detection.
         merged_call_context_vars.setdefault("caller_gender", "unknown")
+        # Backend selector: "ecapa" (default, neural) or "f0" (pitch-based).
+        # Per-workflow config wins; otherwise fall back to the global env var.
+        gender_backend = gender_config.get(
+            "backend", os.getenv("VOICE_GENDER_DETECTION_BACKEND", "ecapa")
+        )
+        logger.info(f"Voice gender detection backend: {gender_backend}")
         gender_detector = VoiceGenderDetector(
             on_gender_detected=engine.handle_caller_gender_detected,
+            classifier=make_gender_classifier(gender_backend),
         )
+        # Warm the neural model in a worker thread while the call sets up, so the
+        # first detection doesn't pay the one-time model-load cost inline.
+        if (gender_backend or "").strip().lower() == "ecapa":
+            from api.services.gender.neural_gender_detector import preload_model
+
+            asyncio.create_task(asyncio.to_thread(preload_model))
 
     # Build the pipeline
     if is_realtime:
