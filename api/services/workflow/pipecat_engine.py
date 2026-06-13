@@ -35,6 +35,7 @@ import asyncio
 
 from loguru import logger
 
+from api.services.managed_model_services import MPS_CORRELATION_ID_CONTEXT_KEY
 from api.services.workflow import pipecat_engine_callbacks as engine_callbacks
 from api.services.workflow.mcp_tool_session import McpToolSession
 from api.services.gender.voice_gender_detector import (
@@ -78,6 +79,9 @@ class PipecatEngine:
         embeddings_api_key: Optional[str] = None,
         embeddings_model: Optional[str] = None,
         embeddings_base_url: Optional[str] = None,
+        embeddings_provider: Optional[str] = None,
+        embeddings_endpoint: Optional[str] = None,
+        embeddings_api_version: Optional[str] = None,
         has_recordings: bool = False,
         context_compaction_enabled: bool = False,
     ):
@@ -131,6 +135,9 @@ class PipecatEngine:
         self._embeddings_api_key: Optional[str] = embeddings_api_key
         self._embeddings_model: Optional[str] = embeddings_model
         self._embeddings_base_url: Optional[str] = embeddings_base_url
+        self._embeddings_provider: Optional[str] = embeddings_provider
+        self._embeddings_endpoint: Optional[str] = embeddings_endpoint
+        self._embeddings_api_version: Optional[str] = embeddings_api_version
 
         # Audio configuration (set via set_audio_config from _run_pipeline)
         self._audio_config = None
@@ -389,6 +396,12 @@ class PipecatEngine:
                     embeddings_api_key=self._embeddings_api_key,
                     embeddings_model=self._embeddings_model,
                     embeddings_base_url=self._embeddings_base_url,
+                    embeddings_provider=self._embeddings_provider,
+                    embeddings_endpoint=self._embeddings_endpoint,
+                    embeddings_api_version=self._embeddings_api_version,
+                    correlation_id=self._call_context_vars.get(
+                        MPS_CORRELATION_ID_CONTEXT_KEY
+                    ),
                     tracing_context=self._get_otel_context(),
                 )
 

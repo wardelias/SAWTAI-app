@@ -1,5 +1,52 @@
 # Changelog
 
+## 1.35.0 (2026-06-12)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+## What's Changed
+### Features
+* feat: add config v2 to simplify billing by @a6kme in https://github.com/dograh-hq/dograh/pull/428
+* feat: add Cartesia Sonic 3.5 as a TTS option by @manasseh-zw in https://github.com/dograh-hq/dograh/pull/423
+* feat: add a start docker script by @a6kme in https://github.com/dograh-hq/dograh/pull/426
+* feat: billing and credit management v2 by @a6kme in https://github.com/dograh-hq/dograh/pull/429
+### Bug Fixes
+* fix(telephony): handle Cloudonix CDR webhooks missing session/disposition by @Mubashirrrr in https://github.com/dograh-hq/dograh/pull/407
+
+## New Contributors
+* @manasseh-zw made their first contribution in https://github.com/dograh-hq/dograh/pull/423
+* @Mubashirrrr made their first contribution in https://github.com/dograh-hq/dograh/pull/407
+
+**Full Changelog**: https://github.com/dograh-hq/dograh/compare/dograh-v1.34.0...dograh-v1.35.0
+
+## 1.34.0 (2026-06-03)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+## What's Changed
+### Features
+* feat: add mcp guides for various topic and stages for bot building by @a6kme in https://github.com/dograh-hq/dograh/pull/380
+* feat: allow overriding base URL of OpenAI STT and TTS by @developer603 in https://github.com/dograh-hq/dograh/pull/377
+* feat: add Azure AI multi-provider support (TTS, STT, Embeddings, Realtime) by @vishaldhateria in https://github.com/dograh-hq/dograh/pull/381
+### Bug Fixes
+* fix: support object and array parameters in custom HTTP tools by @mvanhorn in https://github.com/dograh-hq/dograh/pull/373
+* fix(telephony): resolve transfer context via call-sid index instead of KEYS scan by @shiminshen in https://github.com/dograh-hq/dograh/pull/387
+* fix(webrtc): enforce embed allowed-domain policy on public signaling websocket by @shiminshen in https://github.com/dograh-hq/dograh/pull/388
+* fix: use runtime BACKEND_URL for proxying by @a6kme in https://github.com/dograh-hq/dograh/pull/411
+* fix: add CORS preflight handler and ACAO header for embed config endpoint by @nuthalapativarun in https://github.com/dograh-hq/dograh/pull/403
+### Other Changes
+* Add Sarvam LLM, update Sarvam STT models, expose usage_info on run detail by @abhaybabbar in https://github.com/dograh-hq/dograh/pull/351
+* fix: make email lookup case-insensitive in get_user_by_email by @developer603 in https://github.com/dograh-hq/dograh/pull/397
+
+## New Contributors
+* @abhaybabbar made their first contribution in https://github.com/dograh-hq/dograh/pull/351
+* @mvanhorn made their first contribution in https://github.com/dograh-hq/dograh/pull/373
+* @developer603 made their first contribution in https://github.com/dograh-hq/dograh/pull/377
+* @vishaldhateria made their first contribution in https://github.com/dograh-hq/dograh/pull/381
+* @shiminshen made their first contribution in https://github.com/dograh-hq/dograh/pull/387
+
+**Full Changelog**: https://github.com/dograh-hq/dograh/compare/dograh-v1.33.0...dograh-v1.34.0
+
 ## [1.33.0](https://github.com/dograh-hq/dograh/compare/dograh-v1.32.0...dograh-v1.33.0) (2026-05-31)
 
 
