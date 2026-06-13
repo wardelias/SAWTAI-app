@@ -37,7 +37,12 @@ from loguru import logger
 
 from api.services.workflow import pipecat_engine_callbacks as engine_callbacks
 from api.services.workflow.mcp_tool_session import McpToolSession
+from api.services.gender.voice_gender_detector import (
+    NOTE_MIN_CONFIDENCE,
+    GenderEstimate,
+)
 from api.services.workflow.pipecat_engine_context_composer import (
+    CALLER_PROFILE_NOTE_TEMPLATE,
     compose_functions_for_node,
     compose_system_prompt_for_node,
 )
@@ -140,6 +145,11 @@ class PipecatEngine:
         # True when the workflow has active recordings; enables recording
         # response mode instructions on all nodes for in-context learning.
         self._has_recordings: bool = has_recordings
+
+        # Caller profile note from voice-based gender detection. Once set,
+        # it is appended to every node's system prompt so the agent uses the
+        # right gendered address forms (Arabic, Hebrew, ...).
+        self._caller_profile_note: Optional[str] = None
 
         # Background context summarization on node transitions
         self._context_compaction_enabled: bool = context_compaction_enabled
@@ -527,6 +537,7 @@ class PipecatEngine:
             workflow=self.workflow,
             format_prompt=self._format_prompt,
             has_recordings=self._has_recordings,
+            caller_profile_note=self._caller_profile_note,
         )
         functions = await compose_functions_for_node(
             node=node,
@@ -881,6 +892,55 @@ class PipecatEngine:
     async def handle_llm_text_frame(self, text: str):
         """Accumulate LLM text frames to build reference text."""
         self._current_llm_generation_reference_text += text
+
+    async def handle_caller_gender_detected(self, estimate: "GenderEstimate") -> None:
+        """Handle a voice-based gender detection result.
+
+        Stores the result in call context vars (available to prompt templates
+        as ``{{caller_gender}}``) and, when confidence is high enough, appends
+        a caller profile note to the system prompt so the agent addresses the
+        caller with the right gendered forms (Arabic, Hebrew, ...). The
+        current node's prompt is refreshed immediately; subsequent nodes pick
+        the note up through the normal composition path.
+        """
+        logger.info(
+            f"Caller gender detected: {estimate.gender} "
+            f"(confidence={estimate.confidence:.2f}, f0={estimate.median_f0_hz:.0f}Hz)"
+        )
+        self._call_context_vars["caller_gender"] = estimate.gender
+        self._call_context_vars["caller_gender_confidence"] = round(
+            estimate.confidence, 2
+        )
+
+        if estimate.gender not in ("male", "female"):
+            return
+        if estimate.confidence < NOTE_MIN_CONFIDENCE:
+            # Ambiguous voice: leave the prompt untouched so the agent keeps
+            # neutral address instead of risking misgendering the caller.
+            return
+
+        self._caller_profile_note = CALLER_PROFILE_NOTE_TEMPLATE.format(
+            gender=estimate.gender
+        )
+
+        node = self._current_node
+        if node is None or node.is_end:
+            return
+        try:
+            system_prompt = compose_system_prompt_for_node(
+                node=node,
+                workflow=self.workflow,
+                format_prompt=self._format_prompt,
+                has_recordings=self._has_recordings,
+                caller_profile_note=self._caller_profile_note,
+            )
+            # Empty functions list: tools for this node are already registered
+            # and _update_llm_context skips set_tools when the list is empty.
+            await self._update_llm_context(system_prompt, [])
+        except Exception as e:
+            logger.warning(
+                f"Failed to refresh system prompt after gender detection: {e}"
+            )
 
     def is_call_disposed(self):
         """Check whether a call has been disposed by the engine"""
