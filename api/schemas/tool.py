@@ -29,7 +29,11 @@ ToolCategoryValue = Literal[
     "native",
     "integration",
     "mcp",
+    "behavior",
 ]
+
+BehaviorScope = Literal["global", "node"]
+BehaviorSpecial = Literal["voice_gender_detection"]
 
 
 def _llm_hint(text: str) -> dict[str, str]:
@@ -281,6 +285,46 @@ class McpToolConfig(BaseModel):
         return v
 
 
+class BehaviorConfig(BaseModel):
+    """Configuration for Behavior tools.
+
+    A Behavior injects curated instructions into the agent's system prompt
+    instead of registering a callable function. It can apply to the whole
+    agent (``scope="global"``) or to specific nodes (``scope="node"``).
+    """
+
+    instructions: str = Field(
+        default="",
+        description=(
+            "Instruction text appended to the agent's system prompt under a "
+            "BEHAVIOR GUIDELINES heading."
+        ),
+        json_schema_extra=_llm_hint(
+            "Write as direct instructions to the agent, e.g. 'Keep replies short "
+            "and conversational.'"
+        ),
+    )
+    scope: BehaviorScope = Field(
+        default="global",
+        description=(
+            "'global' applies to the whole agent; 'node' applies only where the "
+            "behavior is attached to a node."
+        ),
+    )
+    preset_id: Optional[str] = Field(
+        default=None,
+        description="Id of the built-in preset this behavior was created from, if any.",
+    )
+    special: Optional[BehaviorSpecial] = Field(
+        default=None,
+        description=(
+            "Marks a behavior that toggles a runtime capability rather than only "
+            "injecting text (e.g. 'voice_gender_detection' enables voice gender "
+            "detection)."
+        ),
+    )
+
+
 class HttpApiToolDefinition(BaseModel):
     """Tool definition for HTTP API tools."""
 
@@ -320,6 +364,14 @@ class McpToolDefinition(BaseModel):
     config: McpToolConfig = Field(description="MCP server configuration.")
 
 
+class BehaviorToolDefinition(BaseModel):
+    """Tool definition for Behavior tools."""
+
+    schema_version: int = Field(default=1, description="Schema version.")
+    type: Literal["behavior"] = Field(description="Tool type.")
+    config: BehaviorConfig = Field(description="Behavior configuration.")
+
+
 ToolDefinition = Annotated[
     Union[
         HttpApiToolDefinition,
@@ -327,6 +379,7 @@ ToolDefinition = Annotated[
         TransferCallToolDefinition,
         CalculatorToolDefinition,
         McpToolDefinition,
+        BehaviorToolDefinition,
     ],
     Field(discriminator="type"),
 ]
@@ -438,3 +491,15 @@ class McpRefreshResponse(BaseModel):
     tool_uuid: str
     discovered_tools: list = Field(default_factory=list)
     error: Optional[str] = None
+
+
+class BehaviorPresetResponse(BaseModel):
+    """A built-in Behavior preset shown in the UI library."""
+
+    id: str
+    name: str
+    description: str
+    icon: str
+    icon_color: str
+    instructions: str
+    special: Optional[str] = None

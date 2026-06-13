@@ -43,6 +43,9 @@ import { TOOL_DOCUMENTATION_URLS } from "@/constants/documentation";
 import { useAuth } from "@/lib/auth";
 
 import {
+    type BehaviorPreset,
+    type BehaviorScope,
+    createBehaviorDefinition,
     createMcpDefinition,
     DEFAULT_END_CALL_REASON_DESCRIPTION,
     type EndCallMessageType,
@@ -52,7 +55,7 @@ import {
     renderToolIcon,
     type ToolCategory,
 } from "../config";
-import { BuiltinToolConfig, EndCallToolConfig, HttpApiToolConfig, TransferCallToolConfig } from "./components";
+import { BehaviorToolConfig, BuiltinToolConfig, EndCallToolConfig, HttpApiToolConfig, TransferCallToolConfig } from "./components";
 
 function normalizeParameterType(value: string | null | undefined): ParameterType {
     switch (value) {
@@ -119,6 +122,20 @@ export default function ToolDetailPage() {
     const [mcpUrl, setMcpUrl] = useState("");
     const [mcpCredentialUuid, setMcpCredentialUuid] = useState("");
     const [mcpToolsFilter, setMcpToolsFilter] = useState("");
+
+    // Behavior form state
+    const [behaviorInstructions, setBehaviorInstructions] = useState("");
+    const [behaviorScope, setBehaviorScope] = useState<BehaviorScope>("global");
+    const [behaviorPresetId, setBehaviorPresetId] = useState<string | null>(null);
+    const [behaviorSpecial, setBehaviorSpecial] = useState<string | null>(null);
+
+    const applyBehaviorPreset = (preset: BehaviorPreset) => {
+        setBehaviorInstructions(preset.instructions);
+        setBehaviorPresetId(preset.id);
+        setBehaviorSpecial(preset.special ?? null);
+        if (!name || name === "New Behavior") setName(preset.name);
+        if (!description) setDescription(preset.description);
+    };
 
     // Org-level recordings for audio dropdowns
     const [recordings, setRecordings] = useState<RecordingResponseSchema[]>([]);
@@ -211,6 +228,14 @@ export default function ToolDetailPage() {
                 setMcpCredentialUuid("");
                 setMcpToolsFilter("");
             }
+        } else if (tool.category === "behavior") {
+            const config = tool.definition?.config as
+                | { instructions?: string; scope?: BehaviorScope; preset_id?: string | null; special?: string | null }
+                | undefined;
+            setBehaviorInstructions(config?.instructions || "");
+            setBehaviorScope(config?.scope || "global");
+            setBehaviorPresetId(config?.preset_id ?? null);
+            setBehaviorSpecial(config?.special ?? null);
         } else {
             // Populate HTTP API specific fields
             const config = tool.definition?.config as HttpApiToolDefinition["config"] | undefined;
@@ -311,6 +336,8 @@ export default function ToolDetailPage() {
                 setError("MCP server URL must start with http:// or https://");
                 return;
             }
+        } else if (tool.category === "behavior") {
+            // Behaviors only need instruction text; nothing else to validate.
         } else if (tool.category !== "end_call") {
             // Validate URL for HTTP API tools
             const urlValidation = validateUrl(url);
@@ -392,6 +419,19 @@ export default function ToolDetailPage() {
                     name,
                     description: description || undefined,
                     definition: createMcpDefinition(mcpUrl, mcpCredentialUuid, mcpToolsFilter),
+                };
+            } else if (tool.category === "behavior") {
+                requestBody = {
+                    name,
+                    description: description || undefined,
+                    // Cast: the generated client does not yet include the behavior
+                    // tool definition type (run `npm run generate-client`).
+                    definition: createBehaviorDefinition(
+                        behaviorInstructions,
+                        behaviorScope,
+                        behaviorPresetId,
+                        behaviorSpecial,
+                    ) as unknown as UpdateToolRequest["definition"],
                 };
             } else {
                 // Build HTTP API request body
@@ -552,6 +592,7 @@ const data = await response.json();`;
     const isTransferCallTool = tool.category === "transfer_call";
     const isBuiltinTool = tool.category === "calculator";
     const isMcpTool = tool.category === "mcp";
+    const isBehaviorTool = tool.category === "behavior";
     const categoryConfig = getCategoryConfig(tool.category as ToolCategory);
 
     return (
@@ -587,7 +628,7 @@ const data = await response.json();`;
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
-                            {!isEndCallTool && !isTransferCallTool && !isBuiltinTool && !isMcpTool && (
+                            {!isEndCallTool && !isTransferCallTool && !isBuiltinTool && !isMcpTool && !isBehaviorTool && (
                                 <Button
                                     variant="outline"
                                     onClick={() => setShowCodeDialog(true)}
@@ -610,7 +651,20 @@ const data = await response.json();`;
                         </div>
                     </div>
 
-                    {isBuiltinTool ? (
+                    {isBehaviorTool ? (
+                        <BehaviorToolConfig
+                            name={name}
+                            onNameChange={setName}
+                            description={description}
+                            onDescriptionChange={setDescription}
+                            instructions={behaviorInstructions}
+                            onInstructionsChange={setBehaviorInstructions}
+                            scope={behaviorScope}
+                            onScopeChange={setBehaviorScope}
+                            onApplyPreset={applyBehaviorPreset}
+                            special={behaviorSpecial}
+                        />
+                    ) : isBuiltinTool ? (
                         <BuiltinToolConfig
                             name={name}
                             onNameChange={setName}

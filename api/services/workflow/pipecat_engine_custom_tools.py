@@ -27,6 +27,7 @@ from api.services.pipecat.audio_playback import play_audio, play_audio_loop
 from api.services.telephony.call_transfer_manager import get_call_transfer_manager
 from api.services.telephony.factory import get_telephony_provider_for_run
 from api.services.telephony.transfer_event_protocol import TransferContext
+from api.services.workflow.behaviors.resolver import extract_behaviors
 from api.services.workflow.tools.book_meeting import get_book_meeting_tools
 from api.services.workflow.tools.calculator import get_calculator_tools, safe_calculator
 from api.services.workflow.tools.custom_tool import (
@@ -191,6 +192,10 @@ class CustomToolManager:
                     schemas.extend(session.function_schemas(allowed))
                     continue
 
+                if tool.category == ToolCategory.BEHAVIOR.value:
+                    # Behaviors inject prompt instructions, not callable functions.
+                    continue
+
                 raw_schema = tool_to_function_schema(tool)
                 function_name = raw_schema["function"]["name"]
 
@@ -214,6 +219,28 @@ class CustomToolManager:
         except Exception as e:
             logger.error(f"Failed to fetch custom tools: {e}")
             return []
+
+    async def get_behavior_instructions(self, tool_uuids: list[str]) -> list[str]:
+        """Return prompt instructions for behavior-category tools among ``tool_uuids``.
+
+        Behavior tools inject text into the system prompt rather than
+        registering callable functions, so they are resolved separately from
+        :meth:`get_tool_schemas`.
+        """
+        if not tool_uuids:
+            return []
+        organization_id = await self.get_organization_id()
+        if not organization_id:
+            return []
+        try:
+            tools = await db_client.get_tools_by_uuids(
+                list(tool_uuids), organization_id
+            )
+        except Exception as e:
+            logger.error(f"Failed to fetch behavior tools: {e}")
+            return []
+        instructions, _specials = extract_behaviors(tools)
+        return instructions
 
     async def register_handlers(
         self,
@@ -277,6 +304,10 @@ class CustomToolManager:
                         f"Registered {len(mcp_schemas)} MCP "
                         f"handlers for tool '{tool.name}' ({tool.tool_uuid})"
                     )
+                    continue
+
+                if tool.category == ToolCategory.BEHAVIOR.value:
+                    # Behaviors inject prompt instructions, not callable functions.
                     continue
 
                 schema = tool_to_function_schema(tool)

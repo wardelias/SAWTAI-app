@@ -1,14 +1,14 @@
 "use client";
 
 import { format } from "date-fns";
-import { ArrowLeft, BookA, Brain, CalendarIcon, Clipboard, Download, ExternalLink, FileDown, Fingerprint, Loader2, Mic, Pause, PhoneOff, Play, Rocket, Settings, Trash2Icon, Upload, Variable, X } from "lucide-react";
+import { ArrowLeft, BookA, Brain, CalendarIcon, Clipboard, Download, ExternalLink, FileDown, Fingerprint, Loader2, Mic, Pause, PhoneOff, Play, Rocket, Settings, Sparkles, Trash2Icon, Upload, Variable, X } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { downloadWorkflowReportApiV1WorkflowWorkflowIdReportGet, getAmbientNoiseUploadUrlApiV1WorkflowAmbientNoiseUploadUrlPost, getWorkflowApiV1WorkflowFetchWorkflowIdGet } from "@/client/sdk.gen";
-import type { WorkflowResponse } from "@/client/types.gen";
+import { downloadWorkflowReportApiV1WorkflowWorkflowIdReportGet, getAmbientNoiseUploadUrlApiV1WorkflowAmbientNoiseUploadUrlPost, getWorkflowApiV1WorkflowFetchWorkflowIdGet, listToolsApiV1ToolsGet } from "@/client/sdk.gen";
+import type { ToolResponse, WorkflowResponse } from "@/client/types.gen";
 import { FlowEdge, FlowNode } from "@/components/flow/types";
 import { LLMConfigSelector } from "@/components/LLMConfigSelector";
 import { ServiceConfigurationForm } from "@/components/ServiceConfigurationForm";
@@ -78,6 +78,7 @@ const NAV_ITEMS = [
     { id: "variables", label: "Template Variables", icon: Variable },
     { id: "dictionary", label: "Dictionary", icon: BookA },
     { id: "voicemail", label: "Voicemail Detection", icon: PhoneOff },
+    { id: "behaviors", label: "Behaviors", icon: Sparkles },
     { id: "recordings", label: "Recordings", icon: Mic },
     { id: "deployment", label: "Add to Website", icon: Rocket },
     { id: "report", label: "Report", icon: FileDown },
@@ -271,9 +272,6 @@ function GeneralSection({
     const [contextCompactionEnabled, setContextCompactionEnabled] = useState(
         workflowConfigurations.context_compaction_enabled ?? false,
     );
-    const [voiceGenderDetectionEnabled, setVoiceGenderDetectionEnabled] = useState(
-        workflowConfigurations.voice_gender_detection?.enabled ?? true,
-    );
     const [isSaving, setIsSaving] = useState(false);
     const [isUploadingAudio, setIsUploadingAudio] = useState(false);
     const [audioUploadError, setAudioUploadError] = useState<string | null>(null);
@@ -289,10 +287,9 @@ function GeneralSection({
             maxUserIdleTimeout !== (workflowConfigurations.max_user_idle_timeout || 10) ||
             smartTurnStopSecs !== (workflowConfigurations.smart_turn_stop_secs || 2) ||
             turnStopStrategy !== (workflowConfigurations.turn_stop_strategy || "transcription") ||
-            contextCompactionEnabled !== (workflowConfigurations.context_compaction_enabled ?? false) ||
-            voiceGenderDetectionEnabled !== (workflowConfigurations.voice_gender_detection?.enabled ?? true)
+            contextCompactionEnabled !== (workflowConfigurations.context_compaction_enabled ?? false)
         );
-    }, [name, workflowName, ambientNoiseConfig, maxCallDuration, maxUserIdleTimeout, smartTurnStopSecs, turnStopStrategy, contextCompactionEnabled, voiceGenderDetectionEnabled, workflowConfigurations]);
+    }, [name, workflowName, ambientNoiseConfig, maxCallDuration, maxUserIdleTimeout, smartTurnStopSecs, turnStopStrategy, contextCompactionEnabled, workflowConfigurations]);
 
     useUnsavedChanges("general", isDirty);
 
@@ -366,7 +363,6 @@ function GeneralSection({
                     smart_turn_stop_secs: smartTurnStopSecs,
                     turn_stop_strategy: turnStopStrategy,
                     context_compaction_enabled: contextCompactionEnabled,
-                    voice_gender_detection: { enabled: voiceGenderDetectionEnabled },
                 },
                 name,
             );
@@ -599,28 +595,6 @@ function GeneralSection({
                             id="context-compaction-enabled"
                             checked={contextCompactionEnabled}
                             onCheckedChange={setContextCompactionEnabled}
-                        />
-                    </div>
-                </div>
-
-                <Separator />
-
-                {/* Voice Gender Detection */}
-                <div className="space-y-4">
-                    <div>
-                        <h3 className="text-sm font-medium">Caller Gender Adaptation</h3>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                            Estimate the caller&apos;s gender from their voice pitch in the first few seconds of the call, so the agent can use the correct gendered forms in grammatically gendered languages (Arabic, Hebrew). When the voice is ambiguous, the agent keeps neutral address rather than risk misgendering.
-                        </p>
-                    </div>
-                    <div className="flex items-center justify-between">
-                        <Label htmlFor="voice-gender-detection-enabled" className="text-sm">
-                            Enable Caller Gender Adaptation
-                        </Label>
-                        <Switch
-                            id="voice-gender-detection-enabled"
-                            checked={voiceGenderDetectionEnabled}
-                            onCheckedChange={setVoiceGenderDetectionEnabled}
                         />
                     </div>
                 </div>
@@ -865,6 +839,117 @@ function DictionarySection({
 // ---------------------------------------------------------------------------
 // Section: Voicemail Detection
 // ---------------------------------------------------------------------------
+
+function BehaviorsSection({
+    workflowConfigurations,
+    workflowName,
+    onSave,
+}: {
+    workflowConfigurations: WorkflowConfigurations;
+    workflowName: string;
+    onSave: (configurations: WorkflowConfigurations, workflowName: string) => Promise<void>;
+}) {
+    const { user, loading: authLoading, getAccessToken } = useAuth();
+    const [behaviorTools, setBehaviorTools] = useState<ToolResponse[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [enabledUuids, setEnabledUuids] = useState<string[]>(
+        workflowConfigurations.behaviors ?? [],
+    );
+    const [isSaving, setIsSaving] = useState(false);
+    const hasFetched = useRef(false);
+
+    useEffect(() => {
+        if (authLoading || !user || hasFetched.current) return;
+        hasFetched.current = true;
+        (async () => {
+            try {
+                const accessToken = await getAccessToken();
+                const response = await listToolsApiV1ToolsGet({
+                    headers: { Authorization: `Bearer ${accessToken}` },
+                    query: { status: "active", category: "behavior" },
+                });
+                if (response.data) setBehaviorTools(response.data);
+            } catch (error) {
+                logger.error(`Failed to load behavior tools: ${error}`);
+            } finally {
+                setIsLoading(false);
+            }
+        })();
+    }, [authLoading, user, getAccessToken]);
+
+    const initial = useMemo(() => workflowConfigurations.behaviors ?? [], [workflowConfigurations]);
+    const isDirty = useMemo(
+        () => JSON.stringify([...enabledUuids].sort()) !== JSON.stringify([...initial].sort()),
+        [enabledUuids, initial],
+    );
+    useUnsavedChanges("behaviors", isDirty);
+
+    const toggle = (uuid: string, on: boolean) => {
+        setEnabledUuids((prev) => (on ? [...new Set([...prev, uuid])] : prev.filter((u) => u !== uuid)));
+    };
+
+    const handleSave = async () => {
+        setIsSaving(true);
+        try {
+            await onSave({ ...workflowConfigurations, behaviors: enabledUuids }, workflowName);
+        } catch (error) {
+            console.error("Failed to save behaviors:", error);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    return (
+        <Card id="behaviors">
+            <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                    <Sparkles className="h-4 w-4" />
+                    Behaviors
+                </CardTitle>
+                <CardDescription>
+                    Behaviors inject curated instructions into this agent&apos;s prompt across the whole
+                    call. Create and edit behaviors under{" "}
+                    <Link href="/tools" className="underline">Tools</Link>; attach them to specific
+                    nodes from a node&apos;s tool picker instead.
+                </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                {isLoading ? (
+                    <p className="text-sm text-muted-foreground">Loading behaviors…</p>
+                ) : behaviorTools.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                        No behaviors yet.{" "}
+                        <Link href="/tools" className="underline">Create one</Link> (Tool type
+                        &quot;Behavior&quot;) to enable it here.
+                    </p>
+                ) : (
+                    behaviorTools.map((tool) => (
+                        <div
+                            key={tool.tool_uuid}
+                            className="flex items-center justify-between rounded-md border bg-muted/20 p-3"
+                        >
+                            <div className="min-w-0 pr-3">
+                                <div className="text-sm font-medium">{tool.name}</div>
+                                {tool.description && (
+                                    <p className="truncate text-xs text-muted-foreground">{tool.description}</p>
+                                )}
+                            </div>
+                            <Switch
+                                checked={enabledUuids.includes(tool.tool_uuid)}
+                                onCheckedChange={(on) => toggle(tool.tool_uuid, on)}
+                            />
+                        </div>
+                    ))
+                )}
+            </CardContent>
+            <CardFooter className="justify-end">
+                <Button onClick={handleSave} disabled={isSaving || !isDirty}>
+                    {isSaving ? "Saving..." : "Save Behaviors"}
+                </Button>
+            </CardFooter>
+        </Card>
+    );
+}
 
 function VoicemailSection({
     workflowConfigurations,
@@ -1288,6 +1373,13 @@ function WorkflowSettingsInner({
 
                             {/* Voicemail Detection */}
                             <VoicemailSection
+                                workflowConfigurations={workflowConfigurations}
+                                workflowName={workflowName}
+                                onSave={saveWorkflowConfigurations}
+                            />
+
+                            {/* Behaviors */}
+                            <BehaviorsSection
                                 workflowConfigurations={workflowConfigurations}
                                 workflowName={workflowName}
                                 onSave={saveWorkflowConfigurations}

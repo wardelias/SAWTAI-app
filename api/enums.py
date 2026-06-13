@@ -136,6 +136,7 @@ class ToolCategory(Enum):
     INTEGRATION = "integration"  # Third-party integrations (future: Google Calendar, Salesforce, etc.)
     MCP = "mcp"  # Customer-provided MCP server exposing a tool catalog
     BOOK_MEETING = "book_meeting"  # Built-in: book a calendar meeting during a call
+    BEHAVIOR = "behavior"  # Injects curated instructions into the agent's system prompt
 
 
 class ToolStatus(Enum):

@@ -151,6 +151,12 @@ class PipecatEngine:
         # right gendered address forms (Arabic, Hebrew, ...).
         self._caller_profile_note: Optional[str] = None
 
+        # Instruction text from global Behavior tools (workflow-level), appended
+        # to every node's system prompt. Resolved once in run_pipeline and set
+        # via set_global_behavior_instructions. Node-level behaviors are
+        # resolved per node from node.tool_uuids.
+        self._global_behavior_instructions: list[str] = []
+
         # Background context summarization on node transitions
         self._context_compaction_enabled: bool = context_compaction_enabled
         self._context_summarization_manager: Optional[ContextSummarizationManager] = (
@@ -501,6 +507,29 @@ class PipecatEngine:
                 f"Incomplete: {incomplete}"
             )
 
+    def set_global_behavior_instructions(self, instructions: list[str]) -> None:
+        """Set workflow-level Behavior instructions (resolved in run_pipeline)."""
+        self._global_behavior_instructions = list(instructions or [])
+
+    async def _resolve_behavior_instructions(self, node: Optional[Node]) -> list[str]:
+        """Resolve Behavior instructions for a node: global + node-attached.
+
+        Returns a de-duplicated, order-preserving list combining the
+        workflow-level behaviors with any behavior tools attached to ``node``.
+        """
+        instructions: list[str] = list(self._global_behavior_instructions)
+        if node is not None and node.tool_uuids and self._custom_tool_manager:
+            instructions += await self._custom_tool_manager.get_behavior_instructions(
+                node.tool_uuids
+            )
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for instr in instructions:
+            if instr and instr not in seen:
+                seen.add(instr)
+                deduped.append(instr)
+        return deduped
+
     async def _setup_llm_context(self, node: Node) -> None:
         """Common method to set up LLM context"""
         # Set OTel span name for tracing
@@ -532,12 +561,14 @@ class PipecatEngine:
             await self._register_knowledge_base_function(node.document_uuids)
 
         # Compose prompt and functions via the context composer module
+        behavior_instructions = await self._resolve_behavior_instructions(node)
         system_prompt = compose_system_prompt_for_node(
             node=node,
             workflow=self.workflow,
             format_prompt=self._format_prompt,
             has_recordings=self._has_recordings,
             caller_profile_note=self._caller_profile_note,
+            behavior_instructions=behavior_instructions,
         )
         functions = await compose_functions_for_node(
             node=node,
@@ -927,12 +958,14 @@ class PipecatEngine:
         if node is None or node.is_end:
             return
         try:
+            behavior_instructions = await self._resolve_behavior_instructions(node)
             system_prompt = compose_system_prompt_for_node(
                 node=node,
                 workflow=self.workflow,
                 format_prompt=self._format_prompt,
                 has_recordings=self._has_recordings,
                 caller_profile_note=self._caller_profile_note,
+                behavior_instructions=behavior_instructions,
             )
             # Empty functions list: tools for this node are already registered
             # and _update_llm_context skips set_tools when the list is empty.

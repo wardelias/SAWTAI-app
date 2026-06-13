@@ -9,6 +9,7 @@ from api.db import db_client
 from api.enums import WorkflowRunMode
 from api.services.configuration.registry import ServiceProviders
 from api.services.gender.voice_gender_detector import VoiceGenderDetector
+from api.services.workflow.behaviors.resolver import extract_behaviors
 from api.services.integrations import (
     IntegrationRuntimeContext,
     create_runtime_sessions,
@@ -719,6 +720,29 @@ async def _run_pipeline(
     # so agents can use correct gendered address forms (Arabic, Hebrew, ...).
     # Enabled by default; disable globally with VOICE_GENDER_DETECTION_ENABLED=false
     # or per workflow via workflow_configurations.voice_gender_detection.enabled.
+    # Resolve global (workflow-level) Behavior tools: their instructions are
+    # injected into every node's system prompt, and any "special" flags toggle
+    # runtime capabilities (e.g. voice gender detection).
+    behavior_specials: set[str] = set()
+    global_behavior_uuids = (workflow.workflow_configurations or {}).get(
+        "behaviors", []
+    ) or []
+    if global_behavior_uuids:
+        try:
+            behavior_tools = await db_client.get_tools_by_uuids(
+                list(global_behavior_uuids), workflow.organization_id
+            )
+            behavior_instructions, behavior_specials = extract_behaviors(
+                behavior_tools
+            )
+            engine.set_global_behavior_instructions(behavior_instructions)
+            logger.info(
+                f"Loaded {len(behavior_instructions)} global behavior(s) "
+                f"(specials={sorted(behavior_specials)})"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to resolve global behaviors: {e}")
+
     gender_detector = None
     gender_config = (workflow.workflow_configurations or {}).get(
         "voice_gender_detection", {}
@@ -726,7 +750,7 @@ async def _run_pipeline(
     gender_detection_enabled = gender_config.get(
         "enabled",
         os.getenv("VOICE_GENDER_DETECTION_ENABLED", "true").lower() == "true",
-    )
+    ) or ("voice_gender_detection" in behavior_specials)
     if gender_detection_enabled:
         # Seed the template var so {{caller_gender}} renders before detection.
         merged_call_context_vars.setdefault("caller_gender", "unknown")
