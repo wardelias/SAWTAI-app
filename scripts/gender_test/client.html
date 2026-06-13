@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Voice Gender Detection — Test Harness</title>
+<style>
+  :root {
+    --bg: #0f1115; --card: #181b22; --line: #2a2f3a; --text: #e7e9ee;
+    --muted: #9aa3b2; --male: #4f9dff; --female: #ff6fae; --ok: #2ecc71;
+    --warn: #f1c40f; --accent: #6c8cff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg); color: var(--text); display: flex; justify-content: center;
+    min-height: 100vh; padding: 32px 16px;
+  }
+  .wrap { width: 100%; max-width: 540px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 24px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 24px; margin-bottom: 16px;
+  }
+  button {
+    font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 12px 20px;
+    cursor: pointer; background: var(--accent); color: #fff; transition: opacity .15s;
+  }
+  button:disabled { opacity: .45; cursor: default; }
+  button.secondary { background: #2a2f3a; color: var(--text); }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .status { color: var(--muted); font-size: 14px; min-height: 20px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    background: #555; margin-right: 8px; vertical-align: middle; }
+  .dot.live { background: var(--ok); box-shadow: 0 0 0 4px rgba(46,204,113,.18); }
+  .dot.err { background: #e74c3c; }
+  .result { text-align: center; padding: 8px 0 4px; }
+  .verdict { font-size: 34px; font-weight: 700; letter-spacing: .3px; margin: 4px 0; }
+  .verdict.male { color: var(--male); }
+  .verdict.female { color: var(--female); }
+  .verdict.unknown { color: var(--muted); }
+  .conf { font-size: 15px; color: var(--muted); }
+  .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
+  .metric { background: #11141b; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .metric .k { font-size: 12px; color: var(--muted); }
+  .metric .v { font-size: 16px; font-weight: 600; margin-top: 2px; }
+  .banner { margin-top: 18px; padding: 12px 14px; border-radius: 10px; font-size: 14px; }
+  .banner.ok { background: rgba(46,204,113,.12); border: 1px solid rgba(46,204,113,.4); }
+  .banner.warn { background: rgba(241,196,15,.12); border: 1px solid rgba(241,196,15,.4); }
+  .hidden { display: none; }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 14px; }
+  .meter { height: 8px; border-radius: 6px; background: #11141b; overflow: hidden; margin-top: 6px; }
+  .meter > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .08s; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Voice Gender Detection — Test Harness</h1>
+  <p class="sub">Talk for a couple of seconds. This runs the production F0 detector on your live mic.</p>
+
+  <div class="card">
+    <div class="row">
+      <button id="connect">Start listening</button>
+      <button id="again" class="secondary hidden">Test again</button>
+    </div>
+    <div class="status" id="status" style="margin-top:14px;">
+      <span class="dot" id="dot"></span><span id="statusText">Idle — click “Start listening”.</span>
+    </div>
+    <div class="hint">Mic input level <div class="meter"><span id="level"></span></div></div>
+  </div>
+
+  <div class="card result hidden" id="resultCard">
+    <div class="conf">Detected voice</div>
+    <div class="verdict unknown" id="verdict">—</div>
+    <div class="conf" id="confLine"></div>
+    <div class="metrics">
+      <div class="metric"><div class="k">Median pitch (F0)</div><div class="v" id="mF0">—</div></div>
+      <div class="metric"><div class="k">Confidence</div><div class="v" id="mConf">—</div></div>
+      <div class="metric"><div class="k">Voiced speech used</div><div class="v" id="mVoiced">—</div></div>
+      <div class="metric"><div class="k">Threshold</div><div class="v" id="mThresh">—</div></div>
+    </div>
+    <div class="banner" id="banner"></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let pc = null, stream = null, audioCtx = null, levelRAF = null;
+
+function setStatus(text, cls) {
+  $("statusText").textContent = text;
+  $("dot").className = "dot" + (cls ? " " + cls : "");
+}
+
+function showResult(msg) {
+  $("resultCard").classList.remove("hidden");
+  const v = $("verdict");
+  v.textContent = msg.gender;
+  v.className = "verdict " + msg.gender;
+  $("confLine").textContent = `${Math.round(msg.confidence * 100)}% confidence`;
+  $("mF0").textContent = msg.median_f0_hz > 0 ? msg.median_f0_hz.toFixed(1) + " Hz" : "—";
+  $("mConf").textContent = msg.confidence.toFixed(2);
+  $("mVoiced").textContent = msg.voiced_seconds.toFixed(1) + " s";
+  $("mThresh").textContent = "≥ " + msg.threshold.toFixed(2);
+  const banner = $("banner");
+  if (msg.actionable) {
+    banner.className = "banner ok";
+    banner.textContent = `✅ Actionable: above the ${msg.threshold} threshold, so the agent WOULD adapt to ${msg.gender} gendered forms (Arabic/Hebrew).`;
+  } else {
+    banner.className = "banner warn";
+    banner.textContent = `⚠️ Below the ${msg.threshold} threshold (or unknown), so the agent stays NEUTRAL and does not gender its address.`;
+  }
+  setStatus("Done. Click “Test again” to retry with a fresh detector.", "live");
+  $("again").classList.remove("hidden");
+}
+
+function handleMessage(raw) {
+  let msg;
+  try { msg = JSON.parse(raw); } catch { return; }
+  if (msg.type === "gender-result") showResult(msg);
+  else if (msg.type === "status" && msg.value === "listening")
+    setStatus("Listening… keep talking until it decides.", "live");
+}
+
+function startLevelMeter(mediaStream) {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const src = audioCtx.createMediaStreamSource(mediaStream);
+  const analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 512;
+  src.connect(analyser);
+  const buf = new Uint8Array(analyser.fftSize);
+  const tick = () => {
+    analyser.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) { const d = (buf[i] - 128) / 128; sum += d * d; }
+    const rms = Math.sqrt(sum / buf.length);
+    $("level").style.width = Math.min(100, rms * 280) + "%";
+    levelRAF = requestAnimationFrame(tick);
+  };
+  tick();
+}
+
+async function connect() {
+  $("connect").disabled = true;
+  $("again").classList.add("hidden");
+  $("resultCard").classList.add("hidden");
+  setStatus("Requesting microphone…");
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (e) {
+    setStatus("Microphone permission denied.", "err");
+    $("connect").disabled = false;
+    return;
+  }
+  startLevelMeter(stream);
+
+  pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+  const dc = pc.createDataChannel("messages");
+  dc.onmessage = (e) => handleMessage(e.data);
+
+  stream.getAudioTracks().forEach((t) => pc.addTrack(t, stream));
+
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === "connected") setStatus("Connected — start talking.", "live");
+    else if (["failed", "disconnected", "closed"].includes(pc.connectionState))
+      setStatus("Connection " + pc.connectionState + ".", "err");
+  };
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  // Non-trickle: wait for ICE gathering to finish, then post the full SDP.
+  await new Promise((resolve) => {
+    if (pc.iceGatheringState === "complete") return resolve();
+    const check = () => {
+      if (pc.iceGatheringState === "complete") {
+        pc.removeEventListener("icegatheringstatechange", check);
+        resolve();
+      }
+    };
+    pc.addEventListener("icegatheringstatechange", check);
+    setTimeout(resolve, 3000);
+  });
+
+  setStatus("Connecting…");
+  const resp = await fetch("/api/offer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type }),
+  });
+  const answer = await resp.json();
+  await pc.setRemoteDescription(answer);
+}
+
+function teardown() {
+  if (levelRAF) cancelAnimationFrame(levelRAF);
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+  if (pc) { pc.close(); pc = null; }
+  $("level").style.width = "0%";
+}
+
+$("connect").addEventListener("click", connect);
+$("again").addEventListener("click", async () => {
+  teardown();
+  await connect();
+});
+window.addEventListener("beforeunload", teardown);
+</script>
+</body>
+</html>
