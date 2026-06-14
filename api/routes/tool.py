@@ -39,7 +39,6 @@ from api.services.tool_management import (
 from api.services.tool_management import (
     populate_discovered_tools as _populate_discovered_tools,
 )
-from api.services.workflow.tools.book_meeting import BOOK_MEETING_DEFINITION
 
 router = APIRouter(prefix="/tools")
 
@@ -119,11 +118,6 @@ async def list_tools(
     if category:
         validate_category(category)
 
-    try:
-        await _ensure_book_meeting_tool(user.selected_organization_id)
-    except Exception:
-        pass  # never break listing if seed fails
-
     tools = await db_client.get_tools_for_organization(
         user.selected_organization_id,
         status=status,
@@ -147,42 +141,6 @@ async def list_behavior_presets(
     from api.services.workflow.behaviors.presets import BEHAVIOR_PRESETS
 
     return [BehaviorPresetResponse(**preset.to_dict()) for preset in BEHAVIOR_PRESETS]
-
-
-async def _ensure_book_meeting_tool(organization_id: int) -> None:
-    """Seed the built-in book_meeting tool for an org if it doesn't exist yet.
-
-    Called on every list_tools request so existing orgs get it automatically
-    without requiring a data migration.
-    """
-    # Check ALL statuses — if a book_meeting tool exists in any state don't seed again.
-    existing = await db_client.get_tools_for_organization(
-        organization_id,
-        category=ToolCategory.BOOK_MEETING.value,
-        status="active,archived,draft",
-    )
-
-    # Clean up any duplicates created before the idempotency fix.
-    if len(existing) > 1:
-        # Keep the most recently created one, archive the rest silently.
-        keep = max(existing, key=lambda t: t.id)
-        for dupe in existing:
-            if dupe.id != keep.id:
-                await db_client.archive_tool(dupe.tool_uuid, organization_id)
-
-    if existing:
-        return
-
-    await db_client.create_tool(
-        organization_id=organization_id,
-        user_id=None,  # system-seeded; created_by is nullable
-        name="Book Meeting",
-        description="Book a calendar meeting on the caller's behalf during a live call.",
-        category=ToolCategory.BOOK_MEETING.value,
-        definition=BOOK_MEETING_DEFINITION,
-        icon="calendar",
-        icon_color="#6366f1",
-    )
 
 
 @router.post(

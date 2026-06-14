@@ -316,7 +316,7 @@ export default function ToolDetailPage() {
         if (!tool) return;
 
         // Validation based on tool type
-        if (tool.category === "calculator") {
+        if (tool.category === "calculator" || tool.category === "book_meeting") {
             // No validation needed for built-in tools
         } else if (tool.category === "transfer_call") {
             // Validate destination for Transfer Call tools (supports both E.164 and SIP endpoints)
@@ -382,6 +382,13 @@ export default function ToolDetailPage() {
                         schema_version: 1,
                         type: "calculator",
                     },
+                };
+            } else if (tool.category === "book_meeting") {
+                // Built-in seeded tool — only name/description are editable. Omit
+                // the definition so the seeded function schema stays untouched.
+                requestBody = {
+                    name,
+                    description: description || undefined,
                 };
             } else if (tool.category === "end_call") {
                 // Build end call request body
@@ -598,7 +605,8 @@ const data = await response.json();`;
 
     const isEndCallTool = tool.category === "end_call";
     const isTransferCallTool = tool.category === "transfer_call";
-    const isBuiltinTool = tool.category === "calculator";
+    const isBookMeetingTool = tool.category === "book_meeting";
+    const isBuiltinTool = tool.category === "calculator" || isBookMeetingTool;
     const isMcpTool = tool.category === "mcp";
     const isBehaviorTool = tool.category === "behavior";
     const categoryConfig = getCategoryConfig(tool.category as ToolCategory);
@@ -678,8 +686,10 @@ const data = await response.json();`;
                             onNameChange={setName}
                             description={description}
                             onDescriptionChange={setDescription}
-                            title="Calculator Configuration"
-                            subtitle="Built-in calculator for arithmetic operations. No additional configuration needed."
+                            title={isBookMeetingTool ? "Book Meeting Configuration" : "Calculator Configuration"}
+                            subtitle={isBookMeetingTool
+                                ? "Built-in tool that books an appointment on the caller's behalf and saves it to your Calendar. No additional configuration needed."
+                                : "Built-in calculator for arithmetic operations. No additional configuration needed."}
                         />
                     ) : isEndCallTool ? (
                         <EndCallToolConfig
