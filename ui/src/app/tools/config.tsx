@@ -57,6 +57,14 @@ export const BEHAVIOR_PRESETS: BehaviorPreset[] = [
         recommended: true,
     },
     {
+        id: "arabic_feminine_pronunciation",
+        name: "Arabic Feminine Pronunciation",
+        description: "Force feminine Arabic pronunciation for female callers using tashkeel (diacritics).",
+        instructions:
+            "For female callers speaking Arabic, force the correct feminine pronunciation in text-to-speech. Undiacritized Arabic spells masculine and feminine address identically, so the voice defaults to masculine. For every gendered word addressed to the caller (not just the first one): add the diacritic (tashkeel) that makes the feminine reading explicit — especially a kasra under the second-person kaf ـكِ, e.g. write أساعِدُكِ (not أساعدك), شُكراً لكِ, كيف حالُكِ. Prefer feminine verb forms whose letters already differ: present tense ـِين (تُريدِين، تَستطيعِين), imperative ـي (تفضّلي، قولي), and the pronoun أنتِ / ـكِ.",
+        recommended: true,
+    },
+    {
         id: "no_ai_disclosure",
         name: "Stay in Character",
         description: "Never claim or imply that the agent is an AI or a bot.",
