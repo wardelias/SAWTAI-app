@@ -3,13 +3,11 @@
 from types import SimpleNamespace
 
 import numpy as np
-import pytest
 
 from api.services.gender.voice_gender_detector import (
     AMBIGUOUS_MAX_VOICED_WINDOWS,
     NOTE_MIN_CONFIDENCE,
     F0GenderClassifier,
-    GenderEstimate,
     estimate_window_f0,
 )
 from api.services.workflow.pipecat_engine_context_composer import (

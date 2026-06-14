@@ -28,7 +28,6 @@ from typing import Awaitable, Callable, Optional, Protocol, runtime_checkable
 
 import numpy as np
 from loguru import logger
-
 from pipecat.frames.frames import Frame, InputAudioRawFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 

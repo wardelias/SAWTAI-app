@@ -21,7 +21,9 @@ from api.services.gender.neural_gender_detector import (  # noqa: E402
 )
 
 
-def synth_voice(f0: float, seconds: float, sample_rate: int, amp: float = 8000.0) -> bytes:
+def synth_voice(
+    f0: float, seconds: float, sample_rate: int, amp: float = 8000.0
+) -> bytes:
     """Harmonic-rich periodic signal resembling voiced speech (int16 PCM)."""
     t = np.arange(int(seconds * sample_rate)) / sample_rate
     sig = np.zeros_like(t)
@@ -133,9 +135,7 @@ class TestECAPAGenderClassifierStreaming:
             def forward(self, tensor):  # noqa: ANN001
                 raise RuntimeError("boom")
 
-        monkeypatch.setattr(
-            ngd, "_load_model", lambda: (_Boom(), torch.device("cpu"))
-        )
+        monkeypatch.setattr(ngd, "_load_model", lambda: (_Boom(), torch.device("cpu")))
         clf = ECAPAGenderClassifier()
         result = clf.add_audio(synth_voice(110.0, 3.5, 16000), 16000)
         assert result is not None

@@ -37,7 +37,7 @@ from api.services.gender.voice_gender_detector import (
 )
 
 if TYPE_CHECKING:  # avoid importing torch at module load
-    import torch
+    pass
 
 HF_MODEL_ID = "JaesungHuh/voice-gender-classifier"
 MODEL_SAMPLE_RATE = 16000

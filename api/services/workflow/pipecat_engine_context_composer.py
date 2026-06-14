@@ -133,7 +133,9 @@ def compose_system_prompt_for_node(
         parts.append(caller_profile_note)
 
     if behavior_instructions:
-        cleaned = [instr.strip() for instr in behavior_instructions if instr and instr.strip()]
+        cleaned = [
+            instr.strip() for instr in behavior_instructions if instr and instr.strip()
+        ]
         if cleaned:
             bullets = "\n".join(f"- {instr}" for instr in cleaned)
             parts.append(f"{BEHAVIOR_GUIDELINES_HEADER}\n{bullets}")
