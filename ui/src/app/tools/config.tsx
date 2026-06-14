@@ -1,6 +1,6 @@
 "use client";
 
-import { Calculator, Cog, Globe, type LucideIcon, PhoneForwarded, PhoneOff, Puzzle, Sparkles } from "lucide-react";
+import { Calculator, CalendarClock, Cog, Globe, type LucideIcon, PhoneForwarded, PhoneOff, Puzzle, Sparkles } from "lucide-react";
 import { type ReactNode } from "react";
 
 import type {
@@ -13,7 +13,7 @@ import type {
     TransferCallToolDefinition,
 } from "@/client/types.gen";
 
-export type ToolCategory = "http_api" | "end_call" | "transfer_call" | "calculator" | "native" | "integration" | "mcp" | "behavior";
+export type ToolCategory = "http_api" | "end_call" | "transfer_call" | "calculator" | "native" | "integration" | "mcp" | "behavior" | "book_meeting";
 
 export type BehaviorScope = "global" | "node";
 
@@ -125,6 +125,12 @@ export interface ToolCategoryConfig {
     iconName: string; // String name for storing in database
     iconColor: string;
     disabled?: boolean;
+    // Built-in tools are auto-seeded per organization; they are not creatable
+    // from the "Create Tool" dialog, so they are filtered out of that picker.
+    builtin?: boolean;
+    // Surfaced first and badged as "Suggested" in the tools list and the
+    // per-agent tool selector.
+    suggested?: boolean;
     autoFill?: {
         name: string;
         description: string;
@@ -183,6 +189,16 @@ export const TOOL_CATEGORIES: ToolCategoryConfig[] = [
         icon: Puzzle,
         iconName: "puzzle",
         iconColor: "#8B5CF6",
+    },
+    {
+        value: "book_meeting",
+        label: "Book Meeting",
+        description: "Let the agent book an appointment on the caller's behalf during the call, saved to your built-in Calendar.",
+        icon: CalendarClock,
+        iconName: "calendar",
+        iconColor: "#6366F1",
+        builtin: true,
+        suggested: true,
     },
     {
         value: "behavior",
@@ -253,9 +269,17 @@ export function getToolTypeLabel(category: string): string {
             return "MCP Server Tool";
         case "behavior":
             return "Behavior";
+        case "book_meeting":
+            return "Book Meeting Tool";
         default:
             return "Tool";
     }
+}
+
+// Built-in tools we proactively recommend. Surfaced first and badged as
+// "Suggested" in the tools list and the per-agent tool selector.
+export function isSuggestedTool(category: string): boolean {
+    return TOOL_CATEGORIES.some((c) => c.value === category && c.suggested);
 }
 
 export const DEFAULT_END_CALL_REASON_DESCRIPTION =

@@ -46,6 +46,7 @@ import {
     createMcpDefinition,
     createToolDefinition,
     getCategoryConfig,
+    isSuggestedTool,
     MCP_URL_PATTERN,
     renderToolIcon,
     TOOL_CATEGORIES,
@@ -251,7 +252,10 @@ export default function ToolsPage() {
             tool.description?.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
-    const activeTools = filteredTools.filter((tool) => tool.status === "active");
+    const activeTools = filteredTools
+        .filter((tool) => tool.status === "active")
+        // Surface suggested built-in tools (e.g. Book Meeting) first.
+        .sort((a, b) => Number(isSuggestedTool(b.category)) - Number(isSuggestedTool(a.category)));
     const archivedTools = filteredTools.filter((tool) => tool.status === "archived");
 
     const getCategoryBadge = (category: string) => {
@@ -270,6 +274,8 @@ export default function ToolsPage() {
                 return <Badge variant="outline">MCP</Badge>;
             case "behavior":
                 return <Badge variant="secondary">Behavior</Badge>;
+            case "book_meeting":
+                return <Badge variant="secondary">Book Meeting</Badge>;
             default:
                 return <Badge variant="outline">{category}</Badge>;
         }
@@ -404,6 +410,11 @@ export default function ToolsPage() {
                                                                     {tool.name}
                                                                 </span>
                                                                 {getCategoryBadge(tool.category)}
+                                                                {isSuggestedTool(tool.category) && (
+                                                                    <Badge variant="outline" className="border-primary/40 text-primary">
+                                                                        Suggested
+                                                                    </Badge>
+                                                                )}
                                                             </div>
                                                             {tool.description && (
                                                                 <p className="text-sm text-muted-foreground mt-1">
@@ -538,7 +549,7 @@ export default function ToolsPage() {
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    {TOOL_CATEGORIES.map((category) => (
+                                    {TOOL_CATEGORIES.filter((category) => !category.builtin).map((category) => (
                                         <SelectItem
                                             key={category.value}
                                             value={category.value}

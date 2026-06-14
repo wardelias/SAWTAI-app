@@ -4,7 +4,7 @@ import { ExternalLink, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
-import { renderToolIcon } from "@/app/tools/config";
+import { isSuggestedTool, renderToolIcon } from "@/app/tools/config";
 import { useWorkflowOptional } from "@/app/workflow/[workflowId]/contexts/WorkflowContext";
 import type { ToolResponse } from "@/client/types.gen";
 import { Button } from "@/components/ui/button";
@@ -78,7 +78,10 @@ export function ToolSelector({
 }: ToolSelectorProps) {
     const workflow = useWorkflowOptional();
     const activeTools = tools.filter((t) => t.status === "active");
-    const httpTools = activeTools.filter((t) => !isMcp(t));
+    const httpTools = activeTools
+        .filter((t) => !isMcp(t))
+        // Surface suggested built-in tools (e.g. Book Meeting) at the top.
+        .sort((a, b) => Number(isSuggestedTool(b.category)) - Number(isSuggestedTool(a.category)));
     const mcpTools = activeTools.filter(isMcp);
 
     const [refreshing, setRefreshing] = useState<Record<string, boolean>>({});
@@ -207,8 +210,13 @@ export function ToolSelector({
                                             {renderToolIcon(tool.category, "h-3 w-3 text-white")}
                                         </div>
                                         <div className="flex flex-col min-w-0 flex-1">
-                                            <span className="text-sm font-medium truncate">
-                                                {tool.name}
+                                            <span className="flex items-center gap-2 text-sm font-medium">
+                                                <span className="truncate">{tool.name}</span>
+                                                {isSuggestedTool(tool.category) && (
+                                                    <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                                                        Suggested
+                                                    </span>
+                                                )}
                                             </span>
                                             {tool.description && (
                                                 <span className="text-xs text-muted-foreground break-words">
