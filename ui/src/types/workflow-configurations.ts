@@ -1,3 +1,5 @@
+import type { OrganizationAiModelConfigurationV2 } from "@/client/types.gen";
+
 export interface AmbientNoiseConfiguration {
     enabled: boolean;
     volume: number;
@@ -24,14 +26,20 @@ export const DEFAULT_VOICEMAIL_DETECTION_CONFIGURATION: VoicemailDetectionConfig
     long_speech_timeout: 8.0,
 };
 
+// "ecapa" = neural ECAPA-TDNN classifier (more accurate, default).
+// "f0" = lightweight pitch-based classifier (no model, telephony-robust fallback).
+export type VoiceGenderBackend = 'ecapa' | 'f0';
+
 export interface VoiceGenderDetectionConfiguration {
     enabled: boolean;
+    backend?: VoiceGenderBackend;
 }
 
-// Detection runs by default on the backend (VOICE_GENDER_DETECTION_ENABLED),
-// so the UI treats an absent config as enabled.
+// Detection runs by default on the backend (VOICE_GENDER_DETECTION_ENABLED) with
+// the neural "ecapa" classifier, so the UI treats an absent config as enabled/ecapa.
 export const DEFAULT_VOICE_GENDER_DETECTION_CONFIGURATION: VoiceGenderDetectionConfiguration = {
     enabled: true,
+    backend: 'ecapa',
 };
 
 export interface ModelOverrides {
@@ -76,6 +84,7 @@ export interface WorkflowConfigurations {
     behaviors?: string[];  // tool_uuids of Behavior tools enabled globally for the whole agent
     context_compaction_enabled?: boolean;  // Summarize context on node transitions to remove stale tool calls
     model_overrides?: ModelOverrides;  // Per-workflow model configuration overrides
+    model_configuration_v2_override?: OrganizationAiModelConfigurationV2;  // Full v2 model configuration override
     [key: string]: unknown;  // Allow additional properties for future configurations
 }
 

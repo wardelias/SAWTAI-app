@@ -10,6 +10,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsUpDown,
+  CircleDollarSign,
   CreditCard,
   Database,
   FileText,
@@ -155,6 +156,11 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         title: "Agent Runs",
         url: "/usage",
         icon: TrendingUp,
+      },
+      {
+        title: "Billing",
+        url: "/billing",
+        icon: CircleDollarSign,
       },
       {
         title: "Reports",

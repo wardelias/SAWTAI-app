@@ -8,8 +8,8 @@ from groq import Groq
 #     from pyneuphonic import Neuphonic
 # except ImportError:
 #     Neuphonic = None
-from api.schemas.user_configuration import (
-    UserConfiguration,
+from api.schemas.ai_model_configuration import (
+    EffectiveAIModelConfiguration,
 )
 from api.services.configuration.registry import ServiceConfig, ServiceProviders
 from api.services.mps_service_key_client import mps_service_key_client
@@ -41,6 +41,7 @@ class UserConfigurationValidator:
             ServiceProviders.ELEVENLABS.value: self._validate_elevenlabs_api_key,
             ServiceProviders.GOOGLE.value: self._check_google_api_key,
             ServiceProviders.AZURE.value: self._check_azure_api_key,
+            ServiceProviders.AZURE_SPEECH.value: self._check_azure_speech_api_key,
             ServiceProviders.CARTESIA.value: self._check_cartesia_api_key,
             ServiceProviders.DOGRAH.value: self._check_dograh_api_key,
             ServiceProviders.SARVAM.value: self._check_sarvam_api_key,
@@ -54,6 +55,7 @@ class UserConfigurationValidator:
             ServiceProviders.ULTRAVOX_REALTIME.value: self._check_ultravox_realtime_api_key,
             ServiceProviders.GOOGLE_REALTIME.value: self._check_google_api_key,
             ServiceProviders.GOOGLE_VERTEX_REALTIME.value: self._check_google_vertex_realtime_api_key,
+            ServiceProviders.AZURE_REALTIME.value: self._check_azure_realtime_api_key,
             ServiceProviders.ASSEMBLYAI.value: self._check_assemblyai_api_key,
             ServiceProviders.GLADIA.value: self._check_gladia_api_key,
             ServiceProviders.SONIOX.value: self._check_soniox_api_key,
@@ -64,7 +66,7 @@ class UserConfigurationValidator:
 
     async def validate(
         self,
-        configuration: UserConfiguration,
+        configuration: EffectiveAIModelConfiguration,
         organization_id: Optional[int] = None,
         created_by: Optional[str] = None,
     ) -> APIKeyStatusResponse:
@@ -75,21 +77,21 @@ class UserConfigurationValidator:
         status_list = []
 
         status_list.extend(self._validate_service(configuration.llm, "llm"))
-        status_list.extend(self._validate_service(configuration.stt, "stt"))
-        status_list.extend(self._validate_service(configuration.tts, "tts"))
-        # Embeddings is optional - only validate if configured
-        status_list.extend(
-            self._validate_service(
-                configuration.embeddings, "embeddings", required=False
-            )
-        )
-        # Realtime is optional - only validate if is_realtime is enabled
         if configuration.is_realtime:
             status_list.extend(
                 self._validate_service(
                     configuration.realtime, "realtime", required=True
                 )
             )
+        else:
+            status_list.extend(self._validate_service(configuration.stt, "stt"))
+            status_list.extend(self._validate_service(configuration.tts, "tts"))
+        # Embeddings is optional - only validate if configured
+        status_list.extend(
+            self._validate_service(
+                configuration.embeddings, "embeddings", required=False
+            )
+        )
 
         if status_list:
             raise ValueError(status_list)
@@ -313,6 +315,12 @@ class UserConfigurationValidator:
         return True
 
     def _check_azure_api_key(self, model: str, api_key: str) -> bool:
+        return True
+
+    def _check_azure_speech_api_key(self, model: str, api_key: str) -> bool:
+        return True
+
+    def _check_azure_realtime_api_key(self, model: str, api_key: str) -> bool:
         return True
 
     def _check_cartesia_api_key(self, model: str, api_key: str) -> bool:

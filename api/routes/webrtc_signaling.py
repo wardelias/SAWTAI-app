@@ -45,7 +45,7 @@ from api.services.pipecat.ws_sender_registry import (
     register_ws_sender,
     unregister_ws_sender,
 )
-from api.services.quota_service import check_dograh_quota
+from api.services.quota_service import authorize_workflow_run_start
 
 router = APIRouter(prefix="/ws")
 
@@ -329,7 +329,11 @@ class SignalingManager:
 
         # Check Dograh quota before initiating the call (apply per-workflow
         # model_overrides so we evaluate the keys this workflow will use).
-        quota_result = await check_dograh_quota(user, workflow_id=workflow_id)
+        quota_result = await authorize_workflow_run_start(
+            workflow_id=workflow_id,
+            workflow_run_id=workflow_run_id,
+            actor_user=user,
+        )
         if not quota_result.has_quota:
             # Send error response for quota issues
             await ws.send_json(
@@ -543,6 +547,20 @@ async def public_signaling_websocket(
     embed_token = await db_client.get_embed_token_by_id(embed_session.embed_token_id)
     if not embed_token:
         await websocket.close(code=1008, reason="Invalid embed token")
+        return
+
+    # Enforce the embed token's allowed-domain policy on the public signaling
+    # path, mirroring the HTTP embed endpoints (issue #330). Without this a
+    # leaked or replayed session token could attach from an arbitrary origin.
+    from api.routes.public_embed import validate_origin
+
+    origin = websocket.headers.get("origin") or websocket.headers.get("referer", "")
+    if not validate_origin(origin, embed_token.allowed_domains or []):
+        logger.warning(
+            f"Domain validation failed for public signaling: {origin} "
+            f"not in {embed_token.allowed_domains}"
+        )
+        await websocket.close(code=1008, reason="Domain not allowed")
         return
 
     # Create a minimal user object for compatibility with signaling manager

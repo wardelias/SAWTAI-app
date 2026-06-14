@@ -3,11 +3,12 @@ from datetime import datetime, timezone
 
 from loguru import logger
 from pydantic import ValidationError
+from sqlalchemy import func
 from sqlalchemy.future import select
 
 from api.db.base_client import BaseDBClient
 from api.db.models import UserConfigurationModel, UserModel
-from api.schemas.user_configuration import UserConfiguration
+from api.schemas.ai_model_configuration import EffectiveAIModelConfiguration
 
 
 class UserClient(BaseDBClient):
@@ -64,7 +65,9 @@ class UserClient(BaseDBClient):
             )
             return result.scalars().first()
 
-    async def get_user_configurations(self, user_id: int) -> UserConfiguration:
+    async def get_user_configurations(
+        self, user_id: int
+    ) -> EffectiveAIModelConfiguration:
         async with self.async_session() as session:
             result = await session.execute(
                 select(UserConfigurationModel).where(
@@ -73,10 +76,10 @@ class UserClient(BaseDBClient):
             )
             configuration_obj = result.scalars().first()
             if not configuration_obj:
-                return UserConfiguration()
+                return EffectiveAIModelConfiguration()
 
             try:
-                return UserConfiguration.model_validate(
+                return EffectiveAIModelConfiguration.model_validate(
                     {
                         **configuration_obj.configuration,
                         "last_validated_at": configuration_obj.last_validated_at,
@@ -89,11 +92,11 @@ class UserClient(BaseDBClient):
                     f"Failed to validate user configuration for user {user_id}: {e}. "
                     "Returning default configuration."
                 )
-                return UserConfiguration()
+                return EffectiveAIModelConfiguration()
 
     async def update_user_configuration(
-        self, user_id: int, configuration: UserConfiguration
-    ) -> UserConfiguration:
+        self, user_id: int, configuration: EffectiveAIModelConfiguration
+    ) -> EffectiveAIModelConfiguration:
         async with self.async_session() as session:
             result = await session.execute(
                 select(UserConfigurationModel).where(
@@ -114,7 +117,9 @@ class UserClient(BaseDBClient):
                 await session.rollback()
                 raise e
             await session.refresh(configuration_obj)
-        return UserConfiguration.model_validate(configuration_obj.configuration)
+        return EffectiveAIModelConfiguration.model_validate(
+            configuration_obj.configuration
+        )
 
     async def update_user_configuration_last_validated_at(self, user_id: int) -> None:
         async with self.async_session() as session:
@@ -161,15 +166,26 @@ class UserClient(BaseDBClient):
         async with self.async_session() as session:
             from sqlalchemy import update
 
-            stmt = update(UserModel).where(UserModel.id == user_id).values(email=email)
+            stmt = (
+                update(UserModel)
+                .where(UserModel.id == user_id)
+                .values(email=email.lower())
+            )
             await session.execute(stmt)
             await session.commit()
 
     async def get_user_by_email(self, email: str) -> UserModel | None:
-        """Fetch a user by their email address."""
+        """Fetch a user by their email address (case-insensitive).
+
+        Email addresses are case-insensitive in practice, so a user who
+        signed up as "User@example.com" must still be found when they later
+        log in as "user@example.com". Compare on lower(email) so lookups are
+        robust to capitalization differences across sign-in flows.
+        """
+        normalized_email = email.lower()
         async with self.async_session() as session:
             result = await session.execute(
-                select(UserModel).where(UserModel.email == email)
+                select(UserModel).where(func.lower(UserModel.email) == normalized_email)
             )
             return result.scalars().first()
 
@@ -180,7 +196,7 @@ class UserClient(BaseDBClient):
         async with self.async_session() as session:
             user = UserModel(
                 provider_id=f"oss_{int(datetime.now(timezone.utc).timestamp())}_{uuid.uuid4()}",
-                email=email,
+                email=email.lower(),
                 password_hash=password_hash,
             )
             session.add(user)
