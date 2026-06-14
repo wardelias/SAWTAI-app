@@ -51,6 +51,13 @@ MAX_TOTAL_SECONDS = 45.0  # give up (unknown) after this much audio
 
 NOTE_MIN_CONFIDENCE = 0.70  # below this, callers get neutral address
 
+# Acting on "female" (a prompt note AND a deterministic Arabic feminine rewrite)
+# is aggressive: mis-feminizing a male caller is a glaring, audible error, while
+# missing a real female is a softer miss. So require higher confidence before
+# applying feminine address than the neutral note threshold. Raise toward 0.90+
+# if a male voice is still occasionally feminized.
+FEMININE_MIN_CONFIDENCE = 0.85
+
 
 @dataclass
 class GenderEstimate:

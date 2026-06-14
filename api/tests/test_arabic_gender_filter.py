@@ -32,6 +32,26 @@ class TestFemaleRewriting:
         assert _filter("لكَ", "female") == "لكِ"
 
 
+class TestGeneralKafSuffix:
+    def test_rewrites_arbitrary_stem_suffix(self):
+        # Productive 2nd-person ـك suffix on arbitrary stems.
+        assert _filter("بمشروعك", "female") == "بمشروعكِ"
+        assert _filter("لتفهمك", "female") == "لتفهمكِ"
+        assert _filter("طلبك جاهز", "female") == "طلبكِ جاهز"
+        assert _filter("مساعدتك", "female") == "مساعدتكِ"
+
+    def test_possessive_after_root_kaf(self):
+        # "your subscription" — suffix ـك after the root kaf.
+        assert _filter("اشتراكك", "female") == "اشتراككِ"
+
+    def test_idempotent(self):
+        assert _filter("مشروعكِ", "female") == "مشروعكِ"
+
+    def test_root_kaf_words_blocklisted(self):
+        for w in ("ملوك", "شريك", "اشتراك", "استهلاك", "بنوك"):
+            assert _filter(w, "female") == w
+
+
 class TestNoFalsePositives:
     def test_unrelated_kaf_words_untouched(self):
         # Words that merely end in kaf are NOT address suffixes.
