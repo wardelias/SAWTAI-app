@@ -30,6 +30,7 @@ ToolCategoryValue = Literal[
     "integration",
     "mcp",
     "behavior",
+    "book_meeting",
 ]
 
 BehaviorScope = Literal["global", "node"]
@@ -363,6 +364,18 @@ class CalculatorToolDefinition(BaseModel):
     type: Literal["calculator"] = Field(description="Tool type.")
 
 
+class BookMeetingToolDefinition(BaseModel):
+    """Tool definition for the built-in Book Meeting tool.
+
+    Like the Calculator, this is a built-in tool with no user configuration.
+    The runtime function schema lives in
+    ``api.services.workflow.tools.book_meeting`` and is not stored here.
+    """
+
+    schema_version: int = Field(default=1, description="Schema version.")
+    type: Literal["book_meeting"] = Field(description="Tool type.")
+
+
 class McpToolDefinition(BaseModel):
     """Persisted MCP tool definition."""
 
@@ -385,6 +398,7 @@ ToolDefinition = Annotated[
         EndCallToolDefinition,
         TransferCallToolDefinition,
         CalculatorToolDefinition,
+        BookMeetingToolDefinition,
         McpToolDefinition,
         BehaviorToolDefinition,
     ],

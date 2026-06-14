@@ -33,6 +33,14 @@ export interface BehaviorToolDefinition {
     config: BehaviorConfig;
 }
 
+// Built-in Book Meeting tool. Like the Calculator it carries no user config;
+// the runtime function schema lives in the backend. Defined locally because
+// the generated client (types.gen) does not yet include this tool type.
+export interface BookMeetingToolDefinition {
+    schema_version: number;
+    type: "book_meeting";
+}
+
 // Built-in Behavior presets shown in the editor's "Start from a preset" picker.
 // Mirrors api/services/workflow/behaviors/presets.py. `special` flags are
 // preserved on save so e.g. the gender preset still enables voice detection.
@@ -125,12 +133,9 @@ export interface ToolCategoryConfig {
     iconName: string; // String name for storing in database
     iconColor: string;
     disabled?: boolean;
-    // Built-in tools are auto-seeded per organization; they are not creatable
-    // from the "Create Tool" dialog, so they are filtered out of that picker.
-    builtin?: boolean;
-    // Surfaced first and badged as "Suggested" in the tools list and the
-    // per-agent tool selector.
-    suggested?: boolean;
+    // Highlighted as "Recommended": surfaced first in the Create Tool picker,
+    // the tools list, and the per-agent tool selector.
+    recommended?: boolean;
     autoFill?: {
         name: string;
         description: string;
@@ -197,8 +202,11 @@ export const TOOL_CATEGORIES: ToolCategoryConfig[] = [
         icon: CalendarClock,
         iconName: "calendar",
         iconColor: "#6366F1",
-        builtin: true,
-        suggested: true,
+        recommended: true,
+        autoFill: {
+            name: "Book Meeting",
+            description: "Book a calendar meeting on the caller's behalf during a live call. Confirm the date, time, and purpose before booking.",
+        },
     },
     {
         value: "behavior",
@@ -277,9 +285,10 @@ export function getToolTypeLabel(category: string): string {
 }
 
 // Built-in tools we proactively recommend. Surfaced first and badged as
-// "Suggested" in the tools list and the per-agent tool selector.
-export function isSuggestedTool(category: string): boolean {
-    return TOOL_CATEGORIES.some((c) => c.value === category && c.suggested);
+// "Recommended" in the Create Tool picker, the tools list, and the per-agent
+// tool selector.
+export function isRecommendedTool(category: string): boolean {
+    return TOOL_CATEGORIES.some((c) => c.value === category && c.recommended);
 }
 
 export const DEFAULT_END_CALL_REASON_DESCRIPTION =
@@ -303,6 +312,7 @@ export type ToolDefinition =
     | EndCallToolDefinition
     | TransferCallToolDefinition
     | CalculatorToolDefinition
+    | BookMeetingToolDefinition
     | McpToolDefinition;
 
 export function createEndCallDefinition(config: EndCallConfig): EndCallToolDefinition {
@@ -336,6 +346,13 @@ export function createCalculatorDefinition(): CalculatorToolDefinition {
     return {
         schema_version: 1,
         type: "calculator",
+    };
+}
+
+export function createBookMeetingDefinition(): BookMeetingToolDefinition {
+    return {
+        schema_version: 1,
+        type: "book_meeting",
     };
 }
 
@@ -387,6 +404,8 @@ export function createToolDefinition(category: ToolCategory): ToolDefinition {
             return createTransferCallDefinition(DEFAULT_TRANSFER_CALL_CONFIG);
         case "calculator":
             return createCalculatorDefinition();
+        case "book_meeting":
+            return createBookMeetingDefinition();
         case "http_api":
         default:
             return createHttpApiDefinition();

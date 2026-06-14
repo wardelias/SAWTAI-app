@@ -46,7 +46,7 @@ import {
     createMcpDefinition,
     createToolDefinition,
     getCategoryConfig,
-    isSuggestedTool,
+    isRecommendedTool,
     MCP_URL_PATTERN,
     renderToolIcon,
     TOOL_CATEGORIES,
@@ -255,7 +255,7 @@ export default function ToolsPage() {
     const activeTools = filteredTools
         .filter((tool) => tool.status === "active")
         // Surface suggested built-in tools (e.g. Book Meeting) first.
-        .sort((a, b) => Number(isSuggestedTool(b.category)) - Number(isSuggestedTool(a.category)));
+        .sort((a, b) => Number(isRecommendedTool(b.category)) - Number(isRecommendedTool(a.category)));
     const archivedTools = filteredTools.filter((tool) => tool.status === "archived");
 
     const getCategoryBadge = (category: string) => {
@@ -410,9 +410,9 @@ export default function ToolsPage() {
                                                                     {tool.name}
                                                                 </span>
                                                                 {getCategoryBadge(tool.category)}
-                                                                {isSuggestedTool(tool.category) && (
+                                                                {isRecommendedTool(tool.category) && (
                                                                     <Badge variant="outline" className="border-primary/40 text-primary">
-                                                                        Suggested
+                                                                        Recommended
                                                                     </Badge>
                                                                 )}
                                                             </div>
@@ -549,15 +549,25 @@ export default function ToolsPage() {
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    {TOOL_CATEGORIES.filter((category) => !category.builtin).map((category) => (
-                                        <SelectItem
-                                            key={category.value}
-                                            value={category.value}
-                                            disabled={category.disabled}
-                                        >
-                                            {category.label}
-                                        </SelectItem>
-                                    ))}
+                                    {[...TOOL_CATEGORIES]
+                                        // Surface recommended built-in tools (e.g. Book Meeting) first.
+                                        .sort((a, b) => Number(!!b.recommended) - Number(!!a.recommended))
+                                        .map((category) => (
+                                            <SelectItem
+                                                key={category.value}
+                                                value={category.value}
+                                                disabled={category.disabled}
+                                            >
+                                                <span className="flex items-center gap-2">
+                                                    {category.label}
+                                                    {category.recommended && (
+                                                        <Badge variant="outline" className="border-primary/40 text-primary">
+                                                            Recommended
+                                                        </Badge>
+                                                    )}
+                                                </span>
+                                            </SelectItem>
+                                        ))}
                                 </SelectContent>
                             </Select>
                             <p className="text-xs text-muted-foreground">
