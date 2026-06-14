@@ -510,3 +510,4 @@ class BehaviorPresetResponse(BaseModel):
     icon_color: str
     instructions: str
     special: Optional[str] = None
+    recommended: bool = False

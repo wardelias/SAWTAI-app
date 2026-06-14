@@ -8,11 +8,11 @@ from loguru import logger
 from api.db import db_client
 from api.enums import WorkflowRunMode
 from api.services.configuration.registry import ServiceProviders
+from api.services.gender.arabic_gender_filter import ArabicFeminineTextFilter
 from api.services.gender.voice_gender_detector import (
     VoiceGenderDetector,
     make_gender_classifier,
 )
-from api.services.workflow.behaviors.resolver import extract_behaviors
 from api.services.integrations import (
     IntegrationRuntimeContext,
     create_runtime_sessions,
@@ -60,6 +60,7 @@ from api.services.pipecat.transport_setup import create_webrtc_transport
 from api.services.pipecat.worker_runner import run_pipeline_worker
 from api.services.pipecat.ws_sender_registry import get_ws_sender
 from api.services.telephony import registry as telephony_registry
+from api.services.workflow.behaviors.resolver import extract_behaviors
 from api.services.workflow.dto import ReactFlowDTO
 from api.services.workflow.pipecat_engine import PipecatEngine
 from api.services.workflow.workflow_graph import WorkflowGraph
@@ -423,6 +424,9 @@ async def _run_pipeline(
         llm = create_realtime_llm_service(user_config, audio_config)
         stt = None
         tts = None
+        # Realtime services emit audio directly (no TTS text seam), so the
+        # Arabic feminine-address fix-up does not apply.
+        arabic_feminine_filter = None
         # Realtime services don't implement run_inference, so create a
         # separate text LLM for variable extraction and other out-of-band
         # inference calls.
@@ -437,10 +441,16 @@ async def _run_pipeline(
             keyterms=keyterms,
             correlation_id=mps_correlation_id,
         )
+        # Deterministic Arabic feminine-address fix-up: rewrites masculine
+        # second-person forms to feminine before TTS so a female caller is
+        # pronounced correctly even if the LLM omits tashkeel. The engine flips
+        # it on once voice gender detection is confidently female.
+        arabic_feminine_filter = ArabicFeminineTextFilter()
         tts = create_tts_service(
             user_config,
             audio_config,
             correlation_id=mps_correlation_id,
+            extra_text_filters=[arabic_feminine_filter],
         )
         llm = create_llm_service(user_config, correlation_id=mps_correlation_id)
         inference_llm = None
@@ -589,6 +599,9 @@ async def _run_pipeline(
         has_recordings=has_recordings,
         context_compaction_enabled=context_compaction_enabled,
     )
+
+    # Let the engine flip the Arabic feminine filter on once gender is detected.
+    engine.set_gender_text_filter(arabic_feminine_filter)
 
     # Create pipeline components
     audio_buffer, context = create_pipeline_components(audio_config)
@@ -787,9 +800,7 @@ async def _run_pipeline(
             behavior_tools = await db_client.get_tools_by_uuids(
                 list(global_behavior_uuids), workflow.organization_id
             )
-            behavior_instructions, behavior_specials = extract_behaviors(
-                behavior_tools
-            )
+            behavior_instructions, behavior_specials = extract_behaviors(behavior_tools)
             engine.set_global_behavior_instructions(behavior_instructions)
             logger.info(
                 f"Loaded {len(behavior_instructions)} global behavior(s) "

@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from api.db import db_client
 from api.db.models import UserModel
 from api.enums import ToolCategory, ToolStatus
-from api.services.workflow.tools.book_meeting import BOOK_MEETING_DEFINITION
 from api.schemas.tool import (
     BehaviorPresetResponse,
     CalculatorToolDefinition,
@@ -40,6 +39,7 @@ from api.services.tool_management import (
 from api.services.tool_management import (
     populate_discovered_tools as _populate_discovered_tools,
 )
+from api.services.workflow.tools.book_meeting import BOOK_MEETING_DEFINITION
 
 router = APIRouter(prefix="/tools")
 

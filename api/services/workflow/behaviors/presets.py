@@ -28,6 +28,8 @@ class BehaviorPreset:
     icon_color: str  # hex
     instructions: str
     special: Optional[str] = None
+    # Highlighted as "Recommended" and surfaced first in the preset picker.
+    recommended: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -47,17 +49,35 @@ BEHAVIOR_PRESETS: list[BehaviorPreset] = [
             "When the caller's gender is known, address them using the matching "
             "gendered second-person forms (verb conjugations, pronouns, "
             "adjectives) in grammatically gendered languages such as Arabic or "
-            "Hebrew. For FEMALE callers speaking Arabic, force the feminine "
-            "pronunciation for the text-to-speech voice: undiacritized text reads "
-            "as masculine by default, so add the diacritic (tashkeel) that makes "
-            "the feminine reading explicit — especially a kasra under the "
-            "second-person kaf ـكِ, e.g. write أساعِدُكِ (not أساعدك) and "
-            "شُكراً لكِ — and prefer feminine verb forms whose letters already "
-            "differ (present ـِين as in تُريدِين, imperative ـي as in تفضّلي). "
-            "If the caller states or implies a different gender, follow their "
-            "lead. Never mention this inference to the caller."
+            "Hebrew. If the caller states or implies a different gender, follow "
+            "their lead. Never mention this inference to the caller."
         ),
         special="voice_gender_detection",
+        recommended=True,
+    ),
+    BehaviorPreset(
+        id="arabic_feminine_pronunciation",
+        name="Arabic Feminine Pronunciation",
+        description=(
+            "Force correct feminine Arabic pronunciation for female callers "
+            "using tashkeel (diacritics), so text-to-speech doesn't default to "
+            "masculine."
+        ),
+        icon="languages",
+        icon_color="#EC4899",
+        instructions=(
+            "For female callers speaking Arabic, force the correct feminine "
+            "pronunciation in text-to-speech. Undiacritized Arabic spells "
+            "masculine and feminine address identically, so the voice defaults "
+            "to masculine. For every gendered word addressed to the caller (not "
+            "just the first one): add the diacritic (tashkeel) that makes the "
+            "feminine reading explicit — especially a kasra under the "
+            "second-person kaf ـكِ, e.g. write أساعِدُكِ (not أساعدك), "
+            "شُكراً لكِ, كيف حالُكِ. Prefer feminine verb forms whose letters "
+            "already differ: present tense ـِين (تُريدِين، تَستطيعِين), "
+            "imperative ـي (تفضّلي، قولي), and the pronoun أنتِ / ـكِ."
+        ),
+        recommended=True,
     ),
     BehaviorPreset(
         id="no_ai_disclosure",

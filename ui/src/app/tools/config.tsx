@@ -42,6 +42,8 @@ export interface BehaviorPreset {
     description: string;
     instructions: string;
     special?: string;
+    // Highlighted as "Recommended" and surfaced first in the preset picker.
+    recommended?: boolean;
 }
 
 export const BEHAVIOR_PRESETS: BehaviorPreset[] = [
@@ -52,6 +54,15 @@ export const BEHAVIOR_PRESETS: BehaviorPreset[] = [
         instructions:
             "When the caller's gender is known, address them using the matching gendered second-person forms (verb conjugations, pronouns, adjectives) in grammatically gendered languages such as Arabic or Hebrew. If the caller states or implies a different gender, follow their lead. Never mention this inference to the caller.",
         special: "voice_gender_detection",
+        recommended: true,
+    },
+    {
+        id: "arabic_feminine_pronunciation",
+        name: "Arabic Feminine Pronunciation",
+        description: "Force feminine Arabic pronunciation for female callers using tashkeel (diacritics).",
+        instructions:
+            "For female callers speaking Arabic, force the correct feminine pronunciation in text-to-speech. Undiacritized Arabic spells masculine and feminine address identically, so the voice defaults to masculine. For every gendered word addressed to the caller (not just the first one): add the diacritic (tashkeel) that makes the feminine reading explicit — especially a kasra under the second-person kaf ـكِ, e.g. write أساعِدُكِ (not أساعدك), شُكراً لكِ, كيف حالُكِ. Prefer feminine verb forms whose letters already differ: present tense ـِين (تُريدِين، تَستطيعِين), imperative ـي (تفضّلي، قولي), and the pronoun أنتِ / ـكِ.",
+        recommended: true,
     },
     {
         id: "no_ai_disclosure",

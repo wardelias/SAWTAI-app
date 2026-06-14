@@ -7,8 +7,8 @@ from api.routes.auth import router as auth_router
 from api.routes.campaign import router as campaign_router
 from api.routes.credentials import router as credentials_router
 from api.routes.folder import router as folder_router
-from api.routes.meeting import router as meeting_router
 from api.routes.knowledge_base import router as knowledge_base_router
+from api.routes.meeting import router as meeting_router
 from api.routes.node_types import router as node_types_router
 from api.routes.organization import router as organization_router
 from api.routes.organization_usage import router as organization_usage_router

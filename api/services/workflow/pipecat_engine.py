@@ -35,13 +35,13 @@ import asyncio
 
 from loguru import logger
 
-from api.services.managed_model_services import MPS_CORRELATION_ID_CONTEXT_KEY
-from api.services.workflow import pipecat_engine_callbacks as engine_callbacks
-from api.services.workflow.mcp_tool_session import McpToolSession
 from api.services.gender.voice_gender_detector import (
     NOTE_MIN_CONFIDENCE,
     GenderEstimate,
 )
+from api.services.managed_model_services import MPS_CORRELATION_ID_CONTEXT_KEY
+from api.services.workflow import pipecat_engine_callbacks as engine_callbacks
+from api.services.workflow.mcp_tool_session import McpToolSession
 from api.services.workflow.pipecat_engine_context_composer import (
     build_caller_profile_note,
     compose_functions_for_node,
@@ -163,6 +163,11 @@ class PipecatEngine:
         # via set_global_behavior_instructions. Node-level behaviors are
         # resolved per node from node.tool_uuids.
         self._global_behavior_instructions: list[str] = []
+
+        # Deterministic Arabic feminine-address TTS filter. Flipped to the
+        # detected gender once voice gender detection is confident, so a female
+        # caller is pronounced correctly regardless of LLM tashkeel output.
+        self._gender_text_filter = None
 
         # Background context summarization on node transitions
         self._context_compaction_enabled: bool = context_compaction_enabled
@@ -523,6 +528,10 @@ class PipecatEngine:
     def set_global_behavior_instructions(self, instructions: list[str]) -> None:
         """Set workflow-level Behavior instructions (resolved in run_pipeline)."""
         self._global_behavior_instructions = list(instructions or [])
+
+    def set_gender_text_filter(self, text_filter) -> None:
+        """Set the Arabic feminine-address TTS filter (may be None)."""
+        self._gender_text_filter = text_filter
 
     async def _resolve_behavior_instructions(self, node: Optional[Node]) -> list[str]:
         """Resolve Behavior instructions for a node: global + node-attached.
@@ -959,11 +968,26 @@ class PipecatEngine:
         if estimate.gender not in ("male", "female"):
             return
         if estimate.confidence < NOTE_MIN_CONFIDENCE:
-            # Ambiguous voice: leave the prompt untouched so the agent keeps
-            # neutral address instead of risking misgendering the caller.
+            # Ambiguous voice: leave the prompt untouched (and the Arabic filter
+            # off) so the agent keeps neutral address instead of risking
+            # misgendering the caller. Logged so this is diagnosable rather than
+            # a silent no-op.
+            logger.info(
+                f"Caller gender '{estimate.gender}' below confidence threshold "
+                f"({estimate.confidence:.2f} < {NOTE_MIN_CONFIDENCE}); "
+                f"keeping neutral address (no note, no Arabic fix-up)."
+            )
             return
 
         self._caller_profile_note = build_caller_profile_note(estimate.gender)
+
+        # Activate the deterministic Arabic feminine-address fix-up so TTS
+        # pronounces a female caller correctly even if the LLM omits tashkeel.
+        if self._gender_text_filter is not None:
+            try:
+                self._gender_text_filter.set_gender(estimate.gender)
+            except Exception as e:
+                logger.warning(f"Failed to set gender text filter: {e}")
 
         node = self._current_node
         if node is None or node.is_end:
