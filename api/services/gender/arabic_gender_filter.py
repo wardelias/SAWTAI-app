@@ -7,14 +7,23 @@ common masculine second-person address tokens to their explicit feminine
 (diacritized) forms *before* synthesis — so correct pronunciation does not
 depend on the LLM remembering to add tashkeel.
 
-Design choices that keep it safe:
+Two transforms, applied only for female callers:
 
-- **Whitelist only.** Only the exact whole words in ``FEMININE_ADDRESS_MAP``
-  are transformed, matched on their tashkeel-stripped form. Unrelated words
-  that merely end in kaf (ملك، سمك، بنك) are never touched.
+- **Explicit map** (``FEMININE_ADDRESS_MAP``) for forms that are not just a
+  ـك suffix — verbs (تريد → تريدين), pronouns (أنت → أنتِ), and common words.
+- **General ـك suffix rule**: add a kasra to any word-final second-person kaf
+  (مشروعك → مشروعكِ، لتفهمك → لتفهمكِ), so arbitrary stems are covered.
+  Guarded by a minimum length and a ``ROOT_KAF_EXCEPTIONS`` blocklist so words
+  whose final kaf is a root letter (ملك، بنك، شريك، اشتراك) are never touched.
+
+Other safeguards:
+
 - **Female only.** Male/unknown callers pass through unchanged — masculine is
   already the TTS default, so there is nothing to fix.
 - **Idempotent.** Already-feminine text maps to itself.
+
+The exception list is conversational and non-exhaustive; if a root-kaf word is
+wrongly feminized, add it to ``ROOT_KAF_EXCEPTIONS``.
 
 The map is intentionally small and editable; extend it with dialect forms as
 needed. Verb entries (e.g. ``تريد`` → ``تريدين``) are higher-coverage but can
@@ -80,8 +89,44 @@ FEMININE_ADDRESS_MAP: dict[str, str] = {
 }
 
 
+# The second-person ـك suffix attaches to arbitrary stems (مشروعك، طلبك،
+# لتفهمك), so beyond the explicit map above we also add a kasra to any
+# word-final kaf — EXCEPT where that kaf is a root letter, not a suffix.
+_KAF = "ك"
+MIN_KAF_SUFFIX_LEN = 4  # below this, a final kaf is almost always a root letter
+
+# Words whose final kaf is part of the root (NOT a 2nd-person suffix) and must
+# never be feminized. Conversational, non-exhaustive — extend as needed. Note
+# that the *possessed* forms (e.g. اشتراكك "your subscription") end in ـكك and
+# are correctly feminized; only the bare standalone words are listed here.
+ROOT_KAF_EXCEPTIONS: set[str] = {
+    "ملك", "ملوك", "ملاك", "أملاك", "مملوك", "مالك",
+    "سمك", "بنك", "بنوك", "شك", "شكوك",
+    "فلك", "سلك", "أسلاك", "سلوك",
+    "شريك", "ديك", "ديوك", "شباك", "سواك", "مسك", "شوك",
+    "معارك", "جمارك", "مبارك", "محرك", "مدارك",
+    "إدراك", "اشتراك", "استهلاك", "احتكاك", "ارتباك", "انهماك", "إمساك",
+    # Ownership verbs (root ملك) — final kaf is a root letter, not a suffix.
+    "تملك", "أملك", "املك", "يملك", "نملك", "تمتلك", "يمتلك", "نمتلك", "امتلك",
+}
+
+
 def _strip_tashkeel(token: str) -> str:
     return _TASHKEEL_RE.sub("", token)
+
+
+def _feminize_kaf_suffix(token: str, bare: str, exceptions: set[str]) -> str:
+    """Add a kasra to a word-final 2nd-person ـك suffix; else return unchanged."""
+    if len(bare) < MIN_KAF_SUFFIX_LEN or not bare.endswith(_KAF):
+        return token
+    if bare in exceptions:
+        return token
+    # Drop any trailing diacritic on the final kaf (masculine fatha or an
+    # existing kasra) and re-add the kasra — idempotent and correct.
+    stripped = token.rstrip(_TASHKEEL)
+    if stripped.endswith(_KAF):
+        return stripped + "ِ"
+    return token
 
 
 class ArabicFeminineTextFilter(BaseTextFilter):
@@ -110,6 +155,7 @@ class ArabicFeminineTextFilter(BaseTextFilter):
             merged.update(extra_map)
         # Look up on the bare (tashkeel-stripped) masculine form.
         self._bare_map = {_strip_tashkeel(k): v for k, v in merged.items()}
+        self._kaf_exceptions = set(ROOT_KAF_EXCEPTIONS)
 
     def set_gender(self, gender: Optional[str]) -> None:
         """Set the caller gender; only ``"female"`` enables rewriting."""
@@ -129,7 +175,12 @@ class ArabicFeminineTextFilter(BaseTextFilter):
 
         def _replace(match: re.Match) -> str:
             token = match.group(0)
-            return self._bare_map.get(_strip_tashkeel(token), token)
+            bare = _strip_tashkeel(token)
+            # Explicit map (verbs, pronouns, common forms) takes precedence,
+            # then the general word-final ـك suffix rule.
+            if bare in self._bare_map:
+                return self._bare_map[bare]
+            return _feminize_kaf_suffix(token, bare, self._kaf_exceptions)
 
         return _TOKEN_RE.sub(_replace, text)
 

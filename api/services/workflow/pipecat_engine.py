@@ -36,6 +36,7 @@ import asyncio
 from loguru import logger
 
 from api.services.gender.voice_gender_detector import (
+    FEMININE_MIN_CONFIDENCE,
     NOTE_MIN_CONFIDENCE,
     GenderEstimate,
 )
@@ -976,6 +977,16 @@ class PipecatEngine:
                 f"Caller gender '{estimate.gender}' below confidence threshold "
                 f"({estimate.confidence:.2f} < {NOTE_MIN_CONFIDENCE}); "
                 f"keeping neutral address (no note, no Arabic fix-up)."
+            )
+            return
+        if estimate.gender == "female" and estimate.confidence < FEMININE_MIN_CONFIDENCE:
+            # Feminine address is aggressive (audible Arabic rewrite); a false
+            # positive on a male caller is glaring. Require higher confidence
+            # before applying it, otherwise stay neutral.
+            logger.info(
+                f"Female detected but below feminine threshold "
+                f"({estimate.confidence:.2f} < {FEMININE_MIN_CONFIDENCE}); "
+                f"keeping neutral address (no feminine note or Arabic fix-up)."
             )
             return
 
