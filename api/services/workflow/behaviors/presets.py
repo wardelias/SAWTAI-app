@@ -47,8 +47,15 @@ BEHAVIOR_PRESETS: list[BehaviorPreset] = [
             "When the caller's gender is known, address them using the matching "
             "gendered second-person forms (verb conjugations, pronouns, "
             "adjectives) in grammatically gendered languages such as Arabic or "
-            "Hebrew. If the caller states or implies a different gender, follow "
-            "their lead. Never mention this inference to the caller."
+            "Hebrew. For FEMALE callers speaking Arabic, force the feminine "
+            "pronunciation for the text-to-speech voice: undiacritized text reads "
+            "as masculine by default, so add the diacritic (tashkeel) that makes "
+            "the feminine reading explicit — especially a kasra under the "
+            "second-person kaf ـكِ, e.g. write أساعِدُكِ (not أساعدك) and "
+            "شُكراً لكِ — and prefer feminine verb forms whose letters already "
+            "differ (present ـِين as in تُريدِين, imperative ـي as in تفضّلي). "
+            "If the caller states or implies a different gender, follow their "
+            "lead. Never mention this inference to the caller."
         ),
         special="voice_gender_detection",
     ),

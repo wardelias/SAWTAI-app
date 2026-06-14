@@ -43,7 +43,7 @@ from api.services.gender.voice_gender_detector import (
     GenderEstimate,
 )
 from api.services.workflow.pipecat_engine_context_composer import (
-    CALLER_PROFILE_NOTE_TEMPLATE,
+    build_caller_profile_note,
     compose_functions_for_node,
     compose_system_prompt_for_node,
 )
@@ -963,9 +963,7 @@ class PipecatEngine:
             # neutral address instead of risking misgendering the caller.
             return
 
-        self._caller_profile_note = CALLER_PROFILE_NOTE_TEMPLATE.format(
-            gender=estimate.gender
-        )
+        self._caller_profile_note = build_caller_profile_note(estimate.gender)
 
         node = self._current_node
         if node is None or node.is_end:

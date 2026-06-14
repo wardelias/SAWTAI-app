@@ -59,6 +59,36 @@ conjugations, pronouns, and adjectives). If the caller states or clearly \
 implies a different gender, follow their lead instead of this note. Never \
 mention this inference to the caller."""
 
+# Female callers need an extra clause: undiacritized Arabic spells masculine
+# and feminine address identically (e.g. أساعدك), so the TTS voice defaults to
+# the MASCULINE pronunciation even when the agent intends feminine. Forcing the
+# feminine reading requires explicit diacritics (tashkeel) and/or feminine verb
+# forms whose consonants already differ.
+FEMALE_PRONUNCIATION_GUIDANCE = """\
+ IMPORTANT — make the feminine address audible to the text-to-speech voice: \
+undiacritized Arabic spells masculine and feminine address the same way, so \
+without help the voice will pronounce it as masculine. For every gendered word \
+addressed to the caller (not just the first one):
+- Add the diacritic (tashkeel) that forces the feminine reading — in \
+particular a kasra under the second-person kaf ـكِ, e.g. write "أساعِدُكِ" \
+(not "أساعدك"), "مَعَكِ", "شُكراً لكِ", "كيف حالُكِ".
+- Prefer feminine verb forms whose letters already differ, so they read \
+correctly even without diacritics: present tense adds ـِين ("تُريدِين", \
+"تَستطيعِين"), the imperative adds ـي ("تفضّلي", "قولي"), and use the \
+feminine pronoun ـكِ / أنتِ."""
+
+
+def build_caller_profile_note(gender: str) -> str:
+    """Build the caller-profile system-prompt note for a detected gender.
+
+    For female callers, append explicit Arabic pronunciation guidance so the TTS
+    voice actually speaks feminine forms (see ``FEMALE_PRONUNCIATION_GUIDANCE``).
+    """
+    note = CALLER_PROFILE_NOTE_TEMPLATE.format(gender=gender)
+    if gender == "female":
+        note += FEMALE_PRONUNCIATION_GUIDANCE
+    return note
+
 
 BEHAVIOR_GUIDELINES_HEADER = "BEHAVIOR GUIDELINES:"
 

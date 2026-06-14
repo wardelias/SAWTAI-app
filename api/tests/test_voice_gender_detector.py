@@ -13,7 +13,7 @@ from api.services.gender.voice_gender_detector import (
     estimate_window_f0,
 )
 from api.services.workflow.pipecat_engine_context_composer import (
-    CALLER_PROFILE_NOTE_TEMPLATE,
+    build_caller_profile_note,
     compose_system_prompt_for_node,
 )
 
@@ -177,7 +177,7 @@ def _make_node_and_workflow():
 class TestCallerProfileNoteComposition:
     def test_note_appended_when_present(self):
         node, workflow = _make_node_and_workflow()
-        note = CALLER_PROFILE_NOTE_TEMPLATE.format(gender="female")
+        note = build_caller_profile_note("female")
         prompt = compose_system_prompt_for_node(
             node=node,
             workflow=workflow,
@@ -188,6 +188,19 @@ class TestCallerProfileNoteComposition:
         assert "You are a helpful agent." in prompt
         assert "most likely female" in prompt
         assert "Arabic or Hebrew" in prompt
+
+    def test_female_note_includes_pronunciation_guidance(self):
+        # Female callers get the tashkeel/feminine-form guidance so Arabic TTS
+        # doesn't fall back to masculine pronunciation (e.g. أساعدك -> أساعِدُكِ).
+        note = build_caller_profile_note("female")
+        assert "tashkeel" in note
+        assert "ـكِ" in note  # feminine kaf with kasra
+        assert "أساعِدُكِ" in note
+
+    def test_male_note_has_no_pronunciation_guidance(self):
+        note = build_caller_profile_note("male")
+        assert "most likely male" in note
+        assert "tashkeel" not in note
 
     def test_no_note_by_default(self):
         node, workflow = _make_node_and_workflow()
