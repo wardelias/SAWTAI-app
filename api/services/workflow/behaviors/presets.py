@@ -28,6 +28,8 @@ class BehaviorPreset:
     icon_color: str  # hex
     instructions: str
     special: Optional[str] = None
+    # Highlighted as "Recommended" and surfaced first in the preset picker.
+    recommended: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -58,6 +60,7 @@ BEHAVIOR_PRESETS: list[BehaviorPreset] = [
             "lead. Never mention this inference to the caller."
         ),
         special="voice_gender_detection",
+        recommended=True,
     ),
     BehaviorPreset(
         id="no_ai_disclosure",

@@ -2,6 +2,7 @@
 
 import { Sparkles } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -90,11 +91,20 @@ export function BehaviorToolConfig({
                             <SelectValue placeholder="Choose a ready-made behavior..." />
                         </SelectTrigger>
                         <SelectContent>
-                            {BEHAVIOR_PRESETS.map((preset) => (
-                                <SelectItem key={preset.id} value={preset.id}>
-                                    {preset.name}
-                                </SelectItem>
-                            ))}
+                            {[...BEHAVIOR_PRESETS]
+                                .sort((a, b) => Number(b.recommended ?? false) - Number(a.recommended ?? false))
+                                .map((preset) => (
+                                    <SelectItem key={preset.id} value={preset.id}>
+                                        <span className="flex items-center gap-2">
+                                            {preset.name}
+                                            {preset.recommended && (
+                                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                                                    Recommended
+                                                </Badge>
+                                            )}
+                                        </span>
+                                    </SelectItem>
+                                ))}
                         </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">

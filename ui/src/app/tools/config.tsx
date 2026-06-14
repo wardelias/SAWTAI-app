@@ -42,6 +42,8 @@ export interface BehaviorPreset {
     description: string;
     instructions: string;
     special?: string;
+    // Highlighted as "Recommended" and surfaced first in the preset picker.
+    recommended?: boolean;
 }
 
 export const BEHAVIOR_PRESETS: BehaviorPreset[] = [
@@ -52,6 +54,7 @@ export const BEHAVIOR_PRESETS: BehaviorPreset[] = [
         instructions:
             "When the caller's gender is known, address them using the matching gendered second-person forms (verb conjugations, pronouns, adjectives) in grammatically gendered languages such as Arabic or Hebrew. If the caller states or implies a different gender, follow their lead. Never mention this inference to the caller.",
         special: "voice_gender_detection",
+        recommended: true,
     },
     {
         id: "no_ai_disclosure",
