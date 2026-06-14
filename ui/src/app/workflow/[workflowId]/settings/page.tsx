@@ -46,6 +46,8 @@ import { detailFromError } from "@/lib/apiError";
 import { useAuth } from "@/lib/auth";
 import logger from "@/lib/logger";
 import {
+    AGENT_LANGUAGE_OPTIONS,
+    type AgentLanguage,
     type AmbientNoiseConfiguration,
     DEFAULT_VOICE_GENDER_DETECTION_CONFIGURATION,
     DEFAULT_VOICEMAIL_DETECTION_CONFIGURATION,
@@ -295,6 +297,9 @@ function GeneralSection({
     const [voiceGenderConfig, setVoiceGenderConfig] = useState<VoiceGenderDetectionConfiguration>(
         workflowConfigurations.voice_gender_detection || DEFAULT_VOICE_GENDER_DETECTION_CONFIGURATION,
     );
+    const [language, setLanguage] = useState<AgentLanguage>(
+        workflowConfigurations.language || "english",
+    );
     const [isSaving, setIsSaving] = useState(false);
     const [isUploadingAudio, setIsUploadingAudio] = useState(false);
     const [audioUploadError, setAudioUploadError] = useState<string | null>(null);
@@ -313,9 +318,10 @@ function GeneralSection({
             smartTurnStopSecs !== (workflowConfigurations.smart_turn_stop_secs || 2) ||
             turnStopStrategy !== (workflowConfigurations.turn_stop_strategy || "transcription") ||
             contextCompactionEnabled !== (workflowConfigurations.context_compaction_enabled ?? false) ||
-            JSON.stringify(voiceGenderConfig) !== JSON.stringify(initVoiceGender)
+            JSON.stringify(voiceGenderConfig) !== JSON.stringify(initVoiceGender) ||
+            language !== (workflowConfigurations.language || "english")
         );
-    }, [name, workflowName, ambientNoiseConfig, maxCallDuration, maxUserIdleTimeout, smartTurnStopSecs, turnStopStrategy, contextCompactionEnabled, voiceGenderConfig, workflowConfigurations]);
+    }, [name, workflowName, ambientNoiseConfig, maxCallDuration, maxUserIdleTimeout, smartTurnStopSecs, turnStopStrategy, contextCompactionEnabled, voiceGenderConfig, language, workflowConfigurations]);
 
     useUnsavedChanges("general", isDirty);
 
@@ -390,6 +396,7 @@ function GeneralSection({
                     turn_stop_strategy: turnStopStrategy,
                     context_compaction_enabled: contextCompactionEnabled,
                     voice_gender_detection: voiceGenderConfig,
+                    language,
                 },
                 name,
             );
@@ -421,6 +428,31 @@ function GeneralSection({
                         onChange={(e) => setName(e.target.value)}
                         placeholder="Enter Agent name"
                     />
+                </div>
+
+                <Separator />
+
+                {/* Language */}
+                <div className="space-y-2">
+                    <Label htmlFor="agent_language" className="text-sm font-medium">Language</Label>
+                    <p className="text-xs text-muted-foreground">
+                        The language the agent speaks in. Forces every prompt and behavior to be
+                        conducted in this language, regardless of the language the prompts are
+                        written in.
+                    </p>
+                    <Select
+                        value={language}
+                        onValueChange={(value: AgentLanguage) => setLanguage(value)}
+                    >
+                        <SelectTrigger id="agent_language">
+                            <SelectValue placeholder="Select language" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {AGENT_LANGUAGE_OPTIONS.map((opt) => (
+                                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                 </div>
 
                 <Separator />

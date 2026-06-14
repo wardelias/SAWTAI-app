@@ -16,6 +16,7 @@ from api.services.workflow.behaviors.presets import BEHAVIOR_PRESETS, get_preset
 from api.services.workflow.behaviors.resolver import extract_behaviors
 from api.services.workflow.pipecat_engine_context_composer import (
     BEHAVIOR_GUIDELINES_HEADER,
+    build_language_directive,
     compose_system_prompt_for_node,
 )
 
@@ -100,6 +101,49 @@ class TestComposeBehaviorInstructions:
             has_recordings=False,
         )
         assert BEHAVIOR_GUIDELINES_HEADER not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Agent language directive
+# ---------------------------------------------------------------------------
+
+
+class TestLanguageDirective:
+    def test_known_languages_resolve(self):
+        assert "العربية" in build_language_directive("arabic")
+        assert "עברית" in build_language_directive("hebrew")
+        assert "English" in build_language_directive("english")
+
+    def test_case_insensitive_and_trimmed(self):
+        assert build_language_directive("  Arabic ") == build_language_directive("arabic")
+
+    def test_unknown_or_empty_returns_none(self):
+        assert build_language_directive(None) is None
+        assert build_language_directive("") is None
+        assert build_language_directive("klingon") is None
+
+    def test_directive_is_first_in_prompt(self):
+        node, workflow = _node_and_workflow()
+        prompt = compose_system_prompt_for_node(
+            node=node,
+            workflow=workflow,
+            format_prompt=lambda s: s,
+            has_recordings=False,
+            language="arabic",
+        )
+        assert prompt.startswith("LANGUAGE:")
+        assert "العربية" in prompt
+        assert "You are a helpful agent." in prompt
+
+    def test_no_directive_when_language_unset(self):
+        node, workflow = _node_and_workflow()
+        prompt = compose_system_prompt_for_node(
+            node=node,
+            workflow=workflow,
+            format_prompt=lambda s: s,
+            has_recordings=False,
+        )
+        assert not prompt.startswith("LANGUAGE:")
 
 
 # ---------------------------------------------------------------------------

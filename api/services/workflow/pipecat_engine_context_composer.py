@@ -93,6 +93,58 @@ def build_caller_profile_note(gender: str) -> str:
 BEHAVIOR_GUIDELINES_HEADER = "BEHAVIOR GUIDELINES:"
 
 
+# ---------------------------------------------------------------------------
+# Agent language directive
+# ---------------------------------------------------------------------------
+#
+# An agent can be pinned to a single spoken language. The stored prompts and
+# behaviors are instructions written for the model (usually in English); this
+# directive forces the model to *conduct the conversation* in the chosen
+# language regardless of the language the instructions are written in. It is
+# placed first in the composed prompt so it takes precedence.
+#
+# ``None`` / unset / "english" leaves the default behavior unchanged for
+# existing workflows. The directive is intentionally phrased in both English
+# (so it's understood alongside the rest of the prompt) and the target language
+# (so it anchors strongly for non-Latin scripts).
+
+LANGUAGE_DIRECTIVES: dict[str, str] = {
+    "arabic": (
+        "LANGUAGE: Conduct this entire conversation in Arabic (العربية). "
+        "Every spoken response — the greeting, questions, confirmations, and "
+        "everything else — must be in natural, conversational Arabic, no "
+        "matter what language the instructions below are written in. Do not "
+        "switch to another language unless the caller explicitly asks you to. "
+        "تحدّث بالعربية طوال المكالمة."
+    ),
+    "hebrew": (
+        "LANGUAGE: Conduct this entire conversation in Hebrew (עברית). "
+        "Every spoken response — the greeting, questions, confirmations, and "
+        "everything else — must be in natural, conversational Hebrew, no "
+        "matter what language the instructions below are written in. Do not "
+        "switch to another language unless the caller explicitly asks you to. "
+        "דבר/י בעברית לאורך כל השיחה."
+    ),
+    "english": (
+        "LANGUAGE: Conduct this entire conversation in English. Every spoken "
+        "response — the greeting, questions, confirmations, and everything "
+        "else — must be in natural, conversational English. Do not switch to "
+        "another language unless the caller explicitly asks you to."
+    ),
+}
+
+
+def build_language_directive(language: Optional[str]) -> Optional[str]:
+    """Return the system-prompt directive for an agent language, or None.
+
+    ``language`` is matched case-insensitively against ``LANGUAGE_DIRECTIVES``.
+    Unknown or empty values return ``None`` (no directive injected).
+    """
+    if not language:
+        return None
+    return LANGUAGE_DIRECTIVES.get(language.strip().lower())
+
+
 def compose_system_prompt_for_node(
     *,
     node: "Node",
@@ -101,6 +153,7 @@ def compose_system_prompt_for_node(
     has_recordings: bool,
     caller_profile_note: Optional[str] = None,
     behavior_instructions: Optional[list[str]] = None,
+    language: Optional[str] = None,
 ) -> str:
     """Compose the full system prompt text for a workflow node.
 
@@ -116,6 +169,8 @@ def compose_system_prompt_for_node(
         has_recordings: Whether any node in the workflow uses recordings.
         caller_profile_note: Optional note about the caller (e.g. detected
             gender) appended to every node prompt once known.
+        language: Optional agent language ("arabic", "hebrew", "english").
+            When set, a directive forcing that spoken language is placed first.
 
     Returns:
         The composed system prompt text.
@@ -127,7 +182,13 @@ def compose_system_prompt_for_node(
 
     formatted_node_prompt = format_prompt(node.prompt)
 
-    parts = [p for p in (global_prompt, formatted_node_prompt) if p]
+    parts: list[str] = []
+
+    language_directive = build_language_directive(language)
+    if language_directive:
+        parts.append(language_directive)
+
+    parts += [p for p in (global_prompt, formatted_node_prompt) if p]
 
     if caller_profile_note:
         parts.append(caller_profile_note)

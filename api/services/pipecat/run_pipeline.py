@@ -791,6 +791,14 @@ async def _run_pipeline(
     # Resolve global (workflow-level) Behavior tools: their instructions are
     # injected into every node's system prompt, and any "special" flags toggle
     # runtime capabilities (e.g. voice gender detection).
+    # Agent language: pin every node's system prompt to a single spoken
+    # language (Arabic / Hebrew / English) regardless of the language the
+    # prompts and behaviors are written in.
+    agent_language = (workflow.workflow_configurations or {}).get("language")
+    if agent_language:
+        engine.set_language(agent_language)
+        logger.info(f"Agent language set to {agent_language!r}")
+
     behavior_specials: set[str] = set()
     global_behavior_uuids = (workflow.workflow_configurations or {}).get(
         "behaviors", []

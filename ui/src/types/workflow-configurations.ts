@@ -42,6 +42,17 @@ export const DEFAULT_VOICE_GENDER_DETECTION_CONFIGURATION: VoiceGenderDetectionC
     backend: 'ecapa',
 };
 
+// Pins the agent to a single spoken language. The directive is injected at the
+// top of every node's system prompt so all prompts and behaviors are conducted
+// in this language. Unset leaves existing (prompt-driven) behavior unchanged.
+export type AgentLanguage = 'english' | 'arabic' | 'hebrew';
+
+export const AGENT_LANGUAGE_OPTIONS: { value: AgentLanguage; label: string }[] = [
+    { value: 'english', label: 'English' },
+    { value: 'arabic', label: 'Arabic (العربية)' },
+    { value: 'hebrew', label: 'Hebrew (עברית)' },
+];
+
 export interface ModelOverrides {
     llm?: {
         provider?: string;
@@ -82,6 +93,7 @@ export interface WorkflowConfigurations {
     voicemail_detection?: VoicemailDetectionConfiguration;
     voice_gender_detection?: VoiceGenderDetectionConfiguration;  // Estimate caller gender from voice pitch for gendered-language adaptation
     behaviors?: string[];  // tool_uuids of Behavior tools enabled globally for the whole agent
+    language?: AgentLanguage;  // Pin all prompts/behaviors to a single spoken language (Arabic, Hebrew, English)
     context_compaction_enabled?: boolean;  // Summarize context on node transitions to remove stale tool calls
     model_overrides?: ModelOverrides;  // Per-workflow model configuration overrides
     model_configuration_v2_override?: OrganizationAiModelConfigurationV2;  // Full v2 model configuration override

@@ -159,6 +159,11 @@ class PipecatEngine:
         # right gendered address forms (Arabic, Hebrew, ...).
         self._caller_profile_note: Optional[str] = None
 
+        # Agent language ("arabic", "hebrew", "english"). When set, a directive
+        # forcing that spoken language is placed first in every node's system
+        # prompt. Resolved once in run_pipeline and set via set_language.
+        self._language: Optional[str] = None
+
         # Instruction text from global Behavior tools (workflow-level), appended
         # to every node's system prompt. Resolved once in run_pipeline and set
         # via set_global_behavior_instructions. Node-level behaviors are
@@ -530,6 +535,10 @@ class PipecatEngine:
         """Set workflow-level Behavior instructions (resolved in run_pipeline)."""
         self._global_behavior_instructions = list(instructions or [])
 
+    def set_language(self, language: Optional[str]) -> None:
+        """Set the agent's spoken language (resolved in run_pipeline)."""
+        self._language = language or None
+
     def set_gender_text_filter(self, text_filter) -> None:
         """Set the Arabic feminine-address TTS filter (may be None)."""
         self._gender_text_filter = text_filter
@@ -592,6 +601,7 @@ class PipecatEngine:
             has_recordings=self._has_recordings,
             caller_profile_note=self._caller_profile_note,
             behavior_instructions=behavior_instructions,
+            language=self._language,
         )
         functions = await compose_functions_for_node(
             node=node,
@@ -1012,6 +1022,7 @@ class PipecatEngine:
                 has_recordings=self._has_recordings,
                 caller_profile_note=self._caller_profile_note,
                 behavior_instructions=behavior_instructions,
+                language=self._language,
             )
             # Empty functions list: tools for this node are already registered
             # and _update_llm_context skips set_tools when the list is empty.
