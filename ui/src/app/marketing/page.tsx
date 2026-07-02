@@ -4,7 +4,6 @@ import { Check, Clock, Facebook, Globe, Instagram, Linkedin, Loader2, Lock, Plus
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { client } from "@/client/client.gen";
 import { getWorkflowsSummaryApiV1WorkflowSummaryGet } from "@/client/sdk.gen";
 import type { WorkflowSummaryResponse } from "@/client/types.gen";
 import { Badge } from "@/components/ui/badge";
@@ -30,29 +29,16 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { detailFromError } from "@/lib/apiError";
 import { useAuth } from "@/lib/auth";
+import {
+    connectMetaForm,
+    type ConnectMetaPayload,
+    disconnectMetaConnection,
+    listMetaConnections,
+    type MetaConnection,
+    type UpdateConnectionPayload,
+    updateMetaConnection,
+} from "@/lib/marketingApi";
 import { cn } from "@/lib/utils";
-
-// ---- Types mirroring api/routes/marketing.py (regenerate the client to get
-// typed SDK functions once the backend route is live: `npm run generate-client`).
-interface MetaConnection {
-    id: number;
-    source_type: string;
-    form_id: string | null;
-    form_name: string | null;
-    page_id: string | null;
-    workflow_id: number;
-    workflow_name: string | null;
-    call_after_seconds: number;
-    max_retries: number;
-    enabled: boolean;
-    state: string;
-    total_leads: number;
-    created_at: string;
-}
-
-interface MetaConnectionsResponse {
-    connections: MetaConnection[];
-}
 
 type SourceId =
     | "meta_instant_form"
@@ -159,10 +145,7 @@ export default function MarketingPage() {
 
     const fetchConnections = useCallback(async () => {
         const headers = await authHeaders();
-        const res = await client.get<MetaConnectionsResponse>({
-            url: "/api/v1/marketing/connections",
-            headers,
-        });
+        const res = await listMetaConnections(headers);
         if (res.error) {
             toast.error(detailFromError(res.error, "Failed to load connections"));
             return;
@@ -192,13 +175,9 @@ export default function MarketingPage() {
         })();
     }, [authLoading, user, fetchAgents, fetchConnections]);
 
-    const handleConnect = async (payload: ConnectPayload) => {
+    const handleConnect = async (payload: ConnectMetaPayload) => {
         const headers = await authHeaders();
-        const res = await client.post<MetaConnection>({
-            url: "/api/v1/marketing/connections/meta",
-            headers,
-            body: payload,
-        });
+        const res = await connectMetaForm(payload, headers);
         if (res.error) {
             toast.error(detailFromError(res.error, "Failed to connect Meta form"));
             return;
@@ -208,13 +187,9 @@ export default function MarketingPage() {
         await fetchConnections();
     };
 
-    const handleUpdate = async (id: number, patch: UpdatePayload) => {
+    const handleUpdate = async (id: number, patch: UpdateConnectionPayload) => {
         const headers = await authHeaders();
-        const res = await client.patch<MetaConnection>({
-            url: `/api/v1/marketing/connections/${id}`,
-            headers,
-            body: patch,
-        });
+        const res = await updateMetaConnection(id, patch, headers);
         if (res.error) {
             toast.error(detailFromError(res.error, "Failed to update connection"));
             return;
@@ -226,10 +201,7 @@ export default function MarketingPage() {
 
     const handleDisconnect = async (id: number) => {
         const headers = await authHeaders();
-        const res = await client.delete({
-            url: `/api/v1/marketing/connections/${id}`,
-            headers,
-        });
+        const res = await disconnectMetaConnection(id, headers);
         if (res.error) {
             toast.error(detailFromError(res.error, "Failed to disconnect"));
             return;
@@ -387,28 +359,12 @@ export default function MarketingPage() {
     );
 }
 
-interface ConnectPayload {
-    page_access_token: string;
-    form_id: string;
-    page_id?: string;
-    workflow_id: number;
-    call_after_seconds: number;
-    max_retries: number;
-}
-
-interface UpdatePayload {
-    workflow_id?: number;
-    call_after_seconds?: number;
-    max_retries?: number;
-    enabled?: boolean;
-}
-
 interface ConfigureSourceDialogProps {
     dialog: Exclude<DialogState, null>;
     agents: WorkflowSummaryResponse[];
     onOpenChange: (open: boolean) => void;
-    onConnect: (payload: ConnectPayload) => Promise<void>;
-    onUpdate: (id: number, patch: UpdatePayload) => Promise<void>;
+    onConnect: (payload: ConnectMetaPayload) => Promise<void>;
+    onUpdate: (id: number, patch: UpdateConnectionPayload) => Promise<void>;
     onDisconnect: (id: number) => Promise<void>;
 }
 
