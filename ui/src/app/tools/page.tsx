@@ -46,6 +46,7 @@ import {
     createMcpDefinition,
     createToolDefinition,
     getCategoryConfig,
+    isRecommendedTool,
     MCP_URL_PATTERN,
     renderToolIcon,
     TOOL_CATEGORIES,
@@ -251,7 +252,10 @@ export default function ToolsPage() {
             tool.description?.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
-    const activeTools = filteredTools.filter((tool) => tool.status === "active");
+    const activeTools = filteredTools
+        .filter((tool) => tool.status === "active")
+        // Surface suggested built-in tools (e.g. Book Meeting) first.
+        .sort((a, b) => Number(isRecommendedTool(b.category)) - Number(isRecommendedTool(a.category)));
     const archivedTools = filteredTools.filter((tool) => tool.status === "archived");
 
     const getCategoryBadge = (category: string) => {
@@ -270,6 +274,8 @@ export default function ToolsPage() {
                 return <Badge variant="outline">MCP</Badge>;
             case "behavior":
                 return <Badge variant="secondary">Behavior</Badge>;
+            case "book_meeting":
+                return <Badge variant="secondary">Book Meeting</Badge>;
             default:
                 return <Badge variant="outline">{category}</Badge>;
         }
@@ -404,6 +410,11 @@ export default function ToolsPage() {
                                                                     {tool.name}
                                                                 </span>
                                                                 {getCategoryBadge(tool.category)}
+                                                                {isRecommendedTool(tool.category) && (
+                                                                    <Badge variant="outline" className="border-primary/40 text-primary">
+                                                                        Recommended
+                                                                    </Badge>
+                                                                )}
                                                             </div>
                                                             {tool.description && (
                                                                 <p className="text-sm text-muted-foreground mt-1">
@@ -538,15 +549,25 @@ export default function ToolsPage() {
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    {TOOL_CATEGORIES.map((category) => (
-                                        <SelectItem
-                                            key={category.value}
-                                            value={category.value}
-                                            disabled={category.disabled}
-                                        >
-                                            {category.label}
-                                        </SelectItem>
-                                    ))}
+                                    {[...TOOL_CATEGORIES]
+                                        // Surface recommended built-in tools (e.g. Book Meeting) first.
+                                        .sort((a, b) => Number(!!b.recommended) - Number(!!a.recommended))
+                                        .map((category) => (
+                                            <SelectItem
+                                                key={category.value}
+                                                value={category.value}
+                                                disabled={category.disabled}
+                                            >
+                                                <span className="flex items-center gap-2">
+                                                    {category.label}
+                                                    {category.recommended && (
+                                                        <Badge variant="outline" className="border-primary/40 text-primary">
+                                                            Recommended
+                                                        </Badge>
+                                                    )}
+                                                </span>
+                                            </SelectItem>
+                                        ))}
                                 </SelectContent>
                             </Select>
                             <p className="text-xs text-muted-foreground">
