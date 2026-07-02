@@ -13,6 +13,7 @@ from api.services.campaign.errors import (
     PhoneNumberPoolExhaustedError,
 )
 from api.services.campaign.source_sync_factory import get_sync_service
+from api.tasks.function_names import FunctionNames
 
 PHONE_NUMBER_POOL_EXHAUSTED_COUNTER_KEY = "phone_number_pool_exhausted_attempts"
 MAX_PHONE_NUMBER_POOL_EXHAUSTED_ATTEMPTS = 3
@@ -94,6 +95,43 @@ async def sync_campaign_source(ctx: Dict, campaign_id: int) -> None:
             details={"error": str(e)},
         )
         raise
+
+
+async def poll_meta_leads(ctx: Dict, campaign_id: int) -> None:
+    """Poll a single Meta Instant Form connection for new leads.
+
+    Delegates to the meta_instant_form sync service, which appends new leads as
+    scheduled queued_runs. The campaign orchestrator's periodic sweep dispatches
+    them once due. Failures are logged, never raised, so one bad connection
+    doesn't break the poller sweep.
+    """
+    try:
+        service = get_sync_service("meta_instant_form")
+        count = await service.sync_source_data(campaign_id)
+        if count:
+            logger.info(
+                f"poll_meta_leads: campaign {campaign_id} queued {count} lead(s)"
+            )
+    except Exception as e:
+        logger.error(f"poll_meta_leads failed for campaign {campaign_id}: {e}")
+
+
+async def poll_all_meta_connections(ctx: Dict) -> None:
+    """Cron sweep: enqueue a poll job per active Meta connection.
+
+    Fans out to per-connection jobs so polls run independently and one failing
+    token doesn't stall the others. Only 'running' meta campaigns are swept
+    (paused/disconnected connections are skipped).
+    """
+    from api.tasks.arq import enqueue_job
+
+    campaigns = await db_client.get_active_campaigns_by_source_type("meta_instant_form")
+    for campaign in campaigns:
+        await enqueue_job(FunctionNames.POLL_META_LEADS, campaign.id)
+    if campaigns:
+        logger.info(
+            f"poll_all_meta_connections: enqueued polls for {len(campaigns)} connection(s)"
+        )
 
 
 async def process_campaign_batch(

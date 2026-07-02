@@ -530,6 +530,12 @@ class CampaignOrchestrator:
         """Check if campaign has no activity for 1 hour."""
         campaign_id = campaign.id
 
+        # Evergreen campaigns (e.g. Meta Instant Form lead sources) are long-lived:
+        # leads trickle in indefinitely via polling, so they must never auto-complete
+        # on idle. They only leave 'running' when the user pauses/disconnects them.
+        if (campaign.orchestrator_metadata or {}).get("evergreen"):
+            return False
+
         # Don't mark complete if batch is in progress
         if campaign_id in self._batch_in_progress:
             logger.debug(

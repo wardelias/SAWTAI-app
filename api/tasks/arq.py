@@ -3,7 +3,7 @@
 import ssl
 from urllib.parse import urlparse
 
-from api.constants import REDIS_URL
+from api.constants import META_LEADS_POLL_INTERVAL_SECONDS, REDIS_URL
 
 # Setup logging - this is now idempotent and safe to call multiple times
 from api.logging_config import setup_logging
@@ -12,7 +12,7 @@ from api.tasks.function_names import FunctionNames
 setup_logging()
 
 # Now import ARQ and task dependencies
-from arq import create_pool
+from arq import create_pool, cron
 from arq.connections import ArqRedis, RedisSettings
 
 parsed_url = urlparse(REDIS_URL)
@@ -40,6 +40,8 @@ REDIS_SETTINGS = RedisSettings(
 )
 
 from api.tasks.campaign_tasks import (
+    poll_all_meta_connections,
+    poll_meta_leads,
     process_campaign_batch,
     sync_campaign_source,
 )
@@ -47,6 +49,11 @@ from api.tasks.knowledge_base_processing import process_knowledge_base_document
 from api.tasks.run_integrations import run_integrations_post_workflow_run
 from api.tasks.s3_upload import upload_voicemail_audio_to_s3
 from api.tasks.workflow_completion import process_workflow_completion
+
+
+# Sweep active Meta connections on a whole-minute cadence derived from the
+# configured interval (rounded to whole minutes; arq cron granularity).
+_META_POLL_STEP_MINUTES = max(1, META_LEADS_POLL_INTERVAL_SECONDS // 60)
 
 
 class WorkerSettings:
@@ -57,8 +64,16 @@ class WorkerSettings:
         sync_campaign_source,
         process_campaign_batch,
         process_knowledge_base_document,
+        poll_meta_leads,
     ]
-    cron_jobs = []
+    cron_jobs = [
+        cron(
+            poll_all_meta_connections,
+            minute=set(range(0, 60, _META_POLL_STEP_MINUTES)),
+            second=0,
+            run_at_startup=False,
+        ),
+    ]
     redis_settings = REDIS_SETTINGS
     max_jobs = 10
 

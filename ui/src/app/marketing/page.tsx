@@ -1,8 +1,12 @@
 "use client";
 
-import { Check, Clock, Facebook, Globe, Instagram, Linkedin, Plus, Settings2, Target, Webhook, Zap } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Check, Clock, Facebook, Globe, Instagram, Linkedin, Loader2, Lock, Plus, Settings2, Target, Webhook, Zap } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
+import { client } from "@/client/client.gen";
+import { getWorkflowsSummaryApiV1WorkflowSummaryGet } from "@/client/sdk.gen";
+import type { WorkflowSummaryResponse } from "@/client/types.gen";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,7 +28,31 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { detailFromError } from "@/lib/apiError";
+import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+
+// ---- Types mirroring api/routes/marketing.py (regenerate the client to get
+// typed SDK functions once the backend route is live: `npm run generate-client`).
+interface MetaConnection {
+    id: number;
+    source_type: string;
+    form_id: string | null;
+    form_name: string | null;
+    page_id: string | null;
+    workflow_id: number;
+    workflow_name: string | null;
+    call_after_seconds: number;
+    max_retries: number;
+    enabled: boolean;
+    state: string;
+    total_leads: number;
+    created_at: string;
+}
+
+interface MetaConnectionsResponse {
+    connections: MetaConnection[];
+}
 
 type SourceId =
     | "meta_instant_form"
@@ -40,13 +68,8 @@ type MarketingSource = {
     description: string;
     icon: typeof Facebook;
     tint: string;
-};
-
-type SourceSettings = {
-    agentId: string;
-    callAfter: string; // delay key
-    maxRetries: number;
-    enabled: boolean;
+    // Only Meta is wired end-to-end in v1; the rest are placeholders.
+    connectable: boolean;
 };
 
 const SOURCES: MarketingSource[] = [
@@ -56,6 +79,7 @@ const SOURCES: MarketingSource[] = [
         description: "Facebook Lead Ads — pull leads from instant forms the moment they submit.",
         icon: Facebook,
         tint: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+        connectable: true,
     },
     {
         id: "instagram_lead",
@@ -63,6 +87,7 @@ const SOURCES: MarketingSource[] = [
         description: "Capture leads from Instagram lead generation campaigns.",
         icon: Instagram,
         tint: "bg-pink-500/10 text-pink-600 dark:text-pink-400",
+        connectable: false,
     },
     {
         id: "google_lead_form",
@@ -70,6 +95,7 @@ const SOURCES: MarketingSource[] = [
         description: "Leads from Google Ads lead form extensions.",
         icon: Globe,
         tint: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+        connectable: false,
     },
     {
         id: "linkedin_lead",
@@ -77,6 +103,7 @@ const SOURCES: MarketingSource[] = [
         description: "Sync leads from LinkedIn Lead Gen Forms.",
         icon: Linkedin,
         tint: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
+        connectable: false,
     },
     {
         id: "web_form",
@@ -84,6 +111,7 @@ const SOURCES: MarketingSource[] = [
         description: "Embed a form or post submissions from your own site.",
         icon: Zap,
         tint: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+        connectable: false,
     },
     {
         id: "webhook",
@@ -91,78 +119,129 @@ const SOURCES: MarketingSource[] = [
         description: "Send leads from any tool via a generic webhook.",
         icon: Webhook,
         tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+        connectable: false,
     },
 ];
 
-const CALL_AFTER_OPTIONS: { value: string; label: string }[] = [
-    { value: "0", label: "Immediately" },
-    { value: "5", label: "After 5 minutes" },
-    { value: "15", label: "After 15 minutes" },
-    { value: "30", label: "After 30 minutes" },
-    { value: "60", label: "After 1 hour" },
-    { value: "1440", label: "After 1 day" },
+const META_SOURCE = SOURCES[0];
+
+const CALL_AFTER_OPTIONS: { value: number; label: string }[] = [
+    { value: 0, label: "Immediately" },
+    { value: 300, label: "After 5 minutes" },
+    { value: 900, label: "After 15 minutes" },
+    { value: 1800, label: "After 30 minutes" },
+    { value: 3600, label: "After 1 hour" },
+    { value: 86400, label: "After 1 day" },
 ];
 
-// Mock voice agents — in a real build these come from the workflows API.
-const MOCK_AGENTS: { id: string; name: string }[] = [
-    { id: "agent-1", name: "Inbound Qualifier" },
-    { id: "agent-2", name: "Demo Booker" },
-    { id: "agent-3", name: "Renewal Outreach" },
-];
-
-const DEFAULT_SETTINGS: SourceSettings = {
-    agentId: "agent-1",
-    callAfter: "5",
-    maxRetries: 2,
-    enabled: true,
-};
-
-// Mock initial connections.
-const INITIAL_CONNECTIONS: Partial<Record<SourceId, SourceSettings>> = {
-    meta_instant_form: { agentId: "agent-2", callAfter: "0", maxRetries: 3, enabled: true },
-};
-
-function callAfterLabel(value: string) {
-    return CALL_AFTER_OPTIONS.find((o) => o.value === value)?.label ?? "Immediately";
+function callAfterLabel(seconds: number) {
+    return CALL_AFTER_OPTIONS.find((o) => o.value === seconds)?.label ?? `After ${seconds}s`;
 }
 
-function agentName(id: string) {
-    return MOCK_AGENTS.find((a) => a.id === id)?.name ?? "Unassigned";
-}
+type DialogState =
+    | { mode: "connect" }
+    | { mode: "edit"; connection: MetaConnection }
+    | null;
 
 export default function MarketingPage() {
-    const [connections, setConnections] =
-        useState<Partial<Record<SourceId, SourceSettings>>>(INITIAL_CONNECTIONS);
-    const [editing, setEditing] = useState<SourceId | null>(null);
+    const { user, getAccessToken, loading: authLoading } = useAuth();
 
-    const sourceById = useMemo(() => {
-        const map = new Map<SourceId, MarketingSource>();
-        SOURCES.forEach((s) => map.set(s.id, s));
-        return map;
-    }, []);
+    const [agents, setAgents] = useState<WorkflowSummaryResponse[]>([]);
+    const [connections, setConnections] = useState<MetaConnection[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [dialog, setDialog] = useState<DialogState>(null);
+    const hasFetched = useRef(false);
 
-    const connected = SOURCES.filter((s) => connections[s.id]);
-    const available = SOURCES.filter((s) => !connections[s.id]);
+    const authHeaders = useCallback(async () => {
+        const token = await getAccessToken();
+        return { Authorization: `Bearer ${token}` };
+    }, [getAccessToken]);
 
-    const openConfigure = (id: SourceId) => setEditing(id);
-
-    const handleSave = (id: SourceId, settings: SourceSettings) => {
-        setConnections((prev) => ({ ...prev, [id]: settings }));
-        setEditing(null);
-    };
-
-    const handleDisconnect = (id: SourceId) => {
-        setConnections((prev) => {
-            const next = { ...prev };
-            delete next[id];
-            return next;
+    const fetchConnections = useCallback(async () => {
+        const headers = await authHeaders();
+        const res = await client.get<MetaConnectionsResponse>({
+            url: "/api/v1/marketing/connections",
+            headers,
         });
-        setEditing(null);
+        if (res.error) {
+            toast.error(detailFromError(res.error, "Failed to load connections"));
+            return;
+        }
+        setConnections(res.data?.connections ?? []);
+    }, [authHeaders]);
+
+    const fetchAgents = useCallback(async () => {
+        const headers = await authHeaders();
+        const res = await getWorkflowsSummaryApiV1WorkflowSummaryGet({
+            headers,
+            query: { status: "active" },
+        });
+        if (res.error) {
+            toast.error(detailFromError(res.error, "Failed to load agents"));
+            return;
+        }
+        setAgents(res.data ?? []);
+    }, [authHeaders]);
+
+    useEffect(() => {
+        if (authLoading || !user || hasFetched.current) return;
+        hasFetched.current = true;
+        (async () => {
+            await Promise.all([fetchAgents(), fetchConnections()]);
+            setLoading(false);
+        })();
+    }, [authLoading, user, fetchAgents, fetchConnections]);
+
+    const handleConnect = async (payload: ConnectPayload) => {
+        const headers = await authHeaders();
+        const res = await client.post<MetaConnection>({
+            url: "/api/v1/marketing/connections/meta",
+            headers,
+            body: payload,
+        });
+        if (res.error) {
+            toast.error(detailFromError(res.error, "Failed to connect Meta form"));
+            return;
+        }
+        toast.success("Meta form connected — new leads will be called automatically.");
+        setDialog(null);
+        await fetchConnections();
     };
 
-    const editingSource = editing ? sourceById.get(editing) ?? null : null;
-    const editingSettings = editing ? connections[editing] ?? DEFAULT_SETTINGS : DEFAULT_SETTINGS;
-    const editingIsConnected = editing ? Boolean(connections[editing]) : false;
+    const handleUpdate = async (id: number, patch: UpdatePayload) => {
+        const headers = await authHeaders();
+        const res = await client.patch<MetaConnection>({
+            url: `/api/v1/marketing/connections/${id}`,
+            headers,
+            body: patch,
+        });
+        if (res.error) {
+            toast.error(detailFromError(res.error, "Failed to update connection"));
+            return;
+        }
+        toast.success("Connection updated.");
+        setDialog(null);
+        await fetchConnections();
+    };
+
+    const handleDisconnect = async (id: number) => {
+        const headers = await authHeaders();
+        const res = await client.delete({
+            url: `/api/v1/marketing/connections/${id}`,
+            headers,
+        });
+        if (res.error) {
+            toast.error(detailFromError(res.error, "Failed to disconnect"));
+            return;
+        }
+        toast.success("Disconnected.");
+        setDialog(null);
+        await fetchConnections();
+    };
+
+    // All source cards are shown; Meta stays connectable (you can add multiple
+    // forms), the rest render as "Coming soon".
+    const available = SOURCES;
 
     return (
         <div className="container mx-auto px-4 py-8">
@@ -174,191 +253,303 @@ export default function MarketingPage() {
                     </p>
                 </div>
 
-                {/* Connected sources */}
-                <section className="space-y-3">
-                    <div className="flex items-center gap-2">
-                        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                            Connected Sources
-                        </h2>
-                        {connected.length > 0 && (
-                            <Badge variant="secondary">{connected.length}</Badge>
-                        )}
+                {loading ? (
+                    <div className="flex items-center justify-center rounded-lg border border-dashed p-12 text-sm text-muted-foreground">
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Loading connections…
                     </div>
+                ) : (
+                    <>
+                        {/* Connected sources */}
+                        <section className="space-y-3">
+                            <div className="flex items-center gap-2">
+                                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                                    Connected Sources
+                                </h2>
+                                {connections.length > 0 && (
+                                    <Badge variant="secondary">{connections.length}</Badge>
+                                )}
+                            </div>
 
-                    {connected.length === 0 ? (
-                        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                            No sources connected yet. Connect one below to start routing leads to your agents.
-                        </div>
-                    ) : (
-                        <div className="space-y-3">
-                            {connected.map((source) => {
-                                const settings = connections[source.id]!;
-                                const Icon = source.icon;
-                                return (
-                                    <Card key={source.id}>
-                                        <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
-                                            <div className={cn("flex h-11 w-11 shrink-0 items-center justify-center rounded-xl", source.tint)}>
-                                                <Icon className="h-5 w-5" />
-                                            </div>
+                            {connections.length === 0 ? (
+                                <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+                                    No sources connected yet. Connect Meta Instant Form below to start routing leads to your agents.
+                                </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    {connections.map((conn) => {
+                                        const Icon = META_SOURCE.icon;
+                                        return (
+                                            <Card key={conn.id}>
+                                                <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
+                                                    <div className={cn("flex h-11 w-11 shrink-0 items-center justify-center rounded-xl", META_SOURCE.tint)}>
+                                                        <Icon className="h-5 w-5" />
+                                                    </div>
 
-                                            <div className="min-w-0 flex-1">
-                                                <div className="flex items-center gap-2">
-                                                    <p className="font-medium">{source.name}</p>
-                                                    {settings.enabled ? (
-                                                        <Badge className="bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300">
-                                                            Active
-                                                        </Badge>
-                                                    ) : (
-                                                        <Badge variant="secondary">Paused</Badge>
-                                                    )}
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="flex items-center gap-2">
+                                                            <p className="font-medium">{conn.form_name || META_SOURCE.name}</p>
+                                                            {conn.enabled ? (
+                                                                <Badge className="bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300">
+                                                                    Active
+                                                                </Badge>
+                                                            ) : (
+                                                                <Badge variant="secondary">Paused</Badge>
+                                                            )}
+                                                        </div>
+                                                        <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                                                            <span className="inline-flex items-center gap-1">
+                                                                <Target className="h-3.5 w-3.5" />
+                                                                {conn.workflow_name || "Unassigned"}
+                                                            </span>
+                                                            <span className="inline-flex items-center gap-1">
+                                                                <Clock className="h-3.5 w-3.5" />
+                                                                Call {callAfterLabel(conn.call_after_seconds).toLowerCase()}
+                                                            </span>
+                                                            <span>
+                                                                {conn.max_retries} retr{conn.max_retries === 1 ? "y" : "ies"}
+                                                            </span>
+                                                            <span>{conn.total_leads} lead{conn.total_leads === 1 ? "" : "s"}</span>
+                                                        </div>
+                                                    </div>
+
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="shrink-0"
+                                                        onClick={() => setDialog({ mode: "edit", connection: conn })}
+                                                    >
+                                                        <Settings2 className="mr-1 h-4 w-4" />
+                                                        Configure
+                                                    </Button>
+                                                </CardContent>
+                                            </Card>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </section>
+
+                        {/* Available integrations */}
+                        <section className="space-y-3">
+                            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                                Available Integrations
+                            </h2>
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                                {available.map((source) => {
+                                    const Icon = source.icon;
+                                    return (
+                                        <Card key={source.id} className="flex flex-col">
+                                            <CardHeader className="flex-1">
+                                                <div className={cn("mb-2 flex h-11 w-11 items-center justify-center rounded-xl", source.tint)}>
+                                                    <Icon className="h-5 w-5" />
                                                 </div>
-                                                <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-                                                    <span className="inline-flex items-center gap-1">
-                                                        <Target className="h-3.5 w-3.5" />
-                                                        {agentName(settings.agentId)}
-                                                    </span>
-                                                    <span className="inline-flex items-center gap-1">
-                                                        <Clock className="h-3.5 w-3.5" />
-                                                        Call {callAfterLabel(settings.callAfter).toLowerCase()}
-                                                    </span>
-                                                    <span>
-                                                        {settings.maxRetries} retr{settings.maxRetries === 1 ? "y" : "ies"}
-                                                    </span>
-                                                </div>
-                                            </div>
-
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                className="shrink-0"
-                                                onClick={() => openConfigure(source.id)}
-                                            >
-                                                <Settings2 className="mr-1 h-4 w-4" />
-                                                Configure
-                                            </Button>
-                                        </CardContent>
-                                    </Card>
-                                );
-                            })}
-                        </div>
-                    )}
-                </section>
-
-                {/* Available integrations */}
-                {available.length > 0 && (
-                    <section className="space-y-3">
-                        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                            Available Integrations
-                        </h2>
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                            {available.map((source) => {
-                                const Icon = source.icon;
-                                return (
-                                    <Card key={source.id} className="flex flex-col">
-                                        <CardHeader className="flex-1">
-                                            <div className={cn("mb-2 flex h-11 w-11 items-center justify-center rounded-xl", source.tint)}>
-                                                <Icon className="h-5 w-5" />
-                                            </div>
-                                            <CardTitle className="text-base">{source.name}</CardTitle>
-                                            <CardDescription>{source.description}</CardDescription>
-                                        </CardHeader>
-                                        <CardContent>
-                                            <Button
-                                                variant="outline"
-                                                className="w-full"
-                                                onClick={() => openConfigure(source.id)}
-                                            >
-                                                <Plus className="mr-1 h-4 w-4" />
-                                                Connect
-                                            </Button>
-                                        </CardContent>
-                                    </Card>
-                                );
-                            })}
-                        </div>
-                    </section>
+                                                <CardTitle className="text-base">{source.name}</CardTitle>
+                                                <CardDescription>{source.description}</CardDescription>
+                                            </CardHeader>
+                                            <CardContent>
+                                                {source.connectable ? (
+                                                    <Button
+                                                        variant="outline"
+                                                        className="w-full"
+                                                        onClick={() => setDialog({ mode: "connect" })}
+                                                    >
+                                                        <Plus className="mr-1 h-4 w-4" />
+                                                        Connect
+                                                    </Button>
+                                                ) : (
+                                                    <Button variant="outline" className="w-full" disabled>
+                                                        <Lock className="mr-1 h-4 w-4" />
+                                                        Coming soon
+                                                    </Button>
+                                                )}
+                                            </CardContent>
+                                        </Card>
+                                    );
+                                })}
+                            </div>
+                        </section>
+                    </>
                 )}
             </div>
 
-            {editingSource && (
+            {dialog && (
                 <ConfigureSourceDialog
-                    source={editingSource}
-                    isConnected={editingIsConnected}
-                    initial={editingSettings}
-                    onOpenChange={(open) => !open && setEditing(null)}
-                    onSave={(settings) => handleSave(editingSource.id, settings)}
-                    onDisconnect={() => handleDisconnect(editingSource.id)}
+                    dialog={dialog}
+                    agents={agents}
+                    onOpenChange={(open) => !open && setDialog(null)}
+                    onConnect={handleConnect}
+                    onUpdate={handleUpdate}
+                    onDisconnect={handleDisconnect}
                 />
             )}
         </div>
     );
 }
 
+interface ConnectPayload {
+    page_access_token: string;
+    form_id: string;
+    page_id?: string;
+    workflow_id: number;
+    call_after_seconds: number;
+    max_retries: number;
+}
+
+interface UpdatePayload {
+    workflow_id?: number;
+    call_after_seconds?: number;
+    max_retries?: number;
+    enabled?: boolean;
+}
+
 interface ConfigureSourceDialogProps {
-    source: MarketingSource;
-    isConnected: boolean;
-    initial: SourceSettings;
+    dialog: Exclude<DialogState, null>;
+    agents: WorkflowSummaryResponse[];
     onOpenChange: (open: boolean) => void;
-    onSave: (settings: SourceSettings) => void;
-    onDisconnect: () => void;
+    onConnect: (payload: ConnectPayload) => Promise<void>;
+    onUpdate: (id: number, patch: UpdatePayload) => Promise<void>;
+    onDisconnect: (id: number) => Promise<void>;
 }
 
 function ConfigureSourceDialog({
-    source,
-    isConnected,
-    initial,
+    dialog,
+    agents,
     onOpenChange,
-    onSave,
+    onConnect,
+    onUpdate,
     onDisconnect,
 }: ConfigureSourceDialogProps) {
-    const [agentId, setAgentId] = useState(initial.agentId);
-    const [callAfter, setCallAfter] = useState(initial.callAfter);
-    const [maxRetries, setMaxRetries] = useState(initial.maxRetries);
-    const [enabled, setEnabled] = useState(initial.enabled);
+    const isConnect = dialog.mode === "connect";
+    const existing = dialog.mode === "edit" ? dialog.connection : null;
 
-    const Icon = source.icon;
+    const [pageToken, setPageToken] = useState("");
+    const [formId, setFormId] = useState("");
+    const [pageId, setPageId] = useState("");
+    const [workflowId, setWorkflowId] = useState<string>(
+        existing ? String(existing.workflow_id) : agents[0] ? String(agents[0].id) : "",
+    );
+    const [callAfter, setCallAfter] = useState<number>(existing?.call_after_seconds ?? 300);
+    const [maxRetries, setMaxRetries] = useState<number>(existing?.max_retries ?? 2);
+    const [enabled, setEnabled] = useState<boolean>(existing?.enabled ?? true);
+    const [saving, setSaving] = useState(false);
+
+    const Icon = META_SOURCE.icon;
+
+    const canSubmit = isConnect
+        ? pageToken.trim().length > 0 && formId.trim().length > 0 && workflowId !== ""
+        : workflowId !== "";
+
+    const handleSubmit = async () => {
+        setSaving(true);
+        try {
+            if (isConnect) {
+                await onConnect({
+                    page_access_token: pageToken.trim(),
+                    form_id: formId.trim(),
+                    page_id: pageId.trim() || undefined,
+                    workflow_id: Number(workflowId),
+                    call_after_seconds: callAfter,
+                    max_retries: maxRetries,
+                });
+            } else if (existing) {
+                await onUpdate(existing.id, {
+                    workflow_id: Number(workflowId),
+                    call_after_seconds: callAfter,
+                    max_retries: maxRetries,
+                    enabled,
+                });
+            }
+        } finally {
+            setSaving(false);
+        }
+    };
 
     return (
         <Dialog open onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-md">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
-                        <span className={cn("flex h-8 w-8 items-center justify-center rounded-lg", source.tint)}>
+                        <span className={cn("flex h-8 w-8 items-center justify-center rounded-lg", META_SOURCE.tint)}>
                             <Icon className="h-4 w-4" />
                         </span>
-                        {source.name}
+                        {existing?.form_name || META_SOURCE.name}
                     </DialogTitle>
                     <DialogDescription>
-                        Choose which voice agent handles these leads and when it should call.
+                        {isConnect
+                            ? "Paste your Meta Page access token and lead form ID, then choose which agent calls new leads."
+                            : "Choose which voice agent handles these leads and when it should call."}
                     </DialogDescription>
                 </DialogHeader>
 
                 <div className="grid gap-5 py-4">
+                    {isConnect && (
+                        <>
+                            <div className="grid gap-2">
+                                <Label htmlFor="page-token">Page access token</Label>
+                                <Input
+                                    id="page-token"
+                                    type="password"
+                                    autoComplete="off"
+                                    placeholder="EAAB..."
+                                    value={pageToken}
+                                    onChange={(e) => setPageToken(e.target.value)}
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                    A long-lived Page access token with the leads_retrieval permission.
+                                </p>
+                            </div>
+                            <div className="grid gap-2">
+                                <Label htmlFor="form-id">Lead form ID</Label>
+                                <Input
+                                    id="form-id"
+                                    placeholder="1234567890"
+                                    value={formId}
+                                    onChange={(e) => setFormId(e.target.value)}
+                                />
+                            </div>
+                            <div className="grid gap-2">
+                                <Label htmlFor="page-id">Page ID (optional)</Label>
+                                <Input
+                                    id="page-id"
+                                    placeholder="Your Facebook Page ID"
+                                    value={pageId}
+                                    onChange={(e) => setPageId(e.target.value)}
+                                />
+                            </div>
+                        </>
+                    )}
+
                     <div className="grid gap-2">
                         <Label>Assign voice agent</Label>
-                        <Select value={agentId} onValueChange={setAgentId}>
+                        <Select value={workflowId} onValueChange={setWorkflowId}>
                             <SelectTrigger>
-                                <SelectValue placeholder="Select an agent" />
+                                <SelectValue placeholder={agents.length ? "Select an agent" : "No agents available"} />
                             </SelectTrigger>
                             <SelectContent>
-                                {MOCK_AGENTS.map((agent) => (
-                                    <SelectItem key={agent.id} value={agent.id}>
+                                {agents.map((agent) => (
+                                    <SelectItem key={agent.id} value={String(agent.id)}>
                                         {agent.name}
                                     </SelectItem>
                                 ))}
                             </SelectContent>
                         </Select>
+                        {agents.length === 0 && (
+                            <p className="text-xs text-muted-foreground">
+                                Create an agent (workflow) first, then connect a lead source.
+                            </p>
+                        )}
                     </div>
 
                     <div className="grid gap-2">
                         <Label>Call after</Label>
-                        <Select value={callAfter} onValueChange={setCallAfter}>
+                        <Select value={String(callAfter)} onValueChange={(v) => setCallAfter(Number(v))}>
                             <SelectTrigger>
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
                                 {CALL_AFTER_OPTIONS.map((opt) => (
-                                    <SelectItem key={opt.value} value={opt.value}>
+                                    <SelectItem key={opt.value} value={String(opt.value)}>
                                         {opt.label}
                                     </SelectItem>
                                 ))}
@@ -377,43 +568,47 @@ function ConfigureSourceDialog({
                             min={0}
                             max={10}
                             value={maxRetries}
-                            onChange={(e) => setMaxRetries(Math.max(0, Number(e.target.value) || 0))}
+                            onChange={(e) => setMaxRetries(Math.max(0, Math.min(10, Number(e.target.value) || 0)))}
                         />
                         <p className="text-xs text-muted-foreground">
                             Retries if the lead doesn&apos;t answer the first call.
                         </p>
                     </div>
 
-                    <div className="flex items-center justify-between rounded-lg border p-3">
-                        <div>
-                            <p className="text-sm font-medium">Active</p>
-                            <p className="text-xs text-muted-foreground">
-                                When off, leads are stored but no calls are placed.
-                            </p>
+                    {!isConnect && (
+                        <div className="flex items-center justify-between rounded-lg border p-3">
+                            <div>
+                                <p className="text-sm font-medium">Active</p>
+                                <p className="text-xs text-muted-foreground">
+                                    When off, leads are stored but no calls are placed.
+                                </p>
+                            </div>
+                            <Switch checked={enabled} onCheckedChange={setEnabled} />
                         </div>
-                        <Switch checked={enabled} onCheckedChange={setEnabled} />
-                    </div>
+                    )}
                 </div>
 
                 <DialogFooter className="gap-2 sm:justify-between">
-                    {isConnected ? (
+                    {existing ? (
                         <Button
                             type="button"
                             variant="ghost"
                             className="text-destructive hover:text-destructive"
-                            onClick={onDisconnect}
+                            disabled={saving}
+                            onClick={() => onDisconnect(existing.id)}
                         >
                             Disconnect
                         </Button>
                     ) : (
                         <span />
                     )}
-                    <Button
-                        type="button"
-                        onClick={() => onSave({ agentId, callAfter, maxRetries, enabled })}
-                    >
-                        <Check className="mr-1 h-4 w-4" />
-                        {isConnected ? "Save changes" : "Connect source"}
+                    <Button type="button" onClick={handleSubmit} disabled={!canSubmit || saving}>
+                        {saving ? (
+                            <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                        ) : (
+                            <Check className="mr-1 h-4 w-4" />
+                        )}
+                        {isConnect ? "Connect source" : "Save changes"}
                     </Button>
                 </DialogFooter>
             </DialogContent>

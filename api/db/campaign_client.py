@@ -730,6 +730,59 @@ class CampaignClient(BaseDBClient):
             result = await session.execute(query)
             return list(result.scalars().all())
 
+    async def get_campaigns_by_source_type(
+        self, organization_id: int, source_type: str
+    ) -> list[CampaignModel]:
+        """Get an org's campaigns of a given source type (e.g. meta_instant_form).
+
+        Backs the Marketing "connections" list; org-scoped for tenant isolation.
+        """
+        async with self.async_session() as session:
+            query = (
+                select(CampaignModel)
+                .where(
+                    CampaignModel.organization_id == organization_id,
+                    CampaignModel.source_type == source_type,
+                )
+                .order_by(CampaignModel.created_at.desc())
+            )
+            result = await session.execute(query)
+            return list(result.scalars().all())
+
+    async def get_active_campaigns_by_source_type(
+        self, source_type: str
+    ) -> list[CampaignModel]:
+        """Get all running campaigns of a source type across orgs.
+
+        Used by the poller cron to find Meta connections to sweep for new leads.
+        Not org-scoped by design — it runs as a background system job.
+        """
+        async with self.async_session() as session:
+            query = select(CampaignModel).where(
+                CampaignModel.source_type == source_type,
+                CampaignModel.state == "running",
+            )
+            result = await session.execute(query)
+            return list(result.scalars().all())
+
+    async def get_existing_source_uuids(
+        self, campaign_id: int, source_uuids: list[str]
+    ) -> set[str]:
+        """Return the subset of source_uuids that already have a queued_run.
+
+        Lets the Meta poller dedupe leads across overlapping polls (Meta may
+        return the same leadgen_id in successive windows).
+        """
+        if not source_uuids:
+            return set()
+        async with self.async_session() as session:
+            query = select(QueuedRunModel.source_uuid).where(
+                QueuedRunModel.campaign_id == campaign_id,
+                QueuedRunModel.source_uuid.in_(source_uuids),
+            )
+            result = await session.execute(query)
+            return set(result.scalars().all())
+
     async def get_queued_runs_count(self, campaign_id: int, states: list[str]) -> int:
         """Get count of queued runs for a campaign in specified states"""
         async with self.async_session() as session:
