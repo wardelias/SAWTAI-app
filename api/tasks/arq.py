@@ -48,6 +48,7 @@ from api.tasks.campaign_tasks import (
 from api.tasks.knowledge_base_processing import process_knowledge_base_document
 from api.tasks.run_integrations import run_integrations_post_workflow_run
 from api.tasks.s3_upload import upload_voicemail_audio_to_s3
+from api.tasks.sequence_tasks import process_due_enrollments
 from api.tasks.workflow_completion import process_workflow_completion
 
 
@@ -65,11 +66,19 @@ class WorkerSettings:
         process_campaign_batch,
         process_knowledge_base_document,
         poll_meta_leads,
+        process_due_enrollments,
     ]
     cron_jobs = [
         cron(
             poll_all_meta_connections,
             minute=set(range(0, 60, _META_POLL_STEP_MINUTES)),
+            second=0,
+            run_at_startup=False,
+        ),
+        # Advance reactivation-sequence enrollments every minute.
+        cron(
+            process_due_enrollments,
+            minute=set(range(0, 60)),
             second=0,
             run_at_startup=False,
         ),

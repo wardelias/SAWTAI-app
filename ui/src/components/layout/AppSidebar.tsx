@@ -21,11 +21,13 @@ import {
   type LucideIcon,
   Megaphone,
   Phone,
+  Repeat,
   Settings,
   Sparkles,
   Target,
   TrendingUp,
   User,
+  Users,
   Workflow,
   Wrench,
 } from "lucide-react";
@@ -95,6 +97,16 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         title: "Calendar",
         url: "/calendar",
         icon: CalendarDays,
+      },
+      {
+        title: "Leads",
+        url: "/leads",
+        icon: Users,
+      },
+      {
+        title: "Sequences",
+        url: "/sequences",
+        icon: Repeat,
       },
       {
         title: "Campaigns",

@@ -118,4 +118,18 @@ async def process_workflow_completion(
             f"Error reporting platform usage for workflow {workflow_run_id}: {e}"
         )
 
+    # Step 5: Reactivation-sequence outcome. No-op unless this run belongs to a
+    # sequence enrollment; otherwise records the call outcome on the lead and
+    # stops the cadence when the lead engaged (stop-on-response).
+    try:
+        from api.services.leads.sequence_outcome import (
+            handle_sequence_call_completion,
+        )
+
+        await handle_sequence_call_completion(workflow_run_id)
+    except Exception as e:
+        logger.error(
+            f"Error handling sequence outcome for workflow {workflow_run_id}: {e}"
+        )
+
     logger.info(f"Completed workflow completion processing for run {workflow_run_id}")
