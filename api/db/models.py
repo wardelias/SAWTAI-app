@@ -1366,3 +1366,140 @@ class MeetingModel(Base):
         Index("ix_meetings_organization_id", "organization_id"),
         Index("ix_meetings_start_time", "start_time"),
     )
+
+
+class LeadModel(Base):
+    """A persistent, org-scoped contact ("lead") that can be reused across
+    campaigns and reactivation sequences.
+
+    Unlike ``QueuedRunModel`` (which is ephemeral and lives inside a single
+    campaign), a lead is a durable record with lifecycle status, score,
+    consent/compliance flags and a full activity timeline.
+    """
+
+    __tablename__ = "leads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # Contact identity. ``phone_number`` is stored E.164-normalized and is the
+    # dedup key within an organization.
+    phone_number = Column(String, nullable=False)
+    email = Column(String, nullable=True)
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+
+    # Arbitrary imported/CRM fields (e.g. original product, last purchase date).
+    # These double as template variables available to the AI agent on a call.
+    attributes = Column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
+
+    # Lifecycle. Postgres enum mirrors the campaign_state pattern.
+    status = Column(
+        Enum(
+            "new",
+            "enrolled",
+            "contacted",
+            "responded",
+            "qualified",
+            "converted",
+            "unresponsive",
+            "suppressed",
+            name="lead_status",
+        ),
+        nullable=False,
+        default="new",
+        server_default=text("'new'::lead_status"),
+    )
+    lead_score = Column(Integer, nullable=True)
+    source = Column(String, nullable=True)  # csv filename, crm name, etc.
+    external_id = Column(String, nullable=True)  # id in an external CRM
+
+    # Compliance / consent — foundational for recycled-lead outreach.
+    dnc = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    consent_sms = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    consent_email = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    timezone = Column(String, nullable=True)  # IANA tz for quiet-hours windows
+
+    # Scheduling / bookkeeping
+    last_contacted_at = Column(DateTime(timezone=True), nullable=True)
+    next_action_at = Column(DateTime(timezone=True), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    organization = relationship("OrganizationModel")
+    activities = relationship(
+        "LeadActivityModel",
+        back_populates="lead",
+        cascade="all, delete-orphan",
+        order_by="LeadActivityModel.created_at",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id", "phone_number", name="uq_leads_org_phone"
+        ),
+        Index("ix_leads_organization_id", "organization_id"),
+        Index("ix_leads_org_status", "organization_id", "status"),
+        Index(
+            "ix_leads_org_email",
+            "organization_id",
+            "email",
+            postgresql_where=text("email IS NOT NULL"),
+        ),
+    )
+
+
+class LeadActivityModel(Base):
+    """Append-only timeline of every touch/outcome recorded against a lead,
+    across all channels (voice/sms/email)."""
+
+    __tablename__ = "lead_activities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    lead_id = Column(
+        Integer, ForeignKey("leads.id", ondelete="CASCADE"), nullable=False
+    )
+    organization_id = Column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # Stored as VARCHAR (not Postgres ENUM) so new channels/types can be added
+    # purely in application code without a migration. See LeadActivityChannel /
+    # LeadActivityType in api/enums.py for the canonical value sets.
+    channel = Column(String(32), nullable=False)
+    direction = Column(String(16), nullable=False)
+    type = Column(String(64), nullable=False)
+
+    # Links a voice touch to its WorkflowRun so extracted answers / disposition
+    # captured by the existing pipeline are reused, not duplicated.
+    workflow_run_id = Column(
+        Integer, ForeignKey("workflow_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    payload = Column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+    lead = relationship("LeadModel", back_populates="activities")
+
+    __table_args__ = (
+        Index("ix_lead_activities_lead_id", "lead_id"),
+        Index("ix_lead_activities_org_id", "organization_id"),
+        Index("ix_lead_activities_created", "created_at"),
+    )

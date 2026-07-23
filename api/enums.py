@@ -113,6 +113,48 @@ class RedisChannel(Enum):
     WORKER_SYNC = "worker_sync"
 
 
+class LeadStatus(Enum):
+    """Lifecycle states for a persistent lead in the reactivation system."""
+
+    NEW = "new"  # Imported, not yet contacted
+    ENROLLED = "enrolled"  # Active in a reactivation sequence
+    CONTACTED = "contacted"  # At least one outbound touch attempted
+    RESPONDED = "responded"  # Lead replied/answered on some channel
+    QUALIFIED = "qualified"  # Passed qualification during the conversation
+    CONVERTED = "converted"  # Reactivation succeeded (won)
+    UNRESPONSIVE = "unresponsive"  # Cadence exhausted with no response
+    SUPPRESSED = "suppressed"  # DNC / opted-out / manually excluded
+
+
+class LeadActivityChannel(Enum):
+    """Channels a lead can be touched on. Stored as VARCHAR so new channels can
+    be added in application code without a database migration."""
+
+    VOICE = "voice"
+    SMS = "sms"
+    EMAIL = "email"
+
+
+class LeadActivityDirection(Enum):
+    OUTBOUND = "outbound"
+    INBOUND = "inbound"
+
+
+class LeadActivityType(Enum):
+    """Timeline event types recorded against a lead."""
+
+    CALL_PLACED = "call_placed"
+    CALL_ANSWERED = "call_answered"
+    CALL_COMPLETED = "call_completed"
+    SMS_SENT = "sms_sent"
+    SMS_REPLY = "sms_reply"
+    EMAIL_SENT = "email_sent"
+    EMAIL_REPLY = "email_reply"
+    OPT_OUT = "opt_out"
+    IMPORTED = "imported"
+    STATUS_CHANGED = "status_changed"
+
+
 class TriggerState(Enum):
     """Agent trigger state values"""
 
