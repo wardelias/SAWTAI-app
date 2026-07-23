@@ -155,6 +155,23 @@ class LeadActivityType(Enum):
     STATUS_CHANGED = "status_changed"
 
 
+class SequenceStatus(Enum):
+    """Lifecycle of a reactivation sequence definition."""
+
+    DRAFT = "draft"
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class EnrollmentState(Enum):
+    """State of a single lead's enrollment in a reactivation sequence."""
+
+    ACTIVE = "active"  # Progressing through the steps
+    COMPLETED = "completed"  # All steps executed without a stop
+    STOPPED = "stopped"  # Halted early (responded / opted-out / suppressed)
+    CONVERTED = "converted"  # Reactivation succeeded
+
+
 class TriggerState(Enum):
     """Agent trigger state values"""
 

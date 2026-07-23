@@ -21,6 +21,7 @@ import {
   type LucideIcon,
   Megaphone,
   Phone,
+  Repeat,
   Settings,
   Sparkles,
   Target,
@@ -101,6 +102,11 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         title: "Leads",
         url: "/leads",
         icon: Users,
+      },
+      {
+        title: "Sequences",
+        url: "/sequences",
+        icon: Repeat,
       },
       {
         title: "Campaigns",

@@ -6,3 +6,4 @@ class FunctionNames:
     PROCESS_CAMPAIGN_BATCH = "process_campaign_batch"
     PROCESS_KNOWLEDGE_BASE_DOCUMENT = "process_knowledge_base_document"
     POLL_META_LEADS = "poll_meta_leads"
+    PROCESS_DUE_ENROLLMENTS = "process_due_enrollments"

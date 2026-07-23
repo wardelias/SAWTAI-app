@@ -1503,3 +1503,159 @@ class LeadActivityModel(Base):
         Index("ix_lead_activities_org_id", "organization_id"),
         Index("ix_lead_activities_created", "created_at"),
     )
+
+
+class ReactivationSequenceModel(Base):
+    """A reusable, multi-step (and — from later phases — multi-channel) cadence
+    that "wakes up" leads. Voice steps reference an existing AI-agent workflow;
+    the orchestrator advances each enrolled lead through the steps and stops on
+    response."""
+
+    __tablename__ = "reactivation_sequences"
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
+    )
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String, nullable=False)
+    status = Column(
+        Enum("draft", "active", "archived", name="sequence_status"),
+        nullable=False,
+        default="draft",
+        server_default=text("'draft'::sequence_status"),
+    )
+
+    # Quiet-hours window (local to each lead's timezone; falls back to
+    # ``default_timezone``). Stored as integer hours [0, 24). When both are set
+    # and equal, quiet hours are disabled.
+    quiet_hours_start = Column(Integer, nullable=True)
+    quiet_hours_end = Column(Integer, nullable=True)
+    default_timezone = Column(String, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    organization = relationship("OrganizationModel")
+    steps = relationship(
+        "SequenceStepModel",
+        back_populates="sequence",
+        cascade="all, delete-orphan",
+        order_by="SequenceStepModel.step_order",
+    )
+
+    __table_args__ = (
+        Index("ix_reactivation_sequences_org_id", "organization_id"),
+        Index("ix_reactivation_sequences_org_status", "organization_id", "status"),
+    )
+
+
+class SequenceStepModel(Base):
+    """One step in a reactivation sequence: a channel action fired after a
+    delay measured from the previous step (or from enrollment, for step 0)."""
+
+    __tablename__ = "sequence_steps"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sequence_id = Column(
+        Integer,
+        ForeignKey("reactivation_sequences.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    organization_id = Column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
+    )
+    step_order = Column(Integer, nullable=False)
+
+    # Stored as VARCHAR so new channels can be added without a migration.
+    channel = Column(String(32), nullable=False)  # voice | sms | email
+    delay_seconds = Column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+
+    # Voice steps reference an existing AI-agent workflow. SMS/email steps
+    # (later phases) reference a message template instead.
+    workflow_id = Column(
+        Integer, ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True
+    )
+    message_template_id = Column(Integer, nullable=True)
+
+    stop_on_response = Column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+
+    sequence = relationship("ReactivationSequenceModel", back_populates="steps")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "sequence_id", "step_order", name="uq_sequence_steps_order"
+        ),
+        Index("ix_sequence_steps_sequence_id", "sequence_id"),
+    )
+
+
+class LeadSequenceEnrollmentModel(Base):
+    """A single lead's progress through a reactivation sequence."""
+
+    __tablename__ = "lead_sequence_enrollments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence_id = Column(
+        Integer,
+        ForeignKey("reactivation_sequences.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    lead_id = Column(
+        Integer, ForeignKey("leads.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # 0-based index of the NEXT step to execute.
+    current_step = Column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    state = Column(
+        Enum(
+            "active",
+            "completed",
+            "stopped",
+            "converted",
+            name="enrollment_state",
+        ),
+        nullable=False,
+        default="active",
+        server_default=text("'active'::enrollment_state"),
+    )
+    # When the current step becomes due. NULL once the enrollment is terminal.
+    next_step_at = Column(DateTime(timezone=True), nullable=True)
+    stop_reason = Column(String, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    lead = relationship("LeadModel")
+    sequence = relationship("ReactivationSequenceModel")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "sequence_id", "lead_id", name="uq_enrollment_sequence_lead"
+        ),
+        Index("ix_enrollments_org_id", "organization_id"),
+        # Hot path: the orchestrator polls active enrollments that are due.
+        Index(
+            "ix_enrollments_due",
+            "state",
+            "next_step_at",
+            postgresql_where=text("state = 'active'"),
+        ),
+    )
