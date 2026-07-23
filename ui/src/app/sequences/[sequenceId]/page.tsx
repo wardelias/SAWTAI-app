@@ -28,9 +28,9 @@ import { useAuth } from '@/lib/auth';
 import { listLeads } from '@/lib/leadsApi';
 import {
     enrollLeads,
+    type Enrollment,
     getSequence,
     listEnrollments,
-    type Enrollment,
     type Sequence,
 } from '@/lib/sequencesApi';
 

@@ -33,9 +33,9 @@ import { useAuth } from '@/lib/auth';
 import {
     createLead,
     importLeads,
-    listLeads,
     type Lead,
     type LeadListResponse,
+    listLeads,
 } from '@/lib/leadsApi';
 
 const STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'outline' | 'destructive'> = {
@@ -56,7 +56,6 @@ export default function LeadsPage() {
     const [data, setData] = useState<LeadListResponse | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [search, setSearch] = useState('');
-    const [statusFilter, setStatusFilter] = useState<string>('');
     const hasFetched = useRef(false);
 
     const [importOpen, setImportOpen] = useState(false);
@@ -82,7 +81,6 @@ export default function LeadsPage() {
             const token = await getAccessToken();
             const res = await listLeads(token, {
                 search: search || undefined,
-                status: statusFilter || undefined,
                 limit: 200,
             });
             if (res.error) {
