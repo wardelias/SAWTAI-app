@@ -26,6 +26,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
+import { detailFromError } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
 
 import CampaignAdvancedSettings, { getTimezoneValue, type TimeSlot } from '../CampaignAdvancedSettings';
@@ -312,9 +313,10 @@ export default function NewCampaignPage() {
             });
 
             if (response.error) {
-                // Extract error message from API response
-                const errorDetail = (response.error as { detail?: string })?.detail;
-                const errorMessage = errorDetail || 'Failed to create campaign';
+                // Normalize the error — FastAPI returns `detail` as a string for
+                // HTTPException but as an array of objects for 422 validation
+                // errors; rendering that array directly crashes the page.
+                const errorMessage = detailFromError(response.error, 'Failed to create campaign');
                 setCreateError(errorMessage);
                 toast.error(errorMessage);
                 return;
