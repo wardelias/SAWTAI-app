@@ -152,8 +152,8 @@ class CircuitBreakerConfigResponse(BaseModel):
 class CreateCampaignRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     workflow_id: int
-    source_type: str = Field(..., pattern="^(csv|meta_instant_form)$")
-    source_id: str  # CSV file key
+    source_type: str = Field(..., pattern="^(csv|meta_instant_form|leads)$")
+    source_id: str  # CSV file key, or (for source_type=leads) a lead-status filter
     # Optional during the legacy → multi-config migration window. Required in
     # a follow-up. When omitted, the dispatcher falls back to the org's
     # default config.

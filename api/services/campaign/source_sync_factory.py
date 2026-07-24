@@ -1,5 +1,6 @@
 from api.services.campaign.source_sync import CampaignSourceSyncService
 from api.services.campaign.sources.csv import CSVSyncService
+from api.services.campaign.sources.leads import LeadsSyncService
 from api.services.campaign.sources.meta_instant_form import (
     MetaInstantFormSyncService,
 )
@@ -11,6 +12,7 @@ def get_sync_service(source_type: str) -> CampaignSourceSyncService:
     services = {
         "csv": CSVSyncService,
         "meta_instant_form": MetaInstantFormSyncService,
+        "leads": LeadsSyncService,
     }
 
     service_class = services.get(source_type)

@@ -38,7 +38,7 @@ export default function NewCampaignPage() {
     // Form state
     const [campaignName, setCampaignName] = useState('');
     const [selectedWorkflowId, setSelectedWorkflowId] = useState<string>('');
-    const [sourceType, setSourceType] = useState<'csv'>('csv');
+    const [sourceType, setSourceType] = useState<'csv' | 'leads'>('csv');
     const [sourceId, setSourceId] = useState('');
     const [selectedFileName, setSelectedFileName] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -472,9 +472,12 @@ export default function NewCampaignPage() {
                                 <Select
                                     value={sourceType}
                                     onValueChange={(value) => {
-                                        setSourceType(value as 'csv');
-                                        setSourceId('');
+                                        const v = value as 'csv' | 'leads';
+                                        setSourceType(v);
                                         setSelectedFileName('');
+                                        // Leads source uses source_id as a status filter;
+                                        // default to every callable lead.
+                                        setSourceId(v === 'leads' ? 'all' : '');
                                     }}
                                     required
                                 >
@@ -483,6 +486,7 @@ export default function NewCampaignPage() {
                                     </SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="csv">CSV File</SelectItem>
+                                        <SelectItem value="leads">Leads database</SelectItem>
                                     </SelectContent>
                                 </Select>
                                 <p className="text-sm text-muted-foreground">
@@ -490,10 +494,32 @@ export default function NewCampaignPage() {
                                 </p>
                             </div>
 
-                            <CsvUploadSelector
-                                onFileUploaded={handleFileUploaded}
-                                selectedFileName={selectedFileName}
-                            />
+                            {sourceType === 'csv' ? (
+                                <CsvUploadSelector
+                                    onFileUploaded={handleFileUploaded}
+                                    selectedFileName={selectedFileName}
+                                />
+                            ) : (
+                                <div className="space-y-2">
+                                    <Label htmlFor="lead-status">Which leads to call</Label>
+                                    <Select value={sourceId} onValueChange={setSourceId}>
+                                        <SelectTrigger id="lead-status">
+                                            <SelectValue placeholder="Select leads" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="all">All callable leads</SelectItem>
+                                            <SelectItem value="new">New</SelectItem>
+                                            <SelectItem value="contacted">Contacted</SelectItem>
+                                            <SelectItem value="unresponsive">Unresponsive</SelectItem>
+                                            <SelectItem value="responded">Responded</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    <p className="text-sm text-muted-foreground">
+                                        Pulls matching leads from your Leads database. DNC and
+                                        suppressed leads are always excluded.
+                                    </p>
+                                </div>
+                            )}
 
                             {/* Advanced Settings */}
                             <Collapsible
