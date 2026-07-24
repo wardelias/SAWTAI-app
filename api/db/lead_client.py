@@ -272,6 +272,24 @@ class LeadClient(BaseDBClient):
             result = await session.execute(query)
             return list(result.scalars().all())
 
+    async def get_callable_leads(
+        self, organization_id: int, status: Optional[str] = None
+    ) -> List[LeadModel]:
+        """Return leads eligible to be dialed by a campaign: never DNC, never
+        suppressed. An optional ``status`` narrows to a single lifecycle state
+        (``None`` or ``"all"`` returns every callable lead)."""
+        async with self.async_session() as session:
+            query = select(LeadModel).where(
+                LeadModel.organization_id == organization_id,
+                LeadModel.dnc.is_(False),
+                LeadModel.status != "suppressed",
+            )
+            if status and status != "all":
+                query = query.where(LeadModel.status == status)
+            query = query.order_by(LeadModel.created_at.asc())
+            result = await session.execute(query)
+            return list(result.scalars().all())
+
     async def status_counts(self, organization_id: int) -> Dict[str, int]:
         """Return a {status: count} breakdown for an organization's leads."""
         async with self.async_session() as session:

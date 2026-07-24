@@ -155,5 +155,5 @@ export function listEnrollments(
 export function listWorkflowSummaries(
     token: string,
 ): Promise<ApiResult<WorkflowSummary[]>> {
-    return request<WorkflowSummary[]>('/workflow?status=active', token);
+    return request<WorkflowSummary[]>('/workflow/fetch?status=active', token);
 }
