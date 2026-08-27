@@ -63,7 +63,7 @@ export const ConfigurationsDialog = ({
         resolvedWorkflowConfigurations.turn_stop_strategy
     );
     const [contextCompactionEnabled, setContextCompactionEnabled] = useState<boolean>(
-        resolvedWorkflowConfigurations.context_compaction_enabled
+        resolvedWorkflowConfigurations.context_compaction_enabled ?? false
     );
     const [externalPbxFieldMappings, setExternalPbxFieldMappings] = useState<ExternalPBXFieldMapping[]>(
         resolvedWorkflowConfigurations.external_pbx_field_mappings
@@ -116,7 +116,7 @@ export const ConfigurationsDialog = ({
             setTurnStartMinWords(nextWorkflowConfigurations.turn_start_min_words);
             setProvisionalVadPauseSecs(nextWorkflowConfigurations.provisional_vad_pause_secs);
             setTurnStopStrategy(nextWorkflowConfigurations.turn_stop_strategy);
-            setContextCompactionEnabled(nextWorkflowConfigurations.context_compaction_enabled);
+            setContextCompactionEnabled(nextWorkflowConfigurations.context_compaction_enabled ?? false);
             setExternalPbxFieldMappings(nextWorkflowConfigurations.external_pbx_field_mappings);
         }
     }, [open, workflowName, workflowConfigurations]);
