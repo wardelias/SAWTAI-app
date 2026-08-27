@@ -22,7 +22,7 @@ The relevant required variables for each mode are noted in the descriptions belo
 |---|---|---|
 | `ENVIRONMENT` | `local` | Runtime environment. Affects logging and behaviour. One of `local`, `production`, `test` |
 | `DEPLOYMENT_MODE` | `oss` | Deployment mode. Use `oss` for self-hosted |
-| `AUTH_PROVIDER` | `local` | Authentication provider. Use `local` for OSS |
+| `AUTH_PROVIDER` | `local` | Authentication provider. `local` (default) uses the built-in email/password flow. Set to `stack` to delegate to Stack Auth for social login — see [Authentication](/deployment/authentication) for the full setup |
 
 ---
 
@@ -41,6 +41,7 @@ The relevant required variables for each mode are noted in the descriptions belo
 |---|---|---|
 | `OSS_JWT_SECRET` | N/A | **Required for OSS deployments.** Secret used to sign JWT tokens. Must be set to a strong random value in production |
 | `OSS_JWT_EXPIRY_HOURS` | `720` | JWT token lifetime in hours (default: 30 days) |
+| `ENABLE_SIGNUP` | `true` | Set to `false` to disable public signup on invite-only installs — `POST /api/v1/auth/signup` returns 403 and the login page hides the Sign up link |
 
 <Warning>
 Never use the placeholder `OSS_JWT_SECRET` in a production deployment. Generate a strong random secret and store it securely.
@@ -48,11 +49,26 @@ Never use the placeholder `OSS_JWT_SECRET` in a production deployment. Generate 
 
 ---
 
+## Authentication (Stack Auth)
+
+Set these when `AUTH_PROVIDER=stack` to delegate sign-in to [Stack Auth](https://stack-auth.com) for social login. The project id and publishable client key are public and are served to the browser at runtime via `/api/v1/health`; the secret server key stays server-side. See [Authentication](/deployment/authentication) for the full walkthrough.
+
+| Variable | Default | Description |
+|---|---|---|
+| `STACK_AUTH_PROJECT_ID` | `null` | **Required for `stack`.** Stack project ID (public) |
+| `STACK_PUBLISHABLE_CLIENT_KEY` | `null` | **Required for `stack`.** Stack publishable client key (public) |
+| `STACK_SECRET_SERVER_KEY` | `null` | **Required for `stack`.** Stack secret server key — server-side only, also set on the `ui` service. Keep secret |
+| `STACK_AUTH_API_URL` | `null` | **Required for `stack`.** Stack REST API base URL (e.g. `https://api.stack-auth.com`) |
+
+---
+
 ## URLs
 
 | Variable | Default | Description |
 |---|---|---|
-| `BACKEND_API_ENDPOINT` | `http://localhost:8000` | Internal URL of the backend API |
+| `PUBLIC_BASE_URL` | `null` | Canonical public origin for the deployment (scheme + host, e.g. `https://203-0-113-10.sslip.io`). For a standard single-host install this is the only endpoint value you set — `BACKEND_API_ENDPOINT` and `MINIO_PUBLIC_ENDPOINT` derive from it |
+| `PUBLIC_HOST` | `null` | Public host without scheme (e.g. `203-0-113-10.sslip.io`); `TURN_HOST` derives from it |
+| `BACKEND_API_ENDPOINT` | `PUBLIC_BASE_URL`, else `http://localhost:8000` | Public URL the backend builds webhook / callback / embed links from. Set explicitly only to override the value derived from `PUBLIC_BASE_URL` |
 | `UI_APP_URL` | `http://localhost:3010` | URL of the frontend application |
 | `MPS_API_URL` | `https://services.dograh.com` | Dograh Managed Platform Services URL |
 | `DOGRAH_MPS_SECRET_KEY` | `null` | **Required for non-OSS deployments.** Secret key for authenticating with MPS |
@@ -69,7 +85,7 @@ Dograh uses **MinIO by default**, which is bundled with the self-hosted deployme
 | Variable | Default | Description |
 |---|---|---|
 | `MINIO_ENDPOINT` | `localhost:9000` | MinIO server host and port |
-| `MINIO_PUBLIC_ENDPOINT` | `null` | Publicly accessible MinIO URL (for download links) |
+| `MINIO_PUBLIC_ENDPOINT` | `PUBLIC_BASE_URL`, else `http://localhost:9000` | Publicly accessible MinIO URL for download links. Derives from `PUBLIC_BASE_URL`; set explicitly only for a separate object-storage origin |
 | `MINIO_ACCESS_KEY` | N/A | **Required for OSS deployments.** MinIO access key. Must be set to a secure value in production |
 | `MINIO_SECRET_KEY` | N/A | **Required for OSS deployments.** MinIO secret key. Must be set to a secure value in production |
 | `MINIO_BUCKET` | `voice-audio` | Bucket name for audio files |
@@ -82,6 +98,32 @@ Dograh uses **MinIO by default**, which is bundled with the self-hosted deployme
 | `ENABLE_AWS_S3` | `false` | Set to `true` to use AWS S3 instead of MinIO |
 | `S3_BUCKET` | `null` | S3 bucket name |
 | `S3_REGION` | `us-east-1` | AWS region |
+| `S3_ENDPOINT_URL` | `null` | Custom S3 endpoint for S3-compatible servers (e.g. `https://s3.example.com`). Leave unset for AWS. |
+| `S3_SIGNATURE_VERSION` | `null` | Signing version. Unset uses botocore's default; set `s3v4` for servers that require SigV4. |
+| `S3_ADDRESSING_STYLE` | `null` | `auto` (default), `path`, or `virtual`. Many S3-compatible servers and TLS setups require `path`. |
+
+Credentials come from the standard `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` environment variables.
+
+#### S3-compatible servers (MinIO, rustfs, Ceph, ...)
+
+The S3 backend can target any S3-compatible server, not just AWS. Prefer it over the MinIO backend when you need **presigned URLs against a private bucket**: the MinIO backend returns plain unsigned object URLs and relies on the bucket being anonymously public-readable, whereas the S3 backend issues real presigned URLs so the bucket can stay private.
+
+To use it, set `ENABLE_AWS_S3=true` and point it at your server with the `S3_*` overrides above. For example, against [rustfs](https://github.com/rustfs/rustfs):
+
+```bash
+ENABLE_AWS_S3=true
+S3_BUCKET=voice-audio
+S3_REGION=us-east-1
+S3_ENDPOINT_URL=https://s3.example.com
+S3_SIGNATURE_VERSION=s3v4   # rustfs rejects SigV2 with SignatureDoesNotMatch
+S3_ADDRESSING_STYLE=path    # rustfs and most non-AWS TLS certs require path-style
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+```
+
+<Note>
+Presigned URLs point at `S3_ENDPOINT_URL`, so that host must be reachable from the browser. Because browsers fetch transcripts cross-origin, the bucket also needs a CORS rule allowing your app's origin for `GET`/`HEAD` — configure this on the storage server (e.g. via `PutBucketCors`), not in Dograh.
+</Note>
 
 ---
 
@@ -89,7 +131,8 @@ Dograh uses **MinIO by default**, which is bundled with the self-hosted deployme
 
 | Variable | Default | Description |
 |---|---|---|
-| `TURN_HOST` | `localhost` | TURN server hostname for WebRTC NAT traversal |
+| `ENABLE_COTURN` | `false` | Whether this deployment runs a TURN server. Reported to browsers as `turn_enabled` on `/api/v1/health` and in the embed widget config; when `false` clients skip the TURN credential request and connect over STUN, and the server returns 503 from the credential endpoints. Set to `true` wherever coturn is running — the setup scripts and Helm chart do this for you |
+| `TURN_HOST` | `PUBLIC_HOST`, else `localhost` | TURN server hostname for WebRTC NAT traversal. Derives from `PUBLIC_HOST`; set explicitly only when TURN runs on a separate host |
 | `TURN_PORT` | `3478` | TURN server port |
 | `TURN_TLS_PORT` | `5349` | TURN server TLS port |
 | `TURN_SECRET` | `null` | **Required for WebRTC.** Shared secret for TURN credential generation |
@@ -105,8 +148,34 @@ Dograh uses **MinIO by default**, which is bundled with the self-hosted deployme
 | `LANGFUSE_HOST` | `null` | Langfuse server URL |
 | `LANGFUSE_PUBLIC_KEY` | `null` | Langfuse public key |
 | `LANGFUSE_SECRET_KEY` | `null` | Langfuse secret key |
+| `LANGFUSE_PROJECT_ID` | `null` | Langfuse project ID, required with environment credentials to generate trace URLs |
+| `LANGFUSE_TRACES_PUBLIC` | `false` | When `true`, traces are marked public in Langfuse — anyone holding a trace URL can read it without logging in. Leave unset to keep traces visible only to your Langfuse project members. |
 
-Tracing activates automatically as soon as credentials are available — either via these environment variables (applied to all organizations) or per-organization in the UI under **Platform Settings**. If neither is set, spans are dropped silently. See the [Tracing guide](/configurations/tracing) for setup instructions.
+Tracing activates automatically as soon as credentials are available — either via these environment variables (applied to all organizations) or per-organization in the UI under **Platform Settings**. Environment credentials require `LANGFUSE_HOST`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_PROJECT_ID`. If neither is set, spans are dropped silently. See the [Tracing guide](/configurations/tracing) for setup instructions.
+
+---
+
+## Telephony
+
+Carriers dial the media WebSocket back at `/api/v1/telephony/ws/{workflow_id}/{organization_id}/{workflow_run_id}`. Those ids travel in a caller-visible URL, so on their own they are a guessable capability. Setting a secret makes Dograh sign that URL with an HMAC and verify the signature when the socket opens.
+
+The signature travels as a trailing path segment — `/api/v1/telephony/ws/{workflow_id}/{organization_id}/{workflow_run_id}/{token}` — because carriers do not reliably forward query strings. Twilio [documents that its `<Stream>` url "does not support query string parameters"](https://www.twilio.com/docs/voice/twiml/stream) and drops them outright. Asterisk ARI is the exception: it connects to `/api/v1/telephony/ws/ari` and passes `token` as a query parameter alongside its other routing values, which works because Asterisk builds that URL itself.
+
+| Variable | Default | Description |
+|---|---|---|
+| `TELEPHONY_WS_TOKEN_SECRET` | `null` | Secret used to sign the media WebSocket URL. Unset leaves URLs unchanged and the check disabled |
+| `TELEPHONY_WS_TOKEN_ENFORCE` | `false` | Reject connections whose token is missing or invalid (WebSocket close `4401`) |
+
+Roll it out in two steps so no call is dropped:
+
+1. Set `TELEPHONY_WS_TOKEN_SECRET` on **every** process that places or receives calls — the `api` service and, if you run Asterisk, the `ari-manager`. They must share the same value: one mints the token, the other verifies it. Calls keep connecting either way; anything unverifiable is logged as `UNVERIFIED media socket`.
+2. Once those warnings stop, set `TELEPHONY_WS_TOKEN_ENFORCE=true` to start rejecting them.
+
+Setting `TELEPHONY_WS_TOKEN_ENFORCE` without a secret does nothing at all — the check is skipped entirely rather than rejecting every connection.
+
+<Note>
+The signed URL is a bearer credential, and it is not hidden: the token appears in full in the `api` and nginx access logs, and in carrier-side request logs (Twilio's debugger, Telnyx's request inspector). Anyone who can read those logs can open the media socket for a run that is still in `initialized`. Treat log access as socket access.
+</Note>
 
 ---
 
@@ -134,9 +203,11 @@ Tracing activates automatically as soon as credentials are available — either 
 
 ## Campaigns
 
+Controls concurrency for [Campaigns](/core-concepts/campaigns), Dograh's bulk outbound calling feature.
+
 | Variable | Default | Description |
 |---|---|---|
-| `DEFAULT_ORG_CONCURRENCY_LIMIT` | `2` | Maximum concurrent outbound calls per organization |
+| `DEFAULT_ORG_CONCURRENCY_LIMIT` | `10` | Maximum concurrent active calls per organization (values below 1 are clamped to 1) |
 
 ---
 

@@ -11,6 +11,32 @@ import httpx
 from loguru import logger
 
 from api.constants import DEPLOYMENT_MODE, DOGRAH_MPS_SECRET_KEY, MPS_API_URL
+from api.errors.failure import ErrorSource, classify_exception, log_failure
+from api.errors.mps import MPSUnavailableError
+
+_INVALID_SERVICE_KEY_STATUSES = frozenset({401, 403})
+
+
+def _log_mps_dependency_failure(
+    error: BaseException,
+    *,
+    operation: str,
+    organization_id: int | None = None,
+    **context: object,
+) -> None:
+    """Emit the single classified record for an MPS dependency failure."""
+
+    log_failure(
+        classify_exception(
+            error,
+            source=ErrorSource.PLATFORM,
+            provider="dograh",
+            error_owner="operator",
+        ),
+        organization_id=organization_id,
+        operation=operation,
+        **context,
+    )
 
 
 class MPSServiceKeyClient:
@@ -106,6 +132,41 @@ class MPSServiceKeyClient:
                     request=response.request,
                     response=response,
                 )
+
+    async def ensure_cloudonix_domain(
+        self,
+        *,
+        organization_id: Optional[int],
+        created_by: str,
+    ) -> dict:
+        """Create or return the Cloudonix domain for the deployment owner.
+
+        OSS allocations are scoped by ``created_by``. Hosted allocations are
+        scoped by ``organization_id`` and authenticated with the Dograh/MPS
+        control-plane secret. No model-service key participates in ownership.
+        """
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.put(
+                f"{self.base_url}/api/v1/cloudonix/domains/self",
+                headers=self._get_headers(organization_id, created_by),
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                required = {
+                    "provisioning_id",
+                    "domain_name",
+                    "domain_uuid",
+                    "bearer_token",
+                }
+                if not isinstance(data, dict) or not required.issubset(data):
+                    raise MPSUnavailableError("ensure_cloudonix_domain")
+                return data
+
+            raise MPSUnavailableError(
+                "ensure_cloudonix_domain",
+                status_code=response.status_code,
+            )
 
     async def get_service_keys(
         self,
@@ -241,19 +302,12 @@ class MPSServiceKeyClient:
                 )
                 return False
 
-    async def check_service_key_usage(
-        self,
-        service_key: str,
-        organization_id: Optional[int] = None,
-        created_by: Optional[str] = None,
-    ) -> dict:
+    async def check_service_key_usage(self, service_key: str) -> dict:
         """
         Check the usage and quota of a service key.
 
         Args:
             service_key: The service key to check usage for
-            organization_id: Organization ID (for authenticated mode)
-            created_by: User provider ID (for OSS mode)
 
         Returns:
             Dictionary containing:
@@ -317,39 +371,6 @@ class MPSServiceKeyClient:
                 )
                 raise httpx.HTTPStatusError(
                     f"Failed to get usage by created_by: {response.text}",
-                    request=response.request,
-                    response=response,
-                )
-
-    async def get_usage_by_organization(self, organization_id: int) -> dict:
-        """
-        Get aggregated usage for all service keys belonging to an organization (hosted mode).
-
-        Args:
-            organization_id: The organization's ID
-
-        Returns:
-            Dictionary containing total_credits_used and remaining_credits
-        """
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/api/v1/service-keys/usage/organization",
-                json={"organization_id": organization_id},
-                headers=self._get_headers(organization_id=organization_id),
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                return {
-                    "total_credits_used": data.get("total_credits_used", 0.0),
-                    "remaining_credits": data.get("remaining_credits", 0.0),
-                }
-            else:
-                logger.error(
-                    f"Failed to get usage by organization: {response.status_code} - {response.text}"
-                )
-                raise httpx.HTTPStatusError(
-                    f"Failed to get usage by organization: {response.text}",
                     request=response.request,
                     response=response,
                 )
@@ -422,33 +443,40 @@ class MPSServiceKeyClient:
                 response=response,
             )
 
-    async def get_billing_account_status(
-        self,
-        organization_id: int,
-        created_by: Optional[str] = None,
-    ) -> Optional[dict]:
-        """Get an existing MPS v2 billing account without creating one."""
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.get(
-                f"{self.base_url}/api/v1/billing/accounts/{organization_id}/status",
-                headers=self._get_headers(
-                    organization_id=organization_id,
-                    created_by=created_by,
-                ),
-            )
+    async def get_billing_pricing(self, organization_id: int) -> dict:
+        """Return MPS-owned effective platform and Dograh model prices for an org."""
+        if DEPLOYMENT_MODE == "oss":
+            raise ValueError("OSS deployments do not fetch hosted billing prices")
 
-            if response.status_code == 200:
-                return response.json()
+        operation = "get_billing_pricing"
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.get(
+                    f"{self.base_url}/api/v1/billing/accounts/{organization_id}/pricing",
+                    headers=self._get_headers(organization_id=organization_id),
+                )
 
-            logger.error(
-                "Failed to get MPS billing account status: "
-                f"{response.status_code} - {response.text}"
+                if response.status_code == 200:
+                    return response.json()
+
+                raise MPSUnavailableError(
+                    operation,
+                    status_code=response.status_code,
+                )
+        except MPSUnavailableError as exc:
+            _log_mps_dependency_failure(
+                exc,
+                operation=operation,
+                organization_id=organization_id,
             )
-            raise httpx.HTTPStatusError(
-                f"Failed to get MPS billing account status: {response.text}",
-                request=response.request,
-                response=response,
+            raise
+        except httpx.RequestError as exc:
+            _log_mps_dependency_failure(
+                exc,
+                operation=operation,
+                organization_id=organization_id,
             )
+            raise MPSUnavailableError(operation) from exc
 
     async def ensure_billing_account_v2(
         self,
@@ -512,12 +540,53 @@ class MPSServiceKeyClient:
             if response.status_code == 200:
                 return response.json()
 
-            logger.error(
+            logger.warning(
                 "Failed to authorize MPS workflow run start: "
                 f"{response.status_code} - {response.text}"
             )
             raise httpx.HTTPStatusError(
                 f"Failed to authorize MPS workflow run start: {response.text}",
+                request=response.request,
+                response=response,
+            )
+
+    async def authorize_service_key_run_start(
+        self,
+        *,
+        service_key: str,
+        workflow_run_id: int | None = None,
+        require_correlation_id: bool = False,
+        minimum_credits: float | None = None,
+        metadata: Optional[dict] = None,
+    ) -> dict:
+        """Authorize an OSS run using the configured service key as identity."""
+        payload = {
+            "workflow_run_id": workflow_run_id,
+            "require_correlation_id": require_correlation_id,
+            "metadata": metadata or {},
+        }
+        if minimum_credits is not None:
+            payload["minimum_credits"] = minimum_credits
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(
+                f"{self.base_url}/api/v1/service-keys/run-authorization/self",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {service_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+
+            if response.status_code == 200:
+                return response.json()
+
+            logger.warning(
+                "Failed to authorize MPS service-key workflow run start: "
+                f"{response.status_code} - {response.text}"
+            )
+            raise httpx.HTTPStatusError(
+                f"Failed to authorize MPS service-key workflow run start: {response.text}",
                 request=response.request,
                 response=response,
             )
@@ -601,16 +670,15 @@ class MPSServiceKeyClient:
                 if response.status_code == 200:
                     return response.json()
 
-                should_retry = (
-                    response.status_code == 409
-                    and "usage_not_ready" in response.text
-                    and attempt < max_attempts
+                usage_not_ready = (
+                    response.status_code == 409 and "usage_not_ready" in response.text
                 )
-                if should_retry:
+                if usage_not_ready and attempt < max_attempts:
                     await asyncio.sleep(attempt)
                     continue
 
-                logger.error(
+                log = logger.warning if usage_not_ready else logger.error
+                log(
                     "Failed to report platform usage: "
                     f"{response.status_code} - {response.text}"
                 )
@@ -700,8 +768,11 @@ class MPSServiceKeyClient:
         """
         Synchronously validate a Dograh service key by checking usage via MPS.
 
-        Returns True if the key is valid, False otherwise.
+        Returns True if the key is valid and False only when MPS authoritatively
+        rejects the credential. Dependency failures raise ``MPSUnavailableError``
+        so callers never misreport a Dograh outage as a customer configuration error.
         """
+        operation = "validate_service_key"
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.get(
@@ -711,16 +782,37 @@ class MPSServiceKeyClient:
                         "Content-Type": "application/json",
                     },
                 )
-                return response.status_code == 200
-        except Exception:
-            logger.warning("Failed to validate Dograh service key via MPS")
-            return False
+                if response.status_code == 200:
+                    return True
+                if response.status_code in _INVALID_SERVICE_KEY_STATUSES:
+                    return False
+                raise MPSUnavailableError(
+                    operation,
+                    status_code=response.status_code,
+                )
+        except MPSUnavailableError as exc:
+            _log_mps_dependency_failure(
+                exc,
+                operation=operation,
+                organization_id=organization_id,
+            )
+            raise
+        except httpx.RequestError as exc:
+            _log_mps_dependency_failure(
+                exc,
+                operation=operation,
+                organization_id=organization_id,
+            )
+            raise MPSUnavailableError(operation) from exc
 
     async def get_voices(
         self,
         provider: str,
         model: Optional[str] = None,
         language: Optional[str] = None,
+        q: Optional[str] = None,
+        gender: Optional[str] = None,
+        accent: Optional[str] = None,
         organization_id: Optional[int] = None,
         created_by: Optional[str] = None,
     ) -> dict:
@@ -738,31 +830,51 @@ class MPSServiceKeyClient:
             Dictionary containing provider name and list of voices
 
         Raises:
-            HTTPException: If the API call fails
+            MPSUnavailableError: If MPS cannot return the voice catalog
         """
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            params = {}
-            if model:
-                params["model"] = model
-            if language:
-                params["language"] = language
-            response = await client.get(
-                f"{self.base_url}/api/v1/voice-proxy/{provider}/voices",
-                headers=self._get_headers(organization_id, created_by),
-                params=params,
-            )
+        operation = "get_voices"
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                params = {}
+                if model:
+                    params["model"] = model
+                if language:
+                    params["language"] = language
+                if q:
+                    params["q"] = q
+                if gender:
+                    params["gender"] = gender
+                if accent:
+                    params["accent"] = accent
+                response = await client.get(
+                    f"{self.base_url}/api/v1/voice-proxy/{provider}/voices",
+                    headers=self._get_headers(organization_id, created_by),
+                    params=params,
+                )
 
-            if response.status_code == 200:
-                return response.json()
-            else:
-                logger.error(
-                    f"Failed to get voices for {provider}: {response.status_code} - {response.text}"
+                if response.status_code == 200:
+                    return response.json()
+
+                raise MPSUnavailableError(
+                    operation,
+                    status_code=response.status_code,
                 )
-                raise httpx.HTTPStatusError(
-                    f"Failed to get voices: {response.text}",
-                    request=response.request,
-                    response=response,
-                )
+        except MPSUnavailableError as exc:
+            _log_mps_dependency_failure(
+                exc,
+                operation=operation,
+                organization_id=organization_id,
+                requested_provider=provider,
+            )
+            raise
+        except httpx.RequestError as exc:
+            _log_mps_dependency_failure(
+                exc,
+                operation=operation,
+                organization_id=organization_id,
+                requested_provider=provider,
+            )
+            raise MPSUnavailableError(operation) from exc
 
     async def process_document(
         self,

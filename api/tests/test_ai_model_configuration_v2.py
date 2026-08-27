@@ -15,9 +15,12 @@ from api.services.configuration.ai_model_configuration import (
     WORKFLOW_MODEL_CONFIGURATION_V2_OVERRIDE_KEY,
     check_for_masked_keys_in_ai_model_configuration_v2,
     convert_legacy_ai_model_configuration_to_v2,
+    get_resolved_ai_model_configuration,
     mask_ai_model_configuration_v2,
     merge_ai_model_configuration_v2_secrets,
     migrate_workflow_configuration_model_override_to_v2,
+    migrate_workflow_model_configurations_to_v2,
+    upsert_organization_ai_model_configuration_v2,
 )
 from api.services.configuration.check_validity import UserConfigurationValidator
 from api.services.configuration.masking import mask_key
@@ -55,17 +58,31 @@ def test_dograh_v2_compiles_to_effective_managed_pipeline_with_embeddings():
     assert effective.stt.provider == "dograh"
     assert effective.stt.language == "multi"
     assert effective.embeddings.provider == "dograh"
-    assert effective.embeddings.model == "default"
+    assert effective.embeddings.model == "dograh_embedding_v1"
     assert effective.managed_service_version == 2
 
 
-def test_dograh_v2_rejects_non_predefined_speed():
+def test_dograh_v2_accepts_numeric_speed_in_registry_range():
+    config = OrganizationAIModelConfigurationV2(
+        mode="dograh",
+        dograh=DograhManagedAIModelConfiguration(
+            api_key="mps-secret",
+            speed=1.5,
+        ),
+    )
+
+    effective = compile_ai_model_configuration_v2(config)
+
+    assert effective.tts.speed == 1.5
+
+
+def test_dograh_v2_rejects_out_of_range_speed():
     with pytest.raises(ValidationError):
         OrganizationAIModelConfigurationV2(
             mode="dograh",
             dograh=DograhManagedAIModelConfiguration(
                 api_key="mps-secret",
-                speed=1.5,
+                speed=2.5,
             ),
         )
 
@@ -118,7 +135,7 @@ async def test_byok_realtime_validator_does_not_require_stt_or_tts():
                     "llm": {
                         "provider": "google",
                         "api_key": "google-llm-key",
-                        "model": "gemini-2.0-flash",
+                        "model": "gemini-3.5-flash",
                     },
                 },
             },
@@ -135,12 +152,89 @@ async def test_byok_realtime_validator_does_not_require_stt_or_tts():
 
 
 @pytest.mark.asyncio
+async def test_resolved_org_v2_uses_last_validated_at_as_validation_cache(
+    monkeypatch,
+):
+    from datetime import UTC, datetime
+
+    from api.services.configuration import ai_model_configuration
+
+    last_validated_at = datetime.now(UTC)
+    config = OrganizationAIModelConfigurationV2(
+        mode="dograh",
+        dograh=DograhManagedAIModelConfiguration(api_key="mps-secret"),
+    )
+    row = SimpleNamespace(
+        value=config.model_dump(mode="json", exclude_none=True),
+        last_validated_at=last_validated_at,
+    )
+    monkeypatch.setattr(
+        ai_model_configuration.db_client,
+        "get_configuration",
+        AsyncMock(return_value=row),
+    )
+
+    resolved = await get_resolved_ai_model_configuration(organization_id=42)
+
+    assert resolved.source == "organization_v2"
+    assert resolved.effective.last_validated_at == last_validated_at
+
+
+@pytest.mark.asyncio
+async def test_upsert_org_v2_marks_configuration_validated(monkeypatch):
+    from api.services.configuration import ai_model_configuration
+
+    config = OrganizationAIModelConfigurationV2(
+        mode="dograh",
+        dograh=DograhManagedAIModelConfiguration(api_key="mps-secret"),
+    )
+    upsert = AsyncMock()
+    monkeypatch.setattr(
+        ai_model_configuration.db_client,
+        "upsert_configuration",
+        upsert,
+    )
+
+    result = await upsert_organization_ai_model_configuration_v2(42, config)
+
+    assert result is config
+    upsert.assert_awaited_once()
+    args = upsert.await_args.args
+    kwargs = upsert.await_args.kwargs
+    assert args == (
+        42,
+        "MODEL_CONFIGURATION_V2",
+        config.model_dump(mode="json", exclude_none=True),
+    )
+    assert kwargs["last_validated_at"].tzinfo is not None
+
+
+def test_org_config_validation_timestamp_update_does_not_touch_updated_at():
+    from datetime import UTC, datetime
+
+    from sqlalchemy import update
+    from sqlalchemy.dialects import postgresql
+
+    from api.db.models import OrganizationConfigurationModel
+
+    stmt = (
+        update(OrganizationConfigurationModel)
+        .where(OrganizationConfigurationModel.id == 1)
+        .values(last_validated_at=datetime.now(UTC))
+    )
+
+    compiled = str(stmt.compile(dialect=postgresql.dialect()))
+    assert "last_validated_at" in compiled
+    assert "updated_at" not in compiled
+
+
+@pytest.mark.asyncio
 async def test_pipeline_validator_requires_stt_and_tts_when_not_realtime():
     effective = EffectiveAIModelConfiguration(
         llm=GoogleLLMService(
             provider="google",
             api_key="google-llm-key",
-            model="gemini-2.0-flash",
+            model="gemini-3.5-flash",
         ),
         realtime=GoogleRealtimeLLMConfiguration(
             provider="google_realtime",
@@ -236,6 +330,33 @@ def test_legacy_all_dograh_pipeline_converts_to_dograh_v2():
 
     assert config.mode == "dograh"
     assert config.dograh.api_key == "mps-secret"
+
+
+def test_legacy_dograh_pipeline_conversion_preserves_numeric_speed():
+    legacy = EffectiveAIModelConfiguration(
+        llm=DograhLLMService(
+            provider="dograh",
+            api_key=["mps-secret"],
+            model="default",
+        ),
+        tts=DograhTTSService(
+            provider="dograh",
+            api_key=["mps-secret"],
+            model="default",
+            voice="default",
+            speed=1.5,
+        ),
+        stt=DograhSTTService(
+            provider="dograh",
+            api_key=["mps-secret"],
+            model="default",
+        ),
+    )
+
+    config = convert_legacy_ai_model_configuration_to_v2(legacy)
+
+    assert config.mode == "dograh"
+    assert config.dograh.speed == 1.5
 
 
 def test_legacy_mixed_dograh_pipeline_converts_to_dograh_v2():
@@ -362,6 +483,58 @@ def test_workflow_model_override_migration_removes_invalid_v1_override_marker():
     assert changed is True
     assert "model_overrides" not in migrated
     assert migrated["ambient_noise_configuration"] == {"enabled": False}
+
+
+@pytest.mark.asyncio
+async def test_workflow_model_configuration_migration_delegates_db_access(
+    monkeypatch,
+):
+    from api.services.configuration import ai_model_configuration
+
+    workflow = SimpleNamespace(
+        id=7,
+        workflow_configurations={"model_overrides": None, "scope": "workflow"},
+        definitions=[
+            SimpleNamespace(
+                id=11,
+                workflow_configurations={
+                    "model_overrides": None,
+                    "scope": "definition",
+                },
+            ),
+            SimpleNamespace(
+                id=12,
+                workflow_configurations={"scope": "unchanged"},
+            ),
+        ],
+    )
+    list_workflows = AsyncMock(return_value=[workflow])
+    bulk_update = AsyncMock()
+    monkeypatch.setattr(
+        ai_model_configuration.db_client,
+        "list_workflows_for_model_configuration_migration",
+        list_workflows,
+    )
+    monkeypatch.setattr(
+        ai_model_configuration.db_client,
+        "bulk_update_workflow_model_configurations",
+        bulk_update,
+    )
+
+    result = await migrate_workflow_model_configurations_to_v2(
+        organization_id=42,
+        fallback_user_config=EffectiveAIModelConfiguration(),
+    )
+
+    list_workflows.assert_awaited_once_with(42)
+    bulk_update.assert_awaited_once_with(
+        organization_id=42,
+        workflow_updates=[(7, {"scope": "workflow"})],
+        definition_updates=[(11, {"scope": "definition"})],
+    )
+    assert result.workflow_count == 1
+    assert result.definition_count == 1
+    assert result.workflow_ids == [7]
 
 
 @pytest.mark.asyncio

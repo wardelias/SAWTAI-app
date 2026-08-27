@@ -1,0 +1,171 @@
+import pytest
+
+from api.schemas.tool import ContextDestinationMappingConfig, TransferCallConfig
+
+
+def test_transfer_call_destination_accepts_initial_context_template():
+    config = TransferCallConfig(
+        destination="{{initial_context.transfer_destination}}",
+    )
+
+    assert config.destination == "{{initial_context.transfer_destination}}"
+
+
+def test_transfer_call_destination_accepts_provider_specific_literal():
+    config = TransferCallConfig(destination="provider-specific-destination")
+
+    assert config.destination == "provider-specific-destination"
+
+
+def test_transfer_call_static_allows_empty_draft_destination():
+    config = TransferCallConfig(destination_source="static", destination="")
+
+    assert config.destination_source == "static"
+    assert config.destination == ""
+
+
+def test_transfer_call_dynamic_requires_resolver():
+    with pytest.raises(ValueError, match="resolver is required"):
+        TransferCallConfig(destination_source="dynamic", destination="")
+
+
+def test_transfer_call_dynamic_accepts_resolver_without_destination():
+    config = TransferCallConfig(
+        destination_source="dynamic",
+        destination="",
+        resolver={
+            "type": "http",
+            "url": "https://crm.example.com/resolve-transfer",
+        },
+    )
+
+    assert config.destination_source == "dynamic"
+    assert config.destination == ""
+    assert config.resolver is not None
+
+
+def test_transfer_call_context_mapping_requires_mapping():
+    with pytest.raises(ValueError, match="context_mapping is required"):
+        TransferCallConfig(destination_source="context_mapping")
+
+
+def test_transfer_call_context_mapping_accepts_unique_routes():
+    config = TransferCallConfig(
+        destination_source="context_mapping",
+        context_mapping={
+            "context_path": "qualified",
+            "routes": [
+                {"context_value": "yes", "destination": "sales"},
+                {"context_value": "no", "destination": "support"},
+            ],
+            "fallback_destination": "source",
+        },
+    )
+
+    assert config.context_mapping is not None
+    assert len(config.context_mapping.rules) == 1
+    assert config.context_mapping.rules[0].context_path == "qualified"
+    assert config.context_mapping.rules[0].routes[0].destination == "sales"
+
+
+def test_context_mapping_openapi_advertises_legacy_single_rule_shape():
+    schema = ContextDestinationMappingConfig.model_json_schema()
+
+    assert "rules" not in schema.get("required", [])
+    assert "Deprecated" in schema["properties"]["context_path"]["description"]
+    assert "Deprecated" in schema["properties"]["routes"]["description"]
+
+
+def test_transfer_call_context_mapping_keeps_rule_order():
+    config = TransferCallConfig(
+        destination_source="context_mapping",
+        context_mapping={
+            "rules": [
+                {
+                    "context_path": "qualified",
+                    "routes": [{"context_value": "yes", "destination": "sales"}],
+                },
+                {
+                    "context_path": "state",
+                    "routes": [{"context_value": "tx", "destination": "texas"}],
+                },
+            ],
+            "fallback_destination": "source",
+        },
+    )
+
+    assert config.context_mapping is not None
+    assert [rule.context_path for rule in config.context_mapping.rules] == [
+        "qualified",
+        "state",
+    ]
+
+
+def test_transfer_call_context_mapping_requires_at_least_one_rule():
+    with pytest.raises(ValueError, match="rules"):
+        TransferCallConfig(
+            destination_source="context_mapping",
+            context_mapping={"rules": []},
+        )
+
+
+def test_transfer_call_context_mapping_rejects_more_than_twenty_rules():
+    with pytest.raises(ValueError, match="more than 20"):
+        TransferCallConfig(
+            destination_source="context_mapping",
+            context_mapping={
+                "rules": [
+                    {
+                        "context_path": f"path_{index}",
+                        "routes": [{"context_value": "yes", "destination": "sales"}],
+                    }
+                    for index in range(21)
+                ]
+            },
+        )
+
+
+def test_transfer_call_context_mapping_allows_duplicate_values_across_rules():
+    config = TransferCallConfig(
+        destination_source="context_mapping",
+        context_mapping={
+            "rules": [
+                {
+                    "context_path": "qualified",
+                    "routes": [{"context_value": "yes", "destination": "sales"}],
+                },
+                {
+                    "context_path": "callback_requested",
+                    "routes": [{"context_value": "yes", "destination": "callbacks"}],
+                },
+            ],
+        },
+    )
+
+    assert config.context_mapping is not None
+    assert len(config.context_mapping.rules) == 2
+
+
+def test_transfer_call_context_mapping_rejects_blank_context_path():
+    with pytest.raises(ValueError, match="context path cannot be blank"):
+        TransferCallConfig(
+            destination_source="context_mapping",
+            context_mapping={
+                "context_path": "   ",
+                "routes": [{"context_value": "yes", "destination": "sales"}],
+            },
+        )
+
+
+def test_transfer_call_context_mapping_rejects_duplicate_values_case_insensitively():
+    with pytest.raises(ValueError, match="must be unique"):
+        TransferCallConfig(
+            destination_source="context_mapping",
+            context_mapping={
+                "context_path": "qualified",
+                "routes": [
+                    {"context_value": "Yes", "destination": "sales"},
+                    {"context_value": "yes", "destination": "support"},
+                ],
+            },
+        )

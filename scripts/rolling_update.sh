@@ -28,6 +28,8 @@ NGINX_UPSTREAM_TEMPLATE="$BASE_DIR/nginx/dograh_upstream.conf.template"
 NGINX_UPSTREAM_CONF="/etc/nginx/conf.d/dograh_upstream.conf"
 
 HEALTH_CHECK_ENDPOINT="/api/v1/health"
+ACTIVE_CALLS_ENDPOINT="/api/v1/health/active-calls"
+DOGRAH_DEVOPS_SECRET_HEADER="X-Dograh-Devops-Secret"
 
 # Load environment
 if [[ -f "$ENV_FILE" ]]; then
@@ -38,9 +40,15 @@ UVICORN_BASE_PORT=${UVICORN_BASE_PORT:-8000}
 CPU_CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
 FASTAPI_WORKERS=${FASTAPI_WORKERS:-$CPU_CORES}
 ARQ_WORKERS=${ARQ_WORKERS:-1}
+UVICORN_HOST=${UVICORN_HOST:-127.0.0.1}
+MANAGE_NGINX=${MANAGE_NGINX:-true}
+ENABLE_ARI_MANAGER=${ENABLE_ARI_MANAGER:-true}
+ENABLE_CAMPAIGN_ORCHESTRATOR=${ENABLE_CAMPAIGN_ORCHESTRATOR:-true}
 
 # Tuning knobs (override via environment)
-DRAIN_TIMEOUT=${DRAIN_TIMEOUT:-300}          # seconds to wait for old workers to drain
+DRAIN_TIMEOUT=${DRAIN_TIMEOUT:-300}          # seconds to wait for active calls to finish
+DRAIN_INTERVAL=${DRAIN_INTERVAL:-5}          # seconds between active-call drain polls
+STOP_TIMEOUT=${STOP_TIMEOUT:-30}             # seconds to wait for drained workers to exit after SIGTERM
 HEALTH_MAX_ATTEMPTS=${HEALTH_MAX_ATTEMPTS:-30}  # per-worker health-check retries
 HEALTH_INTERVAL=${HEALTH_INTERVAL:-2}        # seconds between health-check retries
 
@@ -53,6 +61,15 @@ cd "$BASE_DIR"
 log_info()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO:  $*"; }
 log_warn()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARN:  $*"; }
 log_error() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $*" >&2; }
+
+if [[ -z "${DOGRAH_DEVOPS_SECRET:-}" ]]; then
+  log_error "DOGRAH_DEVOPS_SECRET is not set. Add it to $ENV_FILE before running rolling_update.sh."
+  exit 1
+fi
+if [[ "$DOGRAH_DEVOPS_SECRET" == "change-me-dograh-devops-secret" ]]; then
+  log_error "DOGRAH_DEVOPS_SECRET still has the example placeholder value. Replace it in $ENV_FILE."
+  exit 1
+fi
 
 # Band port calculation: band A = base, band B = base + 100
 band_base_port() {
@@ -96,6 +113,41 @@ kill_process_tree() {
   fi
 }
 
+# Active in-progress call count for a single worker, via its health endpoint.
+# A worker that is unreachable (already exited) reports 0, so it never blocks the
+# drain. Non-200 responses or malformed bodies are hard failures: otherwise an
+# auth/configuration error could be mistaken for a fully drained worker.
+count_active_calls_on_port() {
+  local port=$1
+  local response http_code body n
+  response=$(curl -sS --max-time 3 \
+    -H "${DOGRAH_DEVOPS_SECRET_HEADER}: ${DOGRAH_DEVOPS_SECRET}" \
+    -w $'\n%{http_code}' \
+    "http://127.0.0.1:${port}${ACTIVE_CALLS_ENDPOINT}" 2>/dev/null || true)
+  http_code="${response##*$'\n'}"
+  body="${response%$'\n'*}"
+
+  if [[ "$http_code" == "000" ]]; then
+    printf '0'
+    return 0
+  fi
+
+  if [[ "$http_code" != "200" ]]; then
+    log_error "uvicorn_${port} active-calls endpoint returned HTTP ${http_code}. Check DOGRAH_DEVOPS_SECRET in $ENV_FILE."
+    return 1
+  fi
+
+  n=$(printf '%s' "$body" \
+    | grep -o '"active_calls"[[:space:]]*:[[:space:]]*[0-9]\+' \
+    | grep -o '[0-9]\+$' || true)
+  if [[ -z "$n" ]]; then
+    log_error "uvicorn_${port} active-calls endpoint returned an invalid response body."
+    return 1
+  fi
+
+  printf '%s' "$n"
+}
+
 ###############################################################################
 ### ROLLBACK
 ###############################################################################
@@ -130,6 +182,16 @@ rollback_new_workers() {
 ###############################################################################
 
 log_info "=== Phase 0: Pre-flight checks ==="
+
+# The dual-band cutover depends on atomically rewriting and reloading the local
+# nginx upstream. An off-node load balancer cannot be switched by this script;
+# continuing would stop the only band it still routes to. Require operators to
+# drain/switch that node externally and use a cold restart instead.
+if [[ "$MANAGE_NGINX" != "true" ]]; then
+  log_error "rolling_update.sh requires MANAGE_NGINX=true for its local nginx cutover."
+  log_error "For off-node nginx, drain this node at the load balancer and restart it with start_services.sh."
+  exit 1
+fi
 
 # Determine current and new band
 if [[ -f "$RUN_DIR/active_band" ]]; then
@@ -254,7 +316,7 @@ for ((w = 0; w < FASTAPI_WORKERS; w++)); do
   (
     cd "$BASE_DIR"
     export LOG_FILE_PATH="$LOG_DIR/${name}.log"
-    exec uvicorn api.app:app --host 127.0.0.1 --port "$port" \
+    exec uvicorn api.app:app --host "$UVICORN_HOST" --port "$port" \
       >>"$LOG_DIR/${name}.log" 2>&1
   ) &
 
@@ -366,9 +428,49 @@ log_info "nginx reloaded — traffic now routed to band $NEW_BAND"
 ### PHASE 5: DRAIN OLD WORKERS
 ###############################################################################
 
-log_info "=== Phase 5: Draining old workers (band $OLD_BAND, timeout ${DRAIN_TIMEOUT}s) ==="
+# nginx (Phase 4) already routes new calls to the new band, so the old band only
+# holds calls still in progress. Wait for those to finish BEFORE signalling the
+# workers: SIGTERM makes uvicorn force-close live call WebSockets (close code
+# 1012), cutting calls mid-conversation. So we poll each old worker's in-flight
+# call count and only stop once it reaches zero (or DRAIN_TIMEOUT elapses).
 
-# Collect old worker PIDs
+log_info "=== Phase 5a: Draining active calls from band $OLD_BAND (timeout ${DRAIN_TIMEOUT}s) ==="
+
+drain_start=$(date +%s)
+while true; do
+  active=0
+  for ((w = 0; w < FASTAPI_WORKERS; w++)); do
+    port=$((OLD_BASE + w))
+    # Only poll workers still alive; an exited worker holds no calls.
+    pidfile="$RUN_DIR/uvicorn_${port}.pid"
+    if [[ -f "$pidfile" ]] && kill -0 "$(<"$pidfile")" 2>/dev/null; then
+      if ! call_count=$(count_active_calls_on_port "$port"); then
+        exit 1
+      fi
+      active=$((active + call_count))
+    fi
+  done
+
+  if [[ $active -eq 0 ]]; then
+    log_info "Band $OLD_BAND fully drained — no active calls"
+    break
+  fi
+
+  elapsed=$(( $(date +%s) - drain_start ))
+  if [[ $elapsed -ge $DRAIN_TIMEOUT ]]; then
+    log_warn "Drain timeout reached (${DRAIN_TIMEOUT}s) with $active active call(s) still running — stopping anyway."
+    break
+  fi
+
+  log_info "  Waiting for $active active call(s) to finish... (${elapsed}s / ${DRAIN_TIMEOUT}s)"
+  sleep "$DRAIN_INTERVAL"
+done
+
+log_info "=== Phase 5b: Stopping old workers (band $OLD_BAND, timeout ${STOP_TIMEOUT}s) ==="
+
+# Calls are drained — now signal the workers and reap them. A drained worker
+# exits within a second or two of SIGTERM; STOP_TIMEOUT bounds stragglers (e.g.
+# a call that outlived DRAIN_TIMEOUT) before we force-kill.
 OLD_PIDS=()
 for ((w = 0; w < FASTAPI_WORKERS; w++)); do
   port=$((OLD_BASE + w))
@@ -385,7 +487,7 @@ for ((w = 0; w < FASTAPI_WORKERS; w++)); do
 done
 
 if [[ ${#OLD_PIDS[@]} -gt 0 ]]; then
-  start_time=$(date +%s)
+  stop_start=$(date +%s)
 
   while true; do
     all_dead=true
@@ -397,13 +499,13 @@ if [[ ${#OLD_PIDS[@]} -gt 0 ]]; then
     done
 
     if $all_dead; then
-      log_info "All old workers exited gracefully"
+      log_info "All old workers exited"
       break
     fi
 
-    elapsed=$(( $(date +%s) - start_time ))
-    if [[ $elapsed -ge $DRAIN_TIMEOUT ]]; then
-      log_warn "Drain timeout reached (${DRAIN_TIMEOUT}s). Force-killing remaining old workers."
+    elapsed=$(( $(date +%s) - stop_start ))
+    if [[ $elapsed -ge $STOP_TIMEOUT ]]; then
+      log_warn "Stop timeout reached (${STOP_TIMEOUT}s). Force-killing remaining old workers."
       for pid in "${OLD_PIDS[@]}"; do
         if kill -0 "$pid" 2>/dev/null; then
           kill_process_tree "$pid" "-KILL"
@@ -414,11 +516,11 @@ if [[ ${#OLD_PIDS[@]} -gt 0 ]]; then
       break
     fi
 
-    log_info "  Waiting for old workers to drain... (${elapsed}s / ${DRAIN_TIMEOUT}s)"
-    sleep 5
+    log_info "  Waiting for old workers to exit... (${elapsed}s / ${STOP_TIMEOUT}s)"
+    sleep 2
   done
 else
-  log_warn "No old worker PIDs to drain"
+  log_warn "No old worker PIDs to stop"
 fi
 
 ###############################################################################
@@ -427,15 +529,24 @@ fi
 
 log_info "=== Phase 6: Restarting non-HTTP services ==="
 
-# Services to restart (same as start_services.sh)
-RESTART_NAMES=(
-  "ari_manager"
-  "campaign_orchestrator"
-)
-RESTART_COMMANDS=(
-  "python -m api.services.telephony.ari_manager"
-  "python -m api.services.campaign.campaign_orchestrator"
-)
+# Services to restart (same flags and defaults as start_services.sh)
+RESTART_NAMES=()
+RESTART_COMMANDS=()
+DISABLED_NAMES=()
+
+if [[ "$ENABLE_ARI_MANAGER" == "true" ]]; then
+  RESTART_NAMES+=("ari_manager")
+  RESTART_COMMANDS+=("python -m api.services.telephony.ari_manager")
+else
+  DISABLED_NAMES+=("ari_manager")
+fi
+
+if [[ "$ENABLE_CAMPAIGN_ORCHESTRATOR" == "true" ]]; then
+  RESTART_NAMES+=("campaign_orchestrator")
+  RESTART_COMMANDS+=("python -m api.services.campaign.campaign_orchestrator")
+else
+  DISABLED_NAMES+=("campaign_orchestrator")
+fi
 
 # Add ARQ workers
 for ((i = 1; i <= ARQ_WORKERS; i++)); do
@@ -443,12 +554,11 @@ for ((i = 1; i <= ARQ_WORKERS; i++)); do
   RESTART_COMMANDS+=("python -m arq api.tasks.arq.WorkerSettings --custom-log-dict api.tasks.arq.LOG_CONFIG")
 done
 
-for i in "${!RESTART_NAMES[@]}"; do
-  name="${RESTART_NAMES[$i]}"
-  cmd="${RESTART_COMMANDS[$i]}"
-  pidfile="$RUN_DIR/${name}.pid"
+stop_managed_service() {
+  local name=$1
+  local pidfile="$RUN_DIR/${name}.pid"
+  local oldpid
 
-  # Stop old instance
   if [[ -f "$pidfile" ]]; then
     oldpid=$(<"$pidfile")
     if kill -0 "$oldpid" 2>/dev/null; then
@@ -462,6 +572,20 @@ for i in "${!RESTART_NAMES[@]}"; do
     fi
     rm -f "$pidfile"
   fi
+}
+
+# A flag may have changed since the last cold start/update. Stop a previously
+# running singleton when it is now disabled, but never restart it.
+for name in "${DISABLED_NAMES[@]}"; do
+  stop_managed_service "$name"
+  log_info "  $name disabled by configuration"
+done
+
+for i in "${!RESTART_NAMES[@]}"; do
+  name="${RESTART_NAMES[$i]}"
+  cmd="${RESTART_COMMANDS[$i]}"
+
+  stop_managed_service "$name"
 
   # Start new instance
   log_info "  Starting $name"

@@ -1,4 +1,4 @@
-const DOCS_BASE = "https://docs.dograh.com";
+export const DOCS_BASE = "https://docs.dograh.com";
 
 export const NODE_DOCUMENTATION_URLS: Record<string, string> = {
     startCall: `${DOCS_BASE}/voice-agent/start-call`,
@@ -26,6 +26,8 @@ export const SETTINGS_DOCUMENTATION_URLS: Record<string, string> = {
     recordings: `${DOCS_BASE}/voice-agent/pre-recorded-audio`,
     deployment: `${DOCS_BASE}/voice-agent/add-to-website`,
 };
+
+export const WIDGET_CONTEXT_DOC_URL = `${DOCS_BASE}/voice-agent/add-to-website#pass-context-to-the-agent`;
 
 export const WIDGET_MODE_DOCUMENTATION_URLS: Record<"floating" | "inline" | "headless", string> = {
     floating: `${DOCS_BASE}/voice-agent/add-to-website#floating-widget`,

@@ -1,6 +1,5 @@
 "use client";
 
-import type { Team } from "@stackframe/stack";
 import {
   AlertTriangle,
   ArrowUpCircle,
@@ -35,8 +34,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import React, { useEffect, useRef, useState } from "react";
 
-import { getMpsCreditsApiV1OrganizationsUsageMpsCreditsGet } from "@/client/sdk.gen";
-import type { MpsCreditsResponse } from "@/client/types.gen";
+import { getBillingCreditsApiV1OrganizationsBillingCreditsGet } from "@/client/sdk.gen";
+import type { MpsBillingCreditsResponse } from "@/client/types.gen";
+import { SidebarTeamSwitcher } from "@/components/layout/SidebarTeamSwitcher";
 import { SawtLogo } from "@/components/SawtLogo";
 import ThemeToggle from "@/components/ThemeSwitcher";
 import { Badge } from "@/components/ui/badge";
@@ -162,7 +162,7 @@ const NAV_SECTIONS: SidebarNavSection[] = [
     ],
   },
   {
-    label: "OBSERVE",
+    label: "MANAGE",
     items: [
       {
         title: "Agent Runs",
@@ -178,35 +178,33 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         title: "Reports",
         url: "/reports",
         icon: FileText,
-      },
+      }
     ],
   },
 ];
-
-// Lazy load SelectedTeamSwitcher - we'll pass selectedTeam from our context
-const StackTeamSwitcher = React.lazy(() =>
-  import("@stackframe/stack").then((mod) => ({
-    default: mod.SelectedTeamSwitcher,
-  }))
-);
 
 export function AppSidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { state, isMobile, setOpenMobile } = useSidebar();
-  const { provider, getSelectedTeam, user, loading: authLoading, isAuthenticated, logout } = useAuth();
+  const { provider, user, loading: authLoading, isAuthenticated, logout } = useAuth();
   const { config } = useAppConfig();
   const { organizationPricing } = useUserConfig();
-  const { telnyxMissingWebhookPublicKeyCount } = useTelephonyConfigWarnings();
-  const hasTelephonyWarning = telnyxMissingWebhookPublicKeyCount > 0;
+  const {
+    telnyxMissingWebhookPublicKeyCount,
+    vonageMissingSignatureSecretCount,
+  } = useTelephonyConfigWarnings();
+  const hasTelephonyWarning =
+    telnyxMissingWebhookPublicKeyCount > 0 ||
+    vonageMissingSignatureSecretCount > 0;
   const isCollapsed = !isMobile && state === "collapsed";
 
-  const [credits, setCredits] = useState<MpsCreditsResponse | null>(null);
+  const [credits, setCredits] = useState<MpsBillingCreditsResponse | null>(null);
   const hasFetchedCredits = useRef(false);
   useEffect(() => {
     if (authLoading || !isAuthenticated || hasFetchedCredits.current) return;
     hasFetchedCredits.current = true;
-    getMpsCreditsApiV1OrganizationsUsageMpsCreditsGet()
+    getBillingCreditsApiV1OrganizationsBillingCreditsGet()
       .then((res) => {
         if (res.data) setCredits(res.data);
       })
@@ -217,7 +215,7 @@ export function AppSidebar() {
 
   const billingEnabled = organizationPricing?.billing_enabled ?? false;
   const accountStatus: "active" | "trial" = billingEnabled ? "active" : "trial";
-  const creditsRemaining = credits ? Math.max(0, credits.remaining_credits) : null;
+  const creditsRemaining = credits ? Math.max(0, credits.remaining_credits ?? 0) : null;
   const creditsTotal = credits?.total_quota ?? 0;
   const creditsUsed = credits?.total_credits_used ?? 0;
   const creditsPct = creditsTotal > 0 ? Math.min(100, (creditsUsed / creditsTotal) * 100) : 0;
@@ -234,16 +232,6 @@ export function AppSidebar() {
       .slice(0, 2)
       .map((s: string) => s[0]?.toUpperCase())
       .join("") || "U";
-
-  // Get selected team for Stack auth (cast to Team type from Stack)
-  // Stabilize the reference so SelectedTeamSwitcher only sees a change when the team ID changes,
-  // preventing unnecessary PATCH calls to Stack Auth on every route navigation.
-  const selectedTeamRef = useRef<Team | null>(null);
-  const rawSelectedTeam = provider === "stack" && getSelectedTeam ? getSelectedTeam() as Team | null : null;
-  if (rawSelectedTeam?.id !== selectedTeamRef.current?.id) {
-    selectedTeamRef.current = rawSelectedTeam;
-  }
-  const selectedTeam = selectedTeamRef.current;
 
   // Version info from app config context
   const versionInfo = config ? { ui: config.uiVersion, api: config.apiVersion } : null;
@@ -369,7 +357,7 @@ export function AppSidebar() {
                   </a>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">
-                  <p>Latest: {latestRelease} — click to see the update guide</p>
+                  <p>Latest: {latestRelease} - click to see the update guide</p>
                 </TooltipContent>
               </Tooltip>
             )}
@@ -409,18 +397,7 @@ export function AppSidebar() {
             )}
             translate="no"
           >
-            <React.Suspense
-              fallback={
-                <div className="h-9 w-full animate-pulse rounded-md bg-muted" />
-              }
-            >
-              <StackTeamSwitcher
-                selectedTeam={selectedTeam || undefined}
-                onChange={() => {
-                  router.refresh();
-                }}
-              />
-            </React.Suspense>
+            <SidebarTeamSwitcher />
           </div>
         )}
       </SidebarHeader>

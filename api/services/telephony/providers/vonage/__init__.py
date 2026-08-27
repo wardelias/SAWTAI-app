@@ -9,7 +9,7 @@ from api.services.telephony.registry import (
     register,
 )
 
-from .config import VonageConfigurationRequest, VonageConfigurationResponse
+from .config import VonageConfigurationRequest
 from .provider import VonageProvider
 from .transport import create_transport
 
@@ -21,6 +21,7 @@ def _config_loader(value: Dict[str, Any]) -> Dict[str, Any]:
         "private_key": value.get("private_key"),
         "api_key": value.get("api_key"),
         "api_secret": value.get("api_secret"),
+        "signature_secret": value.get("signature_secret"),
         "from_numbers": value.get("from_numbers", []),
     }
 
@@ -50,6 +51,13 @@ _UI_METADATA = ProviderUIMetadata(
             sensitive=True,
         ),
         ProviderUIField(
+            name="signature_secret",
+            label="Signature Secret",
+            type="password",
+            sensitive=True,
+            description="Vonage signature secret for signed webhook verification",
+        ),
+        ProviderUIField(
             name="from_numbers",
             label="Phone Numbers",
             type="string-array",
@@ -67,7 +75,6 @@ SPEC = ProviderSpec(
     transport_sample_rate=16000,
     config_request_cls=VonageConfigurationRequest,
     ui_metadata=_UI_METADATA,
-    config_response_cls=VonageConfigurationResponse,
     account_id_credential_field="api_key",
 )
 
@@ -78,7 +85,6 @@ register(SPEC)
 __all__ = [
     "SPEC",
     "VonageConfigurationRequest",
-    "VonageConfigurationResponse",
     "VonageProvider",
     "create_transport",
 ]

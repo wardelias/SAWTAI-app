@@ -1,5 +1,6 @@
 from typing import Optional, TypedDict
 
+import httpx
 import openai
 from deepgram import DeepgramClient
 from groq import Groq
@@ -33,11 +34,14 @@ class APIKeyStatusResponse(TypedDict):
 
 class UserConfigurationValidator:
     def __init__(self):
+        self._dograh_service_key_validation_cache: dict[str, bool] = {}
         self._validator_map = {
             ServiceProviders.OPENAI.value: self._check_openai_api_key,
+            ServiceProviders.ATLASCLOUD.value: self._check_openai_api_key,
             ServiceProviders.DEEPGRAM.value: self._check_deepgram_api_key,
             ServiceProviders.GROQ.value: self._check_groq_api_key,
             ServiceProviders.OPENROUTER.value: self._check_openrouter_api_key,
+            ServiceProviders.INWORLD.value: self._check_inworld_api_key,
             ServiceProviders.ELEVENLABS.value: self._validate_elevenlabs_api_key,
             ServiceProviders.GOOGLE.value: self._check_google_api_key,
             ServiceProviders.AZURE.value: self._check_azure_api_key,
@@ -49,6 +53,7 @@ class UserConfigurationValidator:
             ServiceProviders.CAMB.value: self._check_camb_api_key,
             ServiceProviders.AWS_BEDROCK.value: self._check_aws_bedrock_api_key,
             ServiceProviders.SPEACHES.value: self._check_speaches_api_key,
+            ServiceProviders.HUGGINGFACE.value: self._check_huggingface_api_key,
             ServiceProviders.GOOGLE_VERTEX.value: self._check_google_vertex_llm_api_key,
             ServiceProviders.OPENAI_REALTIME.value: self._check_openai_api_key,
             ServiceProviders.GROK_REALTIME.value: self._check_grok_realtime_api_key,
@@ -62,6 +67,9 @@ class UserConfigurationValidator:
             ServiceProviders.RIME.value: self._check_rime_api_key,
             ServiceProviders.MINIMAX.value: self._check_minimax_api_key,
             ServiceProviders.HAMSA.value: self._check_hamsa_api_key,
+            ServiceProviders.SMALLEST.value: self._check_smallest_api_key,
+            ServiceProviders.XAI.value: self._check_xai_api_key,
+            ServiceProviders.LMNT.value: self._check_lmnt_api_key,
         }
 
     async def validate(
@@ -70,6 +78,9 @@ class UserConfigurationValidator:
         organization_id: Optional[int] = None,
         created_by: Optional[str] = None,
     ) -> APIKeyStatusResponse:
+        # A managed configuration commonly repeats one service key across LLM,
+        # STT, TTS, and embeddings. Validate that credential once per request.
+        self._dograh_service_key_validation_cache.clear()
         self._auth_context: AuthContext = {
             "organization_id": organization_id,
             "created_by": created_by,
@@ -225,6 +236,7 @@ class UserConfigurationValidator:
 
         if provider in (
             ServiceProviders.OPENAI.value,
+            ServiceProviders.ATLASCLOUD.value,
             ServiceProviders.OPENAI_REALTIME.value,
         ):
             return validator(provider, api_key, service_config)
@@ -233,6 +245,9 @@ class UserConfigurationValidator:
     def _check_openai_api_key(
         self, model: str, api_key: str, service_config: Optional[ServiceConfig] = None
     ) -> bool:
+        provider_name = (
+            "Atlas Cloud" if model == ServiceProviders.ATLASCLOUD.value else "OpenAI"
+        )
         client_kwargs: dict[str, str] = {"api_key": api_key}
         base_url = getattr(service_config, "base_url", None) if service_config else None
         if base_url:
@@ -244,7 +259,8 @@ class UserConfigurationValidator:
         except openai.AuthenticationError:
             if base_url and "openai.com" not in base_url:
                 raise ValueError(
-                    f"Invalid OpenAI API key. The key was rejected by the API at {base_url}. "
+                    f"Invalid {provider_name} API key. The key was rejected by the API at "
+                    f"{base_url}. "
                     "Please check that your API key is correct and has not been revoked."
                 )
             raise ValueError(
@@ -276,12 +292,13 @@ class UserConfigurationValidator:
         except Exception:
             if base_url:
                 raise ValueError(
-                    f"Failed to validate the OpenAI API key using the API at {base_url}. "
+                    f"Failed to validate the {provider_name} API key using the API at "
+                    f"{base_url}. "
                     "Please verify that the base_url is correct and reachable, and that the "
                     "API key is valid."
                 )
             raise ValueError(
-                "Failed to validate the OpenAI API key. Please try again later."
+                f"Failed to validate the {provider_name} API key. Please try again later."
             )
 
     def _check_deepgram_api_key(self, model: str, api_key: str) -> bool:
@@ -333,11 +350,16 @@ class UserConfigurationValidator:
                 "Please use a service key (mps...)."
             )
         auth = getattr(self, "_auth_context", {})
-        return mps_service_key_client.validate_service_key(
+        if api_key in self._dograh_service_key_validation_cache:
+            return self._dograh_service_key_validation_cache[api_key]
+
+        is_valid = mps_service_key_client.validate_service_key(
             api_key,
             organization_id=auth.get("organization_id"),
             created_by=auth.get("created_by"),
         )
+        self._dograh_service_key_validation_cache[api_key] = is_valid
+        return is_valid
 
     def _check_sarvam_api_key(self, model: str, api_key: str) -> bool:
         return True
@@ -345,7 +367,82 @@ class UserConfigurationValidator:
     def _check_openrouter_api_key(self, model: str, api_key: str) -> bool:
         return True
 
+    def _check_inworld_api_key(self, model: str, api_key: str) -> bool:
+        try:
+            response = httpx.get(
+                "https://api.inworld.ai/voices/v1/voices",
+                headers={"Authorization": f"Basic {api_key}"},
+                params={"pageSize": 1},
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            return True
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (401, 403):
+                raise ValueError(
+                    "Invalid Inworld API key. The key was rejected by the Inworld API. "
+                    "Please verify that your API key is correct, active, and has voice read access."
+                ) from exc
+            raise ValueError(
+                "The Inworld API returned an error while validating the API key. "
+                "Please try again later."
+            ) from exc
+        except httpx.RequestError as exc:
+            raise ValueError(
+                "Could not connect to the Inworld API. Please check your network connection "
+                "and try again."
+            ) from exc
+
     def _check_grok_realtime_api_key(self, model: str, api_key: str) -> bool:
+        return True
+
+    def _check_xai_api_key(self, model: str, api_key: str) -> bool:
+        # Use the TTS voices endpoint as a best-effort smoke test. Some xAI keys
+        # can be scoped in ways that block listing voices even though the key is
+        # still intended for TTS usage, so only a clear auth failure rejects save.
+        try:
+            response = httpx.get(
+                "https://api.x.ai/v1/tts/voices",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=10.0,
+            )
+        except httpx.RequestError:
+            raise ValueError(
+                "Could not connect to the xAI API. Please check your network "
+                "connection and try again."
+            )
+        if response.status_code == 200:
+            return True
+        if response.status_code == 401:
+            raise ValueError(
+                "Invalid xAI API key. The key was rejected by the xAI API. "
+                "Please check that your API key is correct and active. "
+                "You can verify your keys at "
+                "https://console.x.ai."
+            )
+        return True
+
+    def _check_lmnt_api_key(self, model: str, api_key: str) -> bool:
+        # Best-effort smoke test against LMNT's voice-list endpoint. Only a clear
+        # auth failure rejects the save; other statuses are treated as
+        # inconclusive so transient errors or API changes don't block valid keys.
+        try:
+            response = httpx.get(
+                "https://api.lmnt.com/v1/ai/voice/list",
+                headers={"X-API-Key": api_key, "lmnt-version": "1.1"},
+                timeout=10.0,
+            )
+        except httpx.RequestError:
+            raise ValueError(
+                "Could not connect to the LMNT API. Please check your network "
+                "connection and try again."
+            )
+        if response.status_code == 401:
+            raise ValueError(
+                "Invalid LMNT API key. The key was rejected by the LMNT API. "
+                "Please check that your API key is correct and active. "
+                "You can find your key at https://app.lmnt.com."
+            )
         return True
 
     def _check_ultravox_realtime_api_key(self, model: str, api_key: str) -> bool:
@@ -360,6 +457,14 @@ class UserConfigurationValidator:
     def _check_speaches_api_key(self, model: str, service_config) -> bool:
         if not getattr(service_config, "base_url", None):
             raise ValueError("base_url is required for Speaches services")
+        return True
+
+    def _check_huggingface_api_key(self, model: str, api_key: str) -> bool:
+        if not api_key.startswith("hf_"):
+            raise ValueError(
+                "Invalid Hugging Face API token format. Use a token that starts with "
+                "'hf_' and has Inference Providers permission."
+            )
         return True
 
     def _check_google_vertex_realtime_api_key(self, model: str, service_config) -> bool:
@@ -396,8 +501,9 @@ class UserConfigurationValidator:
         return True
 
     def _check_minimax_api_key(self, model: str, api_key: str) -> bool:
-        # MiniMax doesn't publish a cheap key-validation endpoint; trust the key
-        # at save time and surface auth errors at first call (same as Rime/Sarvam).
+        return True
+
+    def _check_smallest_api_key(self, model: str, api_key: str) -> bool:
         return True
 
     def _check_hamsa_api_key(self, model: str, api_key: str) -> bool:

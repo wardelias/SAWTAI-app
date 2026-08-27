@@ -6,21 +6,28 @@ import type { NodeSpec } from '@/client/types.gen';
 import { useNodeSpecs } from '@/components/flow/renderer';
 import { Button } from '@/components/ui/button';
 
-import { NodeType } from './types';
+import { FlowNode, NodeType } from './types';
 
 type AddNodePanelProps = {
     isOpen: boolean;
     onClose: () => void;
     onNodeSelect: (nodeType: NodeType) => void;
+    nodes: FlowNode[];
 };
 
-// Section ordering and labels. Drives both the category → section title
-// mapping and the rendering order.
-const SECTION_ORDER: Array<{ category: NodeSpec['category']; title: string }> = [
-    { category: 'trigger', title: 'Triggers' },
-    { category: 'call_node', title: 'Agent Nodes' },
-    { category: 'global_node', title: 'Global Nodes' },
-    { category: 'integration', title: 'Integrations' },
+// Section matching and rendering order. Webhook and QA remain integration
+// specs in the API, but are displayed in their own sections in this panel.
+const SECTIONS: Array<{ title: string; matches: (spec: NodeSpec) => boolean }> = [
+    { title: 'Triggers', matches: (spec) => spec.category === 'trigger' },
+    { title: 'Agent Nodes', matches: (spec) => spec.category === 'call_node' },
+    { title: 'Global Nodes', matches: (spec) => spec.category === 'global_node' },
+    { title: 'Webhook', matches: (spec) => spec.name === 'webhook' },
+    { title: 'QA', matches: (spec) => spec.name === 'qa' },
+    {
+        title: 'Integrations',
+        matches: (spec) =>
+            spec.category === 'integration' && spec.name !== 'webhook' && spec.name !== 'qa',
+    },
 ];
 
 function resolveIcon(name: string): LucideIcon {
@@ -32,10 +39,12 @@ function NodeSection({
     title,
     specs,
     onNodeSelect,
+    nodeTypeCounts,
 }: {
     title: string;
     specs: NodeSpec[];
     onNodeSelect: (nodeType: NodeType) => void;
+    nodeTypeCounts: Map<string, number>;
 }) {
     if (specs.length === 0) return null;
     return (
@@ -46,12 +55,23 @@ function NodeSection({
             <div className="space-y-2">
                 {specs.map((spec) => {
                     const Icon = resolveIcon(spec.icon);
+                    const maxInstances = spec.graph_constraints?.max_instances;
+                    const disabled =
+                        maxInstances !== undefined &&
+                        maxInstances !== null &&
+                        (nodeTypeCounts.get(spec.name) ?? 0) >= maxInstances;
                     return (
                         <Button
                             key={spec.name}
                             variant="outline"
                             className="w-full justify-start p-4 h-auto hover:bg-accent/50 transition-colors"
                             onClick={() => onNodeSelect(spec.name as NodeType)}
+                            disabled={disabled}
+                            title={
+                                disabled
+                                    ? `${spec.display_name} limit reached for this workflow`
+                                    : undefined
+                            }
                         >
                             <div className="flex items-center">
                                 <div className="bg-muted p-2 rounded-lg mr-3 border border-border">
@@ -74,17 +94,24 @@ function NodeSection({
     );
 }
 
-export default function AddNodePanel({ isOpen, onNodeSelect, onClose }: AddNodePanelProps) {
+export default function AddNodePanel({ isOpen, onNodeSelect, onClose, nodes }: AddNodePanelProps) {
     const { specs } = useNodeSpecs();
 
-    // Group registered specs by category, preserving the SECTION_ORDER.
-    // Adding a new node type with a new spec.category just shows up here.
+    // Group registered specs into their display sections, preserving SECTIONS order.
     const sections = useMemo(() => {
-        return SECTION_ORDER.map(({ category, title }) => ({
+        return SECTIONS.map(({ title, matches }) => ({
             title,
-            specs: specs.filter((s) => s.category === category),
+            specs: specs.filter(matches),
         }));
     }, [specs]);
+
+    const nodeTypeCounts = useMemo(() => {
+        const counts = new Map<string, number>();
+        nodes.forEach((node) => {
+            counts.set(node.type, (counts.get(node.type) ?? 0) + 1);
+        });
+        return counts;
+    }, [nodes]);
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
@@ -128,6 +155,7 @@ export default function AddNodePanel({ isOpen, onNodeSelect, onClose }: AddNodeP
                             title={title}
                             specs={specs}
                             onNodeSelect={onNodeSelect}
+                            nodeTypeCounts={nodeTypeCounts}
                         />
                     ))}
                 </div>

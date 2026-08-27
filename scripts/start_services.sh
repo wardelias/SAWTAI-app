@@ -33,9 +33,30 @@ if [[ -f "$ENV_FILE" ]]; then
   set -a && . "$ENV_FILE" && set +a
 fi
 
+if [[ -z "${DOGRAH_DEVOPS_SECRET:-}" ]]; then
+  echo "ERROR: DOGRAH_DEVOPS_SECRET is not set. Add it to $ENV_FILE before starting production services."
+  exit 1
+fi
+if [[ "$DOGRAH_DEVOPS_SECRET" == "change-me-dograh-devops-secret" ]]; then
+  echo "ERROR: DOGRAH_DEVOPS_SECRET still has the example placeholder value. Replace it in $ENV_FILE."
+  exit 1
+fi
+
 UVICORN_BASE_PORT=${UVICORN_BASE_PORT:-8000}
 CPU_CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
 FASTAPI_WORKERS=${FASTAPI_WORKERS:-$CPU_CORES}
+
+# Interface uvicorn binds to. Defaults to loopback for single-box installs where
+# a local nginx proxies to it. In a cluster where nginx runs on a separate host,
+# set UVICORN_HOST=0.0.0.0 (or this node's reachable IP) in api/.env so the
+# remote nginx can reach these workers.
+UVICORN_HOST=${UVICORN_HOST:-127.0.0.1}
+
+# Whether this node manages a local nginx (renders the upstream config and
+# reloads nginx). Defaults to "true" for single-box installs. In a cluster where
+# nginx lives on a separate host, set MANAGE_NGINX=false in api/.env so this
+# API/worker node never touches nginx.
+MANAGE_NGINX=${MANAGE_NGINX:-true}
 
 ###############################################################################
 ### 1b) Safety check — refuse to start over running services
@@ -86,21 +107,36 @@ echo "Node $NODE_VERSION detected (>= 22.6 required)"
 
 # Map "service name" → "command to run"
 # Using arrays for bash 3.2 compatibility
-SERVICE_NAMES=(
-  "ari_manager"
-  "campaign_orchestrator"
-)
+SERVICE_NAMES=()
+SERVICE_COMMANDS=()
 
-SERVICE_COMMANDS=(
-  "python -m api.services.telephony.ari_manager"
-  "python -m api.services.campaign.campaign_orchestrator"
-)
+# ari_manager (telephony ARI bridge) and campaign_orchestrator (outbound
+# campaign loop) are optional. Each is gated behind an env flag that defaults to
+# "true" so existing installs are unchanged; set the flag to "false" in api/.env
+# to run this node as an API/worker tier only (e.g. a scale-out replica that must
+# not also run these singleton services).
+ENABLE_ARI_MANAGER=${ENABLE_ARI_MANAGER:-true}
+ENABLE_CAMPAIGN_ORCHESTRATOR=${ENABLE_CAMPAIGN_ORCHESTRATOR:-true}
+
+if [[ "$ENABLE_ARI_MANAGER" == "true" ]]; then
+  SERVICE_NAMES+=("ari_manager")
+  SERVICE_COMMANDS+=("python -m api.services.telephony.ari_manager")
+else
+  echo "ari_manager disabled (ENABLE_ARI_MANAGER=$ENABLE_ARI_MANAGER)"
+fi
+
+if [[ "$ENABLE_CAMPAIGN_ORCHESTRATOR" == "true" ]]; then
+  SERVICE_NAMES+=("campaign_orchestrator")
+  SERVICE_COMMANDS+=("python -m api.services.campaign.campaign_orchestrator")
+else
+  echo "campaign_orchestrator disabled (ENABLE_CAMPAIGN_ORCHESTRATOR=$ENABLE_CAMPAIGN_ORCHESTRATOR)"
+fi
 
 # Add uvicorn workers on separate ports (behind nginx least_conn)
 for ((w=0; w<FASTAPI_WORKERS; w++)); do
   port=$((UVICORN_BASE_PORT + w))
   SERVICE_NAMES+=("uvicorn_$port")
-  SERVICE_COMMANDS+=("uvicorn api.app:app --host 127.0.0.1 --port $port")
+  SERVICE_COMMANDS+=("uvicorn api.app:app --host $UVICORN_HOST --port $port")
 done
 
 # Add ARQ workers dynamically
@@ -189,7 +225,9 @@ echo "A" > "$RUN_DIR/active_band"
 ### 8) Generate nginx upstream config & reload
 ###############################################################################
 
-if [[ -f "$NGINX_UPSTREAM_TEMPLATE" ]]; then
+if [[ "$MANAGE_NGINX" != "true" ]]; then
+  echo "Skipping nginx config (MANAGE_NGINX=$MANAGE_NGINX) — nginx managed off-node."
+elif [[ -f "$NGINX_UPSTREAM_TEMPLATE" ]]; then
   # Build upstream server list from worker ports
   UPSTREAM_SERVERS=""
   for ((w=0; w<FASTAPI_WORKERS; w++)); do

@@ -82,11 +82,23 @@ class UserModel(Base):
 
 
 class UserConfigurationModel(Base):
+    """Per-user keyed JSON store, mirroring organization_configurations.
+
+    Keys are defined in UserConfigurationKey. The legacy v1 AI model
+    configuration lives under MODEL_CONFIGURATION; last_validated_at is only
+    meaningful for that key.
+    """
+
     __tablename__ = "user_configurations"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    key = Column(String, nullable=False)
     configuration = Column(JSON, nullable=False, default=dict)
     last_validated_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "key", name="_user_configuration_key_uc"),
+    )
 
 
 # New Organization model
@@ -193,11 +205,8 @@ class OrganizationConfigurationModel(Base):
     key = Column(String, nullable=False)
     value = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
-    updated_at = Column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-    )
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    last_validated_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     organization = relationship("OrganizationModel", back_populates="configurations")
@@ -222,6 +231,15 @@ class TelephonyConfigurationModel(Base):
     is_default_outbound = Column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    # Set by a connection worker when a config keeps failing (today only the ARI
+    # manager does this). Deactivation is one-way: the worker never re-enables a
+    # row, so recovery is always an explicit user action. ``inactive_since`` and
+    # ``inactive_reason`` record what happened, for display on the config screen.
+    inactive = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    inactive_since = Column(DateTime(timezone=True), nullable=True)
+    inactive_reason = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at = Column(
         DateTime(timezone=True),
@@ -232,6 +250,11 @@ class TelephonyConfigurationModel(Base):
     organization = relationship("OrganizationModel")
     phone_numbers = relationship(
         "TelephonyPhoneNumberModel",
+        back_populates="configuration",
+        cascade="all, delete-orphan",
+    )
+    trunks = relationship(
+        "TelephonyTrunkModel",
         back_populates="configuration",
         cascade="all, delete-orphan",
     )
@@ -250,6 +273,66 @@ class TelephonyConfigurationModel(Base):
     )
 
 
+class TelephonyTrunkModel(Base):
+    """One carrier path on a telephony configuration.
+
+    A configuration holds the credentials for a provider account; a trunk is a
+    single route through that account — a primary carrier, a failover, a second
+    region.
+
+    Only providers whose Dograh integration declares ``trunk_settings_cls`` get
+    rows here. That is a statement about our integration, not about the vendor:
+    Twilio, Plivo and Telnyx all sell SIP trunking and let you assign numbers to
+    a trunk in their own consoles, but Dograh drives them through their
+    call-control APIs, where the account itself is the only route. Their numbers
+    carry a null trunk.
+
+    Phone numbers point at the trunk they are authorised on because a carrier
+    rejects, or declines to attest, a caller ID it does not own. Picking the
+    caller ID and the trunk from separate pools is the failure this table
+    exists to prevent.
+
+    Trunks are reached through their configuration, so there is no
+    ``organization_id`` here to drift out of sync with the parent row.
+    """
+
+    __tablename__ = "telephony_trunks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    telephony_configuration_id = Column(
+        Integer,
+        ForeignKey("telephony_configurations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name = Column(String(64), nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    # Provider-specific payload, validated by the provider's trunk settings
+    # schema: region and sip_domain for Cloudonix, endpoint details for ARI.
+    settings = Column(JSON, nullable=False, default=dict)
+    # The provider's own identifier for this trunk, recorded when Dograh
+    # provisions it remotely. Kept out of ``settings`` because it is Dograh's
+    # bookkeeping rather than operator input, and is stripped from responses.
+    external_id = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    configuration = relationship("TelephonyConfigurationModel", back_populates="trunks")
+    phone_numbers = relationship("TelephonyPhoneNumberModel", back_populates="trunk")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "telephony_configuration_id",
+            "name",
+            name="uq_telephony_trunks_config_name",
+        ),
+        Index("ix_telephony_trunks_config", "telephony_configuration_id"),
+    )
+
+
 class TelephonyPhoneNumberModel(Base):
     __tablename__ = "telephony_phone_numbers"
 
@@ -261,6 +344,19 @@ class TelephonyPhoneNumberModel(Base):
         Integer,
         ForeignKey("telephony_configurations.id", ondelete="CASCADE"),
         nullable=False,
+    )
+    # The carrier path this number dials out over. Null on providers with no
+    # trunk concept, and on SIP numbers whose trunk has not been chosen yet.
+    #
+    # SET NULL rather than RESTRICT: deleting a configuration cascades to both
+    # its trunks and its numbers, and a RESTRICT here could fire against rows
+    # that same cascade is about to remove. Deleting a trunk that numbers still
+    # use is refused in the route layer instead, where the message can name
+    # them.
+    telephony_trunk_id = Column(
+        Integer,
+        ForeignKey("telephony_trunks.id", ondelete="SET NULL"),
+        nullable=True,
     )
     address = Column(String(255), nullable=False)
     address_normalized = Column(String(255), nullable=False)
@@ -291,6 +387,7 @@ class TelephonyPhoneNumberModel(Base):
     configuration = relationship(
         "TelephonyConfigurationModel", back_populates="phone_numbers"
     )
+    trunk = relationship("TelephonyTrunkModel", back_populates="phone_numbers")
     inbound_workflow = relationship("WorkflowModel")
 
     __table_args__ = (
@@ -532,6 +629,9 @@ class WorkflowRunModel(Base):
     is_completed = Column(Boolean, default=False)
     recording_url = Column(String, nullable=True)
     transcript_url = Column(String, nullable=True)
+    extra = Column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'::json")
+    )
     # Store storage backend as string enum (s3, minio)
     storage_backend = Column(
         Enum("s3", "minio", name="storage_backend"),
@@ -1004,6 +1104,103 @@ class ExternalCredentialModel(Base):
         Index("ix_webhook_credentials_organization_id", "organization_id"),
         Index("ix_webhook_credentials_uuid", "credential_uuid"),
         UniqueConstraint("organization_id", "name", name="unique_org_credential_name"),
+    )
+
+
+class WebhookDeliveryModel(Base):
+    """Durable record of an outbound webhook delivery attempt.
+
+    Final webhooks (e.g. a workflow's "Final Webhook" node) must not be lost to a
+    single transient network error. Instead of firing the HTTP request inline and
+    forgetting it, we persist one row per webhook node per workflow run and let an
+    ARQ task drive delivery with bounded, backed-off retries. The row is the source
+    of truth: it survives worker restarts and a periodic sweeper re-enqueues any
+    ``pending`` delivery whose ``scheduled_for`` is overdue. After ``max_attempts``
+    transient failures (or on a permanent 4xx) the row is parked as ``dead_letter``
+    for inspection rather than retried forever.
+
+    Mirrors the campaign retry pattern (``QueuedRunModel``): persisted state,
+    ``scheduled_for`` gating, a hard attempt ceiling, and a terminal failure state.
+    """
+
+    __tablename__ = "webhook_deliveries"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Stable idempotency key sent to the receiver so it can dedupe retries.
+    delivery_uuid = Column(
+        String(36),
+        unique=True,
+        nullable=False,
+        index=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+
+    workflow_run_id = Column(
+        Integer,
+        ForeignKey("workflow_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    organization_id = Column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # Frozen request definition. The payload is rendered once at enqueue time so
+    # retries are deterministic. Secrets are NOT stored here: the auth header is
+    # re-resolved from ``credential_uuid`` at send time (honours rotation/revocation).
+    webhook_name = Column(String, nullable=True)
+    endpoint_url = Column(String, nullable=False)
+    http_method = Column(String, nullable=False, default="POST")
+    payload = Column(JSON, nullable=False, default=dict)
+    custom_headers = Column(JSON, nullable=True)
+    credential_uuid = Column(String(36), nullable=True)
+
+    # Workflow node that produced this delivery. Combined with workflow_run_id it
+    # is the per-run/per-node idempotency key, so a retried run_integrations does
+    # not create (and send) a duplicate delivery for the same node. Non-nullable:
+    # a NULL would be distinct under the unique constraint and defeat the dedupe.
+    webhook_node_id = Column(String, nullable=False)
+
+    status = Column(
+        Enum(
+            "pending",
+            "succeeded",
+            "dead_letter",
+            name="webhook_delivery_status",
+        ),
+        nullable=False,
+        default="pending",
+        server_default="pending",
+    )
+    attempt_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    max_attempts = Column(Integer, nullable=False, default=5, server_default=text("5"))
+    # When the next attempt becomes due. NULL once terminal (succeeded/dead_letter).
+    scheduled_for = Column(DateTime(timezone=True), nullable=True)
+
+    last_status_code = Column(Integer, nullable=True)
+    last_error = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    __table_args__ = (
+        # Sweeper lookup: due pending deliveries.
+        Index(
+            "idx_webhook_deliveries_pending_scheduled",
+            "scheduled_for",
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index("idx_webhook_deliveries_run", "workflow_run_id"),
+        # Per-run/per-node idempotency: one delivery per webhook node per run.
+        UniqueConstraint(
+            "workflow_run_id",
+            "webhook_node_id",
+            name="uq_webhook_deliveries_run_node",
+        ),
     )
 
 

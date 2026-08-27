@@ -10,9 +10,10 @@ import type { WorkflowResponse } from '@/client/types.gen';
 import { FlowEdge, FlowNode } from '@/components/flow/types';
 import SpinLoader from '@/components/SpinLoader';
 import { PostHogEvent } from '@/constants/posthog-events';
+import { detailFromError } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
 import logger from '@/lib/logger';
-import { DEFAULT_WORKFLOW_CONFIGURATIONS, WorkflowConfigurations } from '@/types/workflow-configurations';
+import { WorkflowConfigurations } from '@/types/workflow-configurations';
 
 import WorkflowLayout from '../WorkflowLayout';
 
@@ -40,11 +41,24 @@ export default function WorkflowDetailPage() {
                         workflow_id: Number(params.workflowId)
                     },
                 });
+
+                if (response.error) {
+                    const fallback = response.response?.status === 503
+                        ? 'Dograh is temporarily unavailable. Please try again later.'
+                        : 'Failed to fetch workflow';
+                    setError(detailFromError(response.error, fallback));
+                    return;
+                }
+
                 const workflow = response.data;
+                if (!workflow) {
+                    setError('Workflow not found');
+                    return;
+                }
                 setWorkflow(workflow);
                 posthog.capture(PostHogEvent.WORKFLOW_EDITOR_OPENED, {
-                    workflow_id: workflow?.id,
-                    workflow_name: workflow?.name,
+                    workflow_id: workflow.id,
+                    workflow_name: workflow.name,
                 });
             } catch (err) {
                 setError('Failed to fetch workflow');
@@ -92,7 +106,11 @@ export default function WorkflowDetailPage() {
                     viewport: { x: 0, y: 0, zoom: 0 }
                 }}
                 initialTemplateContextVariables={workflow.template_context_variables as Record<string, string> || {}}
-                initialWorkflowConfigurations={(workflow.workflow_configurations as WorkflowConfigurations) || DEFAULT_WORKFLOW_CONFIGURATIONS}
+                initialWorkflowConfigurations={
+                    workflow.workflow_configurations
+                        ? (workflow.workflow_configurations as WorkflowConfigurations)
+                        : undefined
+                }
                 initialVersionNumber={workflow.version_number ?? null}
                 initialVersionStatus={workflow.version_status ?? null}
                 user={stableUser}

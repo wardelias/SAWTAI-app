@@ -11,10 +11,10 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 from opentelemetry import trace
+from pipecat.utils.tracing.langfuse_helpers import mark_trace_public
 
 from api.db import db_client
-from api.services.configuration.registry import ServiceProviders
-from api.services.gen_ai import AzureOpenAIEmbeddingService, OpenAIEmbeddingService
+from api.services.gen_ai import build_embedding_service
 from api.services.pipecat.tracing_config import ensure_tracing
 
 
@@ -85,8 +85,7 @@ async def retrieve_from_knowledge_base(
                 "knowledge_base_retrieval", context=parent_context
             ) as span:
                 try:
-                    # Mark trace as public for Langfuse
-                    span.set_attribute("langfuse.trace.public", True)
+                    mark_trace_public(span)
 
                     # Add operation metadata
                     span.set_attribute(
@@ -266,33 +265,18 @@ async def _perform_retrieval(
                     "Model Configurations > Embedding."
                 )
 
-            if (
-                embeddings_provider == ServiceProviders.AZURE.value
-                and embeddings_endpoint
-            ):
-                embedding_service = AzureOpenAIEmbeddingService(
-                    db_client=db_client,
-                    api_key=embeddings_api_key,
-                    endpoint=embeddings_endpoint,
-                    model_id=embeddings_model or "text-embedding-3-small",
-                    api_version=embeddings_api_version or "2024-02-15-preview",
-                )
-            else:
-                default_headers = None
-                if (
-                    embeddings_provider == ServiceProviders.DOGRAH.value
-                    and correlation_id
-                ):
-                    default_headers = {
-                        "X-Dograh-Correlation-Id": correlation_id,
-                    }
-                embedding_service = OpenAIEmbeddingService(
-                    db_client=db_client,
-                    api_key=embeddings_api_key,
-                    model_id=embeddings_model or "text-embedding-3-small",
-                    base_url=embeddings_base_url,
-                    default_headers=default_headers,
-                )
+            # Search runs inside a workflow run: reuse the run's MPS correlation
+            # id. The Dograh-managed path forwards it via request metadata.
+            embedding_service = await build_embedding_service(
+                db_client=db_client,
+                provider=embeddings_provider,
+                api_key=embeddings_api_key,
+                model=embeddings_model,
+                base_url=embeddings_base_url,
+                endpoint=embeddings_endpoint,
+                api_version=embeddings_api_version,
+                correlation_id=correlation_id,
+            )
 
             results = await embedding_service.search_similar_chunks(
                 query=query,

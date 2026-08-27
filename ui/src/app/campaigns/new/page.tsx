@@ -254,7 +254,7 @@ export default function NewCampaignPage() {
             }
             if (maxConcurrencyValue > effectiveLimit) {
                 if (availableFromNumbersCount > 0 && availableFromNumbersCount < orgConcurrentLimit) {
-                    toast.error(`Max concurrent calls cannot exceed ${effectiveLimit}. The selected configuration has ${availableFromNumbersCount} phone number(s) — add more CLIs to increase concurrency.`);
+                    toast.error(`Max concurrent calls cannot exceed ${effectiveLimit}. The selected configuration has ${availableFromNumbersCount} phone number(s) - add more CLIs to increase concurrency.`);
                 } else {
                     toast.error(`Max concurrent calls cannot exceed organization limit (${effectiveLimit})`);
                 }
@@ -457,7 +457,7 @@ export default function NewCampaignPage() {
                                                         value={config.id.toString()}
                                                     >
                                                         {config.name} ({config.provider})
-                                                        {config.is_default_outbound ? ' — default' : ''}
+                                                        {config.is_default_outbound ? ' - default' : ''}
                                                     </SelectItem>
                                                 ))
                                             )}

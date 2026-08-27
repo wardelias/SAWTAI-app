@@ -38,7 +38,7 @@ export interface StartCall {
      */
     greeting_type?: "text" | "audio";
     /**
-     * Text spoken via TTS at the start of the call. Supports {{template_variables}}. Leave empty to skip the greeting. Not supported with realtime (speech-to-speech) models.
+     * Text spoken via TTS at the start of the call. Supports {{template_variables}}. Leave empty to skip the greeting.
      */
     greeting?: string;
     /**
@@ -92,9 +92,9 @@ export interface StartCall {
      */
     document_uuids?: string[];
     /**
-     * When true, makes a POST request to an external API before the call starts and merges the JSON response into the call context as template variables.
+     * Controls when a POST request is made to enrich the call context before the Start node opens.
      */
-    pre_call_fetch_enabled?: boolean;
+    pre_call_fetch_mode?: "disabled" | "always" | "inbound" | "outbound";
     /**
      * URL the pre-call POST request is sent to. The request body includes caller and called numbers.
      */

@@ -19,6 +19,9 @@ export interface AttributeConfig {
 
   // For number (single value)
   placeholder?: string;
+  numberSelectLabel?: string;
+  numberSelectOptions?: NumberFilterOption[];
+  numberSelectOptionsLoading?: boolean;
 
   // For radio
   radioOptions?: { label: string; value: string }[];
@@ -30,10 +33,15 @@ export interface AttributeConfig {
 
 export interface FilterAttribute {
   id: string;
-  type: "dateRange" | "multiSelect" | "numberRange" | "number" | "radio" | "tags" | "text";
+  type: "dateRange" | "multiSelect" | "numberRange" | "number" | "numberSelect" | "radio" | "tags" | "text";
   label: string;
   field?: string; // Database field to filter on (optional, backend will resolve)
   config: AttributeConfig;
+}
+
+export interface NumberFilterOption {
+  label: string;
+  value: number;
 }
 
 // Type-safe value types for each filter attribute
@@ -117,7 +125,7 @@ export const filterTemplates: FilterTemplate[] = [
       {
         attributeId: "dispositionCode",
         value: {
-          codes: ["Failed", "No Answer", "Busy"],
+          codes: ["failed", "no-answer", "busy"],
         } as MultiSelectValue,
       },
     ],

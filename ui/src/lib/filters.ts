@@ -1,3 +1,4 @@
+import { formatLocalDateTime } from "@/lib/dateTime";
 import { ActiveFilter, DateRangeValue, FilterAttribute, FilterValue, MultiSelectValue, NumberRangeValue, NumberValue, RadioValue, TextValue } from "@/types/filters";
 
 // Get default value based on attribute type
@@ -8,6 +9,7 @@ export const getDefaultValue = (type: FilterAttribute["type"]): FilterValue => {
     case "multiSelect":
       return { codes: [] };
     case "number":
+    case "numberSelect":
       return { value: null };
     case "numberRange":
       return { min: null, max: null };
@@ -21,6 +23,20 @@ export const getDefaultValue = (type: FilterAttribute["type"]): FilterValue => {
       throw new Error(`Unknown filter type: ${type}`);
   }
 };
+
+// URL-decoded filters retain the attribute object used during initialization.
+// Resolve it again so asynchronously loaded options are immediately visible.
+export const resolveFilterAttributes = (
+  filters: ActiveFilter[],
+  availableAttributes: FilterAttribute[]
+): ActiveFilter[] => filters.map(filter => {
+  const currentAttribute = availableAttributes.find(
+    attribute => attribute.id === filter.attribute.id
+  );
+  return currentAttribute && currentAttribute !== filter.attribute
+    ? { ...filter, attribute: currentAttribute }
+    : filter;
+});
 
 // Validate filter based on attribute type
 export const validateFilter = (filter: ActiveFilter): string | null => {
@@ -85,6 +101,13 @@ export const validateFilter = (filter: ActiveFilter): string | null => {
       }
       if (config.max !== undefined && value.value > config.max) {
         return `Value cannot be greater than ${config.max}`;
+      }
+      break;
+    }
+    case "numberSelect": {
+      const value = filter.value as NumberValue;
+      if (value.value === null) {
+        return "A value is required";
       }
       break;
     }
@@ -179,11 +202,7 @@ export const decodeFiltersFromURL = (
 export const formatDateRange = (value: DateRangeValue): string => {
   if (!value.from || !value.to) return "No date range selected";
 
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString() + " " + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
-  return `${formatDate(value.from)} to ${formatDate(value.to)}`;
+  return `${formatLocalDateTime(value.from)} to ${formatLocalDateTime(value.to)}`;
 };
 
 // Format number range for display

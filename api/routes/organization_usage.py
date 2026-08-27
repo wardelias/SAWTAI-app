@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -14,6 +14,7 @@ from api.services.auth.depends import get_user, get_user_with_selected_organizat
 from api.services.mps_service_key_client import mps_service_key_client
 from api.services.reports import generate_usage_runs_report_csv
 from api.utils.artifacts import artifact_url
+from api.utils.recording_artifacts import has_recording_track
 
 router = APIRouter(prefix="/organizations")
 
@@ -26,12 +27,6 @@ class CurrentUsageResponse(BaseModel):
     used_amount_usd: Optional[float] = None
     currency: Optional[str] = None
     price_per_second_usd: Optional[float] = None
-
-
-class MPSCreditsResponse(BaseModel):
-    total_credits_used: float
-    remaining_credits: float
-    total_quota: float
 
 
 class MPSCreditPurchaseUrlResponse(BaseModel):
@@ -68,7 +63,6 @@ class MPSCreditLedgerEntryResponse(BaseModel):
 
 
 class MPSBillingCreditsResponse(BaseModel):
-    billing_version: Literal["legacy", "v2"]
     total_credits_used: float = 0.0
     remaining_credits: float = 0.0
     total_quota: float = 0.0
@@ -99,8 +93,12 @@ class WorkflowRunUsageResponse(BaseModel):
     call_duration_seconds: int
     recording_url: Optional[str] = None
     transcript_url: Optional[str] = None
+    user_recording_url: Optional[str] = None
+    bot_recording_url: Optional[str] = None
     recording_public_url: Optional[str] = None
     transcript_public_url: Optional[str] = None
+    user_recording_public_url: Optional[str] = None
+    bot_recording_public_url: Optional[str] = None
     public_access_token: Optional[str] = None
     phone_number: Optional[str] = Field(
         default=None,
@@ -157,69 +155,13 @@ async def get_current_period_usage(user: UserModel = Depends(get_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/usage/mps-credits", response_model=MPSCreditsResponse)
-async def get_mps_credits(user: UserModel = Depends(get_user)):
-    """Get aggregated usage and quota from MPS.
-
-    OSS users: queries by provider_id (created_by).
-    Hosted users: queries by organization_id.
-    """
-    try:
-        if DEPLOYMENT_MODE == "oss":
-            usage = await mps_service_key_client.get_usage_by_created_by(
-                str(user.provider_id)
-            )
-        else:
-            if not user.selected_organization_id:
-                raise HTTPException(status_code=400, detail="No organization selected")
-            usage = await mps_service_key_client.get_usage_by_organization(
-                user.selected_organization_id
-            )
-
-        total_used = usage.get("total_credits_used", 0.0)
-        total_remaining = usage.get("remaining_credits", 0.0)
-
-        return MPSCreditsResponse(
-            total_credits_used=total_used,
-            remaining_credits=total_remaining,
-            total_quota=total_used + total_remaining,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to fetch MPS credits: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-async def _get_mps_billing_account_status(
-    user: UserModel, organization_id: int
-) -> Optional[dict]:
-    return await mps_service_key_client.get_billing_account_status(
-        organization_id=organization_id,
-        created_by=str(user.provider_id),
-    )
-
-
-def _is_mps_billing_v2(account: Optional[dict]) -> bool:
-    return bool(account and account.get("billing_mode") == "v2")
-
-
-async def _legacy_mps_credits_response(user: UserModel) -> MPSBillingCreditsResponse:
-    if DEPLOYMENT_MODE == "oss":
-        usage = await mps_service_key_client.get_usage_by_created_by(
-            str(user.provider_id)
-        )
-    else:
-        if not user.selected_organization_id:
-            raise HTTPException(status_code=400, detail="No organization selected")
-        usage = await mps_service_key_client.get_usage_by_organization(
-            user.selected_organization_id
-        )
+async def _oss_mps_credits_response(user: UserModel) -> MPSBillingCreditsResponse:
+    """Aggregate per-key MPS credits for OSS deployments (no billing account)."""
+    usage = await mps_service_key_client.get_usage_by_created_by(str(user.provider_id))
 
     total_used = float(usage.get("total_credits_used", 0.0))
     total_remaining = float(usage.get("remaining_credits", 0.0))
     return MPSBillingCreditsResponse(
-        billing_version="legacy",
         total_credits_used=total_used,
         remaining_credits=total_remaining,
         total_quota=total_used + total_remaining,
@@ -232,16 +174,15 @@ async def get_billing_credits(
     limit: int = Query(50, ge=1, le=100),
     user: UserModel = Depends(get_user),
 ):
-    """Return legacy MPS credits or paginated v2 billing ledger details for the org."""
+    """Return per-key MPS credits (OSS) or the org's paginated billing ledger."""
     try:
-        if DEPLOYMENT_MODE == "oss" or not user.selected_organization_id:
-            return await _legacy_mps_credits_response(user)
+        if DEPLOYMENT_MODE == "oss":
+            return await _oss_mps_credits_response(user)
+
+        if not user.selected_organization_id:
+            raise HTTPException(status_code=400, detail="No organization selected")
 
         organization_id = user.selected_organization_id
-        account_status = await _get_mps_billing_account_status(user, organization_id)
-        if not _is_mps_billing_v2(account_status):
-            return await _legacy_mps_credits_response(user)
-
         ledger = await mps_service_key_client.get_credit_ledger(
             organization_id=organization_id,
             page=page,
@@ -282,7 +223,6 @@ async def get_billing_credits(
             total_debits = float(ledger["total_debits_credits"])
 
         return MPSBillingCreditsResponse(
-            billing_version="v2",
             total_credits_used=total_debits,
             remaining_credits=balance,
             total_quota=balance + total_debits,
@@ -308,14 +248,18 @@ async def get_billing_credits(
                     aggregation_key=entry.get("aggregation_key"),
                     usage_event_id=_optional_int(entry.get("usage_event_id")),
                     workflow_run_id=_optional_int(entry.get("workflow_run_id")),
-                    workflow_id=workflow_ids_by_run_id.get(
-                        _optional_int(entry.get("workflow_run_id"))
-                    )
-                    if entry.get("workflow_run_id") is not None
-                    else None,
-                    billable_quantity=float(entry["billable_quantity"])
-                    if entry.get("billable_quantity") is not None
-                    else None,
+                    workflow_id=(
+                        workflow_ids_by_run_id.get(
+                            _optional_int(entry.get("workflow_run_id"))
+                        )
+                        if entry.get("workflow_run_id") is not None
+                        else None
+                    ),
+                    billable_quantity=(
+                        float(entry["billable_quantity"])
+                        if entry.get("billable_quantity") is not None
+                        else None
+                    ),
                     quantity_unit=entry.get("quantity_unit"),
                     metadata=entry.get("metadata") or {},
                     created_at=str(entry["created_at"]),
@@ -341,7 +285,7 @@ async def get_billing_credits(
 async def create_mps_credit_purchase_url(
     user: UserModel = Depends(get_user_with_selected_organization),
 ):
-    """Create a checkout URL for organizations using Dograh-managed MPS v2."""
+    """Create a checkout URL for purchasing organization credits."""
     if DEPLOYMENT_MODE == "oss":
         raise HTTPException(
             status_code=404,
@@ -350,14 +294,6 @@ async def create_mps_credit_purchase_url(
 
     organization_id = user.selected_organization_id
     assert organization_id is not None
-    account_status = await _get_mps_billing_account_status(user, organization_id)
-    if not _is_mps_billing_v2(account_status):
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "Credit purchases are available only for organizations using billing v2"
-            ),
-        )
 
     try:
         session = await mps_service_key_client.create_credit_purchase_url(
@@ -405,6 +341,8 @@ Supported `attribute` / `type` / `value` combinations:
 | `calledNumber`  | `text`        | `{ "value": "9911848" }`                     | substring match on `initial_context.called_number`   |
 | `dispositionCode` | `multiSelect` | `{ "codes": ["XFER", "DNC"] }`             | any of the codes in `gathered_context.mapped_call_disposition` |
 | `duration`      | `numberRange` | `{ "min": 60, "max": 300 }`                  | call duration (seconds), inclusive bounds            |
+| `callDirection` | `radio`       | `{ "status": "inbound" }`                    | `inbound` or `outbound`; any other value matches all |
+| `callChannel`   | `radio`       | `{ "status": "telephony" }`                  | `telephony`, `web`, or `chat` — the group of run modes for that channel |
 
 Unknown attributes and unsupported `type` values are silently ignored.
 
@@ -435,6 +373,16 @@ async def get_usage_history(
             '{"attribute":"duration","type":"numberRange","value":{"min":60,"max":300}}]',
             '[{"attribute":"dispositionCode","type":"multiSelect","value":{"codes":["XFER","DNC"]}}]',
         ],
+    ),
+    sort_by: Optional[str] = Query(
+        None,
+        description="Field to sort by ('duration'). Defaults to `created_at`.",
+        examples=["duration"],
+    ),
+    sort_order: str = Query(
+        "desc",
+        description="Sort order ('asc' or 'desc').",
+        pattern="^(asc|desc)$",
     ),
     user: UserModel = Depends(get_user),
 ):
@@ -468,6 +416,8 @@ async def get_usage_history(
             limit=limit,
             offset=offset,
             filters=parsed_filters,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
 
         total_pages = (total_count + limit - 1) // limit
@@ -478,6 +428,17 @@ async def get_usage_history(
                 public_access_token, "transcript"
             )
             run["recording_public_url"] = artifact_url(public_access_token, "recording")
+            run["user_recording_public_url"] = (
+                artifact_url(public_access_token, "user_recording")
+                if has_recording_track(run.get("extra"), "user")
+                else None
+            )
+            run["bot_recording_public_url"] = (
+                artifact_url(public_access_token, "bot_recording")
+                if has_recording_track(run.get("extra"), "bot")
+                else None
+            )
+            run.pop("extra", None)
 
         return {
             "runs": runs,
@@ -565,7 +526,6 @@ async def get_daily_usage_breakdown(
             start_date,
             end_date,
             org.price_per_second_usd,
-            user_id=user.id,
         )
 
         return breakdown

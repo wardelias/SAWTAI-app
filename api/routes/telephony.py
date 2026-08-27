@@ -21,22 +21,35 @@ from starlette.websockets import WebSocketDisconnect
 
 from api.db import db_client
 from api.db.models import UserModel
-from api.enums import CallType, WorkflowRunState
+from api.enums import CallType, WorkflowRunMode, WorkflowRunState
+from api.errors.failure import failure_already_reported
 from api.errors.telephony_errors import TelephonyError
 from api.sdk_expose import sdk_expose
 from api.services.auth.depends import get_user
+from api.services.call_concurrency import (
+    CallConcurrencyLimitError,
+    WorkflowRunSlotAlreadyBoundError,
+    call_concurrency,
+)
 from api.services.quota_service import authorize_workflow_run_start
+from api.services.telephony import ws_auth
 from api.services.telephony.call_transfer_manager import get_call_transfer_manager
 from api.services.telephony.factory import (
     get_all_telephony_providers,
-    get_default_telephony_provider,
     get_telephony_provider_by_id,
     get_telephony_provider_for_run,
+)
+from api.services.telephony.outbound_readiness import (
+    OutboundConfigurationNotFoundError,
+    OutboundSetupIncompleteError,
+    resolve_outbound_configuration_id,
 )
 from api.services.telephony.transfer_event_protocol import (
     TransferEvent,
     TransferEventType,
 )
+from api.services.workflow.run_creation import prepare_workflow_run_inputs
+from api.services.workflow_run_failure import mark_workflow_run_failed
 from api.utils.common import get_backend_endpoints
 from api.utils.telephony_helper import (
     generic_hangup_response,
@@ -53,7 +66,7 @@ class InitiateCallRequest(BaseModel):
     workflow_run_id: int | None = None
     phone_number: str | None = None
     # Optional explicit telephony config to use for the test call. If omitted,
-    # falls back to the org default.
+    # the resolver prefers the org default and then another ready active config.
     telephony_configuration_id: int | None = None
     # Optional caller-ID phone number to dial out from. Must belong to the
     # resolved telephony configuration; otherwise the provider picks one.
@@ -89,30 +102,37 @@ async def initiate_call(
         db=db_client,
     )
 
-    # Resolve which telephony config to use: explicit request value, otherwise
-    # the org's default outbound config.
-    telephony_configuration_id = request.telephony_configuration_id
-
-    if telephony_configuration_id:
-        try:
-            provider = await get_telephony_provider_by_id(
-                telephony_configuration_id, user.selected_organization_id
-            )
-        except ValueError:
-            raise HTTPException(
-                status_code=400, detail="telephony_configuration_not_found"
-            )
-    else:
-        try:
-            provider = await get_default_telephony_provider(
-                user.selected_organization_id
-            )
-        except ValueError:
-            raise HTTPException(status_code=400, detail="telephony_not_configured")
-        default_cfg = await db_client.get_default_telephony_configuration(
-            user.selected_organization_id
+    # Resolve and pre-flight the explicit config, or select the first active
+    # config that is ready for outbound. This happens before run creation so a
+    # setup problem does not land in run history as a failed call.
+    try:
+        telephony_configuration_id = await resolve_outbound_configuration_id(
+            request.telephony_configuration_id,
+            user.selected_organization_id,
+            db=db_client,
         )
-        telephony_configuration_id = default_cfg.id if default_cfg else None
+        provider = await get_telephony_provider_by_id(
+            telephony_configuration_id, user.selected_organization_id
+        )
+    except OutboundSetupIncompleteError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except OutboundConfigurationNotFoundError as e:
+        detail = (
+            "telephony_configuration_not_found"
+            if request.telephony_configuration_id is not None
+            else "telephony_not_configured"
+        )
+        raise HTTPException(status_code=400, detail=detail) from e
+    except ValueError as e:
+        detail = (
+            "telephony_configuration_not_found"
+            if request.telephony_configuration_id is not None
+            else "telephony_not_configured"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=detail,
+        ) from e
 
     # Validate provider is configured
     if not provider.validate_config():
@@ -139,70 +159,6 @@ async def initiate_call(
     # Determine the workflow run mode based on provider type
     workflow_run_mode = provider.PROVIDER_NAME
 
-    workflow_run_id = request.workflow_run_id
-
-    if not workflow_run_id:
-        # Merge template context variables (e.g. caller_number, called_number
-        # set in workflow settings for testing pre-call data fetch).
-        template_vars = workflow.template_context_variables or {}
-
-        numeric_suffix = int(str(uuid.uuid4()).replace("-", "")[:8], 16) % 100000000
-        workflow_run_name = f"WR-TEL-OUT-{numeric_suffix:08d}"
-        workflow_run = await db_client.create_workflow_run(
-            workflow_run_name,
-            workflow.id,
-            workflow_run_mode,
-            user_id=execution_user_id,
-            call_type=CallType.OUTBOUND,
-            initial_context={
-                **template_vars,
-                "phone_number": phone_number,
-                "called_number": phone_number,
-                "provider": provider.PROVIDER_NAME,
-                "telephony_configuration_id": telephony_configuration_id,
-            },
-            use_draft=True,
-            organization_id=user.selected_organization_id,
-        )
-        workflow_run_id = workflow_run.id
-    else:
-        workflow_run = await db_client.get_workflow_run(
-            workflow_run_id, organization_id=user.selected_organization_id
-        )
-        if not workflow_run:
-            raise HTTPException(status_code=400, detail="Workflow run not found")
-        if workflow_run.workflow_id != workflow.id:
-            raise HTTPException(
-                status_code=400,
-                detail="workflow_run_workflow_mismatch",
-            )
-        workflow_run_name = workflow_run.name
-
-    # Check Dograh quota after the run exists so hosted v2 can mint and store
-    # the MPS correlation id before initiating the call.
-    quota_result = await authorize_workflow_run_start(
-        workflow_id=workflow.id,
-        workflow_run_id=workflow_run_id,
-        actor_user=user,
-    )
-    if not quota_result.has_quota:
-        raise HTTPException(status_code=402, detail=quota_result.error_message)
-
-    # Construct webhook URL based on provider type
-    backend_endpoint, _ = await get_backend_endpoints()
-
-    webhook_endpoint = provider.WEBHOOK_ENDPOINT
-
-    webhook_url = (
-        f"{backend_endpoint}/api/v1/telephony/{webhook_endpoint}"
-        f"?workflow_id={workflow.id}"
-        f"&user_id={execution_user_id}"
-        f"&workflow_run_id={workflow_run_id}"
-        f"&organization_id={user.selected_organization_id}"
-    )
-
-    keywords = {"workflow_id": workflow.id, "user_id": execution_user_id}
-
     # Resolve optional caller-ID. The config has already been validated against
     # the user's organization, so filtering by config_id is sufficient for
     # tenant isolation.
@@ -220,14 +176,112 @@ async def initiate_call(
             raise HTTPException(status_code=400, detail="from_phone_number_not_found")
         from_number = phone_row.address_normalized
 
-    # Initiate call via provider
-    result = await provider.initiate_call(
-        to_number=phone_number,
-        webhook_url=webhook_url,
+    workflow_run_id = request.workflow_run_id
+    try:
+        concurrency_slot = await call_concurrency.acquire_org_slot(
+            user.selected_organization_id,
+            source="telephony_outbound",
+            timeout=0,
+        )
+    except CallConcurrencyLimitError:
+        raise HTTPException(status_code=429, detail="Concurrent call limit reached")
+
+    try:
+        if not workflow_run_id:
+            numeric_suffix = int(str(uuid.uuid4()).replace("-", "")[:8], 16) % 100000000
+            workflow_run_name = f"WR-TEL-OUT-{numeric_suffix:08d}"
+            run_inputs = await prepare_workflow_run_inputs(
+                db_client,
+                workflow,
+                initial_context={
+                    "phone_number": phone_number,
+                    "called_number": phone_number,
+                    "direction": "outbound",
+                    "provider": provider.PROVIDER_NAME,
+                    "telephony_configuration_id": telephony_configuration_id,
+                },
+                use_draft=True,
+                include_template_context=True,
+            )
+            workflow_run = await db_client.create_workflow_run(
+                workflow_run_name,
+                workflow.id,
+                workflow_run_mode,
+                user_id=execution_user_id,
+                call_type=CallType.OUTBOUND,
+                initial_context=run_inputs.initial_context,
+                organization_id=user.selected_organization_id,
+                definition_id=run_inputs.definition_id,
+            )
+            workflow_run_id = workflow_run.id
+        else:
+            workflow_run = await db_client.get_workflow_run(
+                workflow_run_id, organization_id=user.selected_organization_id
+            )
+            if not workflow_run:
+                raise HTTPException(status_code=400, detail="Workflow run not found")
+            if workflow_run.workflow_id != workflow.id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="workflow_run_workflow_mismatch",
+                )
+            workflow_run_name = workflow_run.name
+
+        await call_concurrency.bind_workflow_run(concurrency_slot, workflow_run_id)
+    except WorkflowRunSlotAlreadyBoundError:
+        raise HTTPException(
+            status_code=409,
+            detail="Workflow run already has an active call",
+        )
+    except Exception:
+        await call_concurrency.release_slot(concurrency_slot)
+        raise
+
+    # Check Dograh quota after the run exists so hosted v2 can mint and store
+    # the MPS correlation id before initiating the call.
+    quota_result = await authorize_workflow_run_start(
+        workflow_id=workflow.id,
+        organization_id=user.selected_organization_id,
         workflow_run_id=workflow_run_id,
-        from_number=from_number,
-        **keywords,
+        actor_user=user,
     )
+    if not quota_result.has_quota:
+        await mark_workflow_run_failed(
+            workflow_run_id, quota_result.error_message or "Quota exceeded"
+        )
+        await call_concurrency.release_workflow_run_slot(workflow_run_id)
+        raise HTTPException(status_code=402, detail=quota_result.error_message)
+
+    try:
+        # Construct webhook URL based on provider type
+        backend_endpoint, _ = await get_backend_endpoints()
+
+        webhook_endpoint = provider.WEBHOOK_ENDPOINT
+
+        webhook_url = (
+            f"{backend_endpoint}/api/v1/telephony/{webhook_endpoint}"
+            f"?workflow_id={workflow.id}"
+            f"&workflow_run_id={workflow_run_id}"
+            f"&organization_id={user.selected_organization_id}"
+        )
+
+        keywords = {
+            "workflow_id": workflow.id,
+            "organization_id": user.selected_organization_id,
+        }
+
+        # Initiate call via provider
+        result = await provider.initiate_call(
+            to_number=phone_number,
+            webhook_url=webhook_url,
+            workflow_run_id=workflow_run_id,
+            from_number=from_number,
+            **keywords,
+        )
+    except Exception as e:
+        await mark_workflow_run_failed(workflow_run_id, f"Failed to initiate call: {e}")
+        await call_concurrency.release_workflow_run_slot(workflow_run_id)
+        raise
 
     # Store provider metadata and caller_number in workflow run context
     gathered_context = {
@@ -238,6 +292,7 @@ async def initiate_call(
     updated_initial_context = {
         **(workflow_run.initial_context or {}),
         "called_number": phone_number,
+        "direction": "outbound",
         "telephony_configuration_id": telephony_configuration_id,
     }
     if result.caller_number:
@@ -421,6 +476,7 @@ async def _validate_inbound_request(
 async def _create_inbound_workflow_run(
     workflow_id: int,
     user_id: int,
+    organization_id: int,
     provider: str,
     normalized_data,
     telephony_configuration_id: int,
@@ -430,6 +486,12 @@ async def _create_inbound_workflow_run(
     call_id = normalized_data.call_id
     numeric_suffix = int(str(uuid.uuid4()).replace("-", "")[:8], 16) % 100000000
     workflow_run_name = f"WR-TEL-IN-{numeric_suffix:08d}"
+    workflow = await db_client.get_workflow(
+        workflow_id, organization_id=organization_id
+    )
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    run_inputs = await prepare_workflow_run_inputs(db_client, workflow)
 
     workflow_run = await db_client.create_workflow_run(
         workflow_run_name,
@@ -456,6 +518,8 @@ async def _create_inbound_workflow_run(
                 "raw_webhook_data": normalized_data.raw_data,
             },
         },
+        organization_id=organization_id,
+        definition_id=run_inputs.definition_id,
     )
 
     logger.info(
@@ -511,13 +575,13 @@ async def websocket_ari_endpoint(websocket: WebSocket):
     query params (appended by the v() dial string option in externalMedia).
     """
     workflow_id = websocket.query_params.get("workflow_id")
-    user_id = websocket.query_params.get("user_id")
+    organization_id = websocket.query_params.get("organization_id")
     workflow_run_id = websocket.query_params.get("workflow_run_id")
 
-    if not workflow_id or not user_id or not workflow_run_id:
+    if not workflow_id or not organization_id or not workflow_run_id:
         logger.error(
-            f"ARI WebSocket missing query params: "
-            f"workflow_id={workflow_id}, user_id={user_id}, workflow_run_id={workflow_run_id}"
+            f"ARI WebSocket missing query params: workflow_id={workflow_id}, "
+            f"organization_id={organization_id}, workflow_run_id={workflow_run_id}"
         )
         await websocket.close(code=4400, reason="Missing required query params")
         return
@@ -527,40 +591,108 @@ async def websocket_ari_endpoint(websocket: WebSocket):
     await websocket.accept(subprotocol="media")
 
     await _handle_telephony_websocket(
-        websocket, int(workflow_id), int(user_id), int(workflow_run_id)
+        websocket, int(workflow_id), int(organization_id), int(workflow_run_id)
     )
 
 
-@router.websocket("/ws/{workflow_id}/{user_id}/{workflow_run_id}")
+@router.websocket("/ws/{workflow_id}/{organization_id}/{workflow_run_id}/{token}")
+@router.websocket("/ws/{workflow_id}/{organization_id}/{workflow_run_id}")
 async def websocket_endpoint(
-    websocket: WebSocket, workflow_id: int, user_id: int, workflow_run_id: int
+    websocket: WebSocket,
+    workflow_id: int,
+    organization_id: int,
+    workflow_run_id: int,
+    token: str | None = None,
 ):
-    """WebSocket endpoint for real-time call handling - routes to provider-specific handlers."""
+    """WebSocket endpoint for real-time call handling - routes to provider-specific handlers.
+
+    Two shapes, one handler. The four-segment form carries the capability token
+    in the path because carriers strip query strings — Twilio documents that
+    outright, and no other carrier promises otherwise (see ``ws_auth``). The
+    three-segment form is what tokenless deployments dial (no secret set, the
+    default), and it is not a way around the check: with a secret configured
+    the shared handler rejects it 4401 like any other unauthenticated peer.
+    """
     await websocket.accept()
-    await _handle_telephony_websocket(websocket, workflow_id, user_id, workflow_run_id)
+    await _handle_telephony_websocket(
+        websocket, workflow_id, organization_id, workflow_run_id, token=token
+    )
 
 
 async def _handle_telephony_websocket(
-    websocket: WebSocket, workflow_id: int, user_id: int, workflow_run_id: int
+    websocket: WebSocket,
+    workflow_id: int,
+    organization_id: int,
+    workflow_run_id: int,
+    token: str | None = None,
 ):
-    """Shared WebSocket handler logic (connection already accepted)."""
+    """Shared WebSocket handler logic (connection already accepted).
+
+    ``organization_id`` arrives in the URL the provider dials back, so it is
+    caller-supplied: scoping the lookups below by it prevents an accidental
+    cross-org mismatch, not a deliberate one. The capability token checked
+    first (see ``ws_auth``) closes the forgery gap — the id triple is no longer
+    enough on its own — but only once an operator sets a secret.
+
+    TODO(security): the token is stateless and replayable for as long as the
+    run sits in ``initialized``. Making it one-shot means minting it at run
+    creation and redeeming it here through an atomic
+    ``initialized -> running`` compare-and-swap, which would also close the
+    read-then-write race on the state check further down.
+    """
     try:
         # Set the run context
         set_current_run_id(workflow_run_id)
 
+        # Capability-token check. The id triple in the URL is otherwise a
+        # guessable bearer capability (see the TODO above and ws_auth.py). This
+        # is a no-op until an operator sets TELEPHONY_WS_TOKEN_SECRET; once set,
+        # invalid tokens are logged, and rejected only when enforcement is on.
+        if ws_auth.token_configured():
+            # Carriers deliver the token as a path segment (query strings do not
+            # survive Twilio and are unpromised elsewhere); ARI delivers it as a
+            # query param through v(). Same HMAC over the same triple either way.
+            presented = token or websocket.query_params.get("token")
+            if not ws_auth.verify_ws_token(
+                workflow_id, organization_id, workflow_run_id, presented
+            ):
+                if ws_auth.enforcement_enabled():
+                    logger.warning(
+                        f"[telephony ws] rejecting unauthenticated connection for "
+                        f"run {workflow_run_id} (org {organization_id})"
+                    )
+                    await websocket.close(code=4401, reason="Unauthorized")
+                    return
+                logger.warning(
+                    f"[telephony ws] UNVERIFIED media socket for run {workflow_run_id} "
+                    f"(org {organization_id}); allowed because TELEPHONY_WS_TOKEN_ENFORCE "
+                    f"is off — set it to enforce"
+                )
+
         # Get workflow run to determine provider type
-        workflow_run = await db_client.get_workflow_run(workflow_run_id)
+        workflow_run = await db_client.get_workflow_run(
+            workflow_run_id, organization_id=organization_id
+        )
         if not workflow_run:
-            logger.error(f"Workflow run {workflow_run_id} not found")
+            logger.error(
+                f"Workflow run {workflow_run_id} not found for org {organization_id}"
+            )
             await websocket.close(code=4404, reason="Workflow run not found")
             return
 
-        # Get workflow for organization info. System lookup keyed only on the
-        # workflow_id (org is derived below) — use the explicit unscoped variant.
-        workflow = await db_client.get_workflow_by_id(workflow_id)
+        workflow = await db_client.get_workflow(
+            workflow_id, organization_id=organization_id
+        )
         if not workflow:
-            logger.error(f"Workflow {workflow_id} not found")
+            logger.error(f"Workflow {workflow_id} not found for org {organization_id}")
             await websocket.close(code=4404, reason="Workflow not found")
+            return
+        if workflow_run.workflow_id != workflow.id:
+            logger.error(
+                f"Workflow run {workflow_run_id} belongs to workflow "
+                f"{workflow_run.workflow_id}, not {workflow.id}"
+            )
+            await websocket.close(code=4400, reason="workflow_run_workflow_mismatch")
             return
 
         # Check workflow run state - only allow 'initialized' state
@@ -584,12 +716,36 @@ async def _handle_telephony_websocket(
             provider_type = workflow_run.initial_context.get("provider")
             logger.info(f"Extracted provider_type: {provider_type}")
 
+        if (
+            workflow_run.mode == WorkflowRunMode.SMALLWEBRTC.value
+            or provider_type == WorkflowRunMode.SMALLWEBRTC.value
+        ):
+            logger.warning(
+                f"SmallWebRTC workflow run {workflow_run_id} reached telephony "
+                f"websocket; mode={workflow_run.mode}, provider={provider_type}"
+            )
+            await websocket.close(
+                code=4400,
+                reason=(
+                    "smallwebrtc runs connect through the WebRTC signaling endpoint, "
+                    "not the telephony websocket"
+                ),
+            )
+            return
+
         if not provider_type:
             logger.error(
                 f"No provider type found in workflow run {workflow_run_id}. "
                 f"gathered_context: {workflow_run.gathered_context}, mode: {workflow_run.mode}"
             )
-            await websocket.close(code=4400, reason="Provider type not found")
+            await websocket.close(
+                code=4400,
+                reason=(
+                    f"No provider type found for workflow run {workflow_run_id} "
+                    f"(mode: {workflow_run.mode}); telephony websocket requires "
+                    "a telephony provider"
+                ),
+            )
             return
 
         logger.info(
@@ -619,13 +775,18 @@ async def _handle_telephony_websocket(
 
         # Delegate to provider-specific handler
         await provider.handle_websocket(
-            websocket, workflow_id, user_id, workflow_run_id
+            websocket, workflow_id, organization_id, workflow_run_id
         )
 
     except WebSocketDisconnect as e:
         logger.info(f"WebSocket disconnected: code={e.code}, reason={e.reason}")
     except Exception as e:
-        logger.error(f"Error in WebSocket connection: {e}")
+        # This catch-all also covers setup before the pipeline starts, so it
+        # still reports anything no inner seam has claimed.
+        if failure_already_reported(e):
+            logger.warning(f"WebSocket connection ended on a reported failure: {e}")
+        else:
+            logger.error(f"Error in WebSocket connection: {e}")
         try:
             await websocket.close(1011, "Internal server error")
         except RuntimeError:
@@ -660,10 +821,14 @@ async def handle_inbound_run(request: Request):
             logger.error("Unable to detect provider for /inbound/run webhook")
             return generic_hangup_response()
 
-        normalized_data = normalize_webhook_data(provider_class, webhook_data)
+        normalized_data = normalize_webhook_data(provider_class, webhook_data, headers)
         logger.info(
             f"/inbound/run normalized data — provider={normalized_data.provider} "
-            f"to={normalized_data.to_number} from={normalized_data.from_number}"
+            f"to={normalized_data.to_number} from={normalized_data.from_number} "
+            f"account_id={normalized_data.account_id!r} "
+            f"direction={normalized_data.direction} "
+            f"call_id={normalized_data.call_id} "
+            f"to_country={normalized_data.to_country}"
         )
 
         if normalized_data.direction != "inbound":
@@ -702,6 +867,17 @@ async def handle_inbound_run(request: Request):
 
         config, phone_row = match
         telephony_configuration_id = config.id
+        # The org the rest of this request runs as is decided here and nowhere
+        # else: everything downstream (concurrency slot, workflow lookup,
+        # credentials used for signature checks) follows from this row.
+        logger.info(
+            f"/inbound/run matched route — org={config.organization_id} "
+            f"config={config.id} name={config.name!r} "
+            f"config_{account_field}={(config.credentials or {}).get(account_field)!r} "
+            f"webhook_account_id={normalized_data.account_id!r} "
+            f"phone={phone_row.id} address={phone_row.address!r} "
+            f"inbound_workflow_id={phone_row.inbound_workflow_id}"
+        )
 
         if not phone_row.inbound_workflow_id:
             logger.warning(
@@ -741,40 +917,76 @@ async def handle_inbound_run(request: Request):
                 TelephonyError.SIGNATURE_VALIDATION_FAILED
             )
 
-        # 5. Create workflow run + authorize quota before returning provider
-        # stream instructions.
-        workflow_run_id = await _create_inbound_workflow_run(
-            workflow_id,
-            user_id,
-            provider_class.PROVIDER_NAME,
-            normalized_data,
-            telephony_configuration_id=telephony_configuration_id,
-            from_phone_number_id=phone_row.id,
-        )
-        quota_result = await authorize_workflow_run_start(
-            workflow_id=workflow_id,
-            workflow_run_id=workflow_run_id,
-        )
-        if not quota_result.has_quota:
-            logger.warning(
-                f"User {user_id} has exceeded quota: {quota_result.error_message}"
+        try:
+            concurrency_slot = await call_concurrency.acquire_org_slot(
+                config.organization_id,
+                source=f"inbound:{provider_class.PROVIDER_NAME}",
+                timeout=0,
             )
+        except CallConcurrencyLimitError:
             return provider_class.generate_validation_error_response(
-                TelephonyError.QUOTA_EXCEEDED
+                TelephonyError.CONCURRENT_CALL_LIMIT
             )
 
-        backend_endpoint, wss_backend_endpoint = await get_backend_endpoints()
-        websocket_url = (
-            f"{wss_backend_endpoint}/api/v1/telephony/ws/"
-            f"{workflow_id}/{user_id}/{workflow_run_id}"
-        )
+        workflow_run_id = None
+        try:
+            # 5. Create workflow run + authorize quota before returning provider
+            # stream instructions.
+            workflow_run_id = await _create_inbound_workflow_run(
+                workflow_id,
+                user_id,
+                config.organization_id,
+                provider_class.PROVIDER_NAME,
+                normalized_data,
+                telephony_configuration_id=telephony_configuration_id,
+                from_phone_number_id=phone_row.id,
+            )
+            await call_concurrency.bind_workflow_run(concurrency_slot, workflow_run_id)
 
-        return await provider_instance.start_inbound_stream(
-            websocket_url=websocket_url,
-            workflow_run_id=workflow_run_id,
-            normalized_data=normalized_data,
-            backend_endpoint=backend_endpoint,
-        )
+            quota_result = await authorize_workflow_run_start(
+                workflow_id=workflow_id,
+                organization_id=config.organization_id,
+                workflow_run_id=workflow_run_id,
+            )
+            if not quota_result.has_quota:
+                logger.warning(
+                    f"User {user_id} has exceeded quota: {quota_result.error_message}"
+                )
+                await mark_workflow_run_failed(
+                    workflow_run_id, quota_result.error_message or "Quota exceeded"
+                )
+                await call_concurrency.release_workflow_run_slot(workflow_run_id)
+                return provider_class.generate_validation_error_response(
+                    TelephonyError.QUOTA_EXCEEDED
+                )
+
+            backend_endpoint, wss_backend_endpoint = await get_backend_endpoints()
+            websocket_url = ws_auth.build_media_ws_url(
+                wss_backend_endpoint,
+                workflow_id,
+                config.organization_id,
+                workflow_run_id,
+            )
+
+            return await provider_instance.start_inbound_stream(
+                websocket_url=websocket_url,
+                workflow_run_id=workflow_run_id,
+                normalized_data=normalized_data,
+                backend_endpoint=backend_endpoint,
+            )
+        except WorkflowRunSlotAlreadyBoundError:
+            return provider_class.generate_validation_error_response(
+                TelephonyError.CONCURRENT_CALL_LIMIT
+            )
+        except Exception as e:
+            if workflow_run_id:
+                await mark_workflow_run_failed(
+                    workflow_run_id, f"Inbound call failed to start: {e}"
+                )
+                await call_concurrency.release_workflow_run_slot(workflow_run_id)
+            else:
+                await call_concurrency.release_slot(concurrency_slot)
+            raise
 
     except ValueError as e:
         logger.error(f"/inbound/run request parsing error: {e}")
@@ -847,7 +1059,7 @@ async def handle_inbound_telephony(
             logger.error("Unable to detect provider for webhook")
             return generic_hangup_response()
 
-        normalized_data = normalize_webhook_data(provider_class, webhook_data)
+        normalized_data = normalize_webhook_data(provider_class, webhook_data, headers)
 
         logger.info(f"Inbound call - Provider: {normalized_data.provider}")
         logger.info(f"Normalized data: {normalized_data}")
@@ -876,38 +1088,78 @@ async def handle_inbound_telephony(
             logger.error(f"Request validation failed: {error_type}")
             return provider_class.generate_validation_error_response(error_type)
 
-        # Create workflow run.
         user_id = workflow_context["user_id"]
-        workflow_run_id = await _create_inbound_workflow_run(
-            workflow_id,
-            workflow_context["user_id"],
-            workflow_context["provider"],
-            normalized_data,
-            telephony_configuration_id=workflow_context["telephony_configuration_id"],
-            from_phone_number_id=workflow_context.get("from_phone_number_id"),
-        )
-        quota_result = await authorize_workflow_run_start(
-            workflow_id=workflow_id,
-            workflow_run_id=workflow_run_id,
-        )
-        if not quota_result.has_quota:
-            logger.warning(
-                f"User {user_id} has exceeded quota for inbound calls: {quota_result.error_message}"
+        organization_id = workflow_context["organization_id"]
+        try:
+            concurrency_slot = await call_concurrency.acquire_org_slot(
+                organization_id,
+                source=f"inbound_legacy:{workflow_context['provider']}",
+                timeout=0,
             )
+        except CallConcurrencyLimitError:
             return provider_class.generate_validation_error_response(
-                TelephonyError.QUOTA_EXCEEDED
+                TelephonyError.CONCURRENT_CALL_LIMIT
             )
 
-        # Generate response URLs
-        backend_endpoint, wss_backend_endpoint = await get_backend_endpoints()
-        websocket_url = f"{wss_backend_endpoint}/api/v1/telephony/ws/{workflow_id}/{workflow_context['user_id']}/{workflow_run_id}"
+        workflow_run_id = None
+        try:
+            # Create workflow run.
+            workflow_run_id = await _create_inbound_workflow_run(
+                workflow_id,
+                workflow_context["user_id"],
+                organization_id,
+                workflow_context["provider"],
+                normalized_data,
+                telephony_configuration_id=workflow_context[
+                    "telephony_configuration_id"
+                ],
+                from_phone_number_id=workflow_context.get("from_phone_number_id"),
+            )
+            await call_concurrency.bind_workflow_run(concurrency_slot, workflow_run_id)
 
-        response = await provider_instance.start_inbound_stream(
-            websocket_url=websocket_url,
-            workflow_run_id=workflow_run_id,
-            normalized_data=normalized_data,
-            backend_endpoint=backend_endpoint,
-        )
+            quota_result = await authorize_workflow_run_start(
+                workflow_id=workflow_id,
+                organization_id=organization_id,
+                workflow_run_id=workflow_run_id,
+            )
+            if not quota_result.has_quota:
+                logger.warning(
+                    f"User {user_id} has exceeded quota for inbound calls: "
+                    f"{quota_result.error_message}"
+                )
+                await mark_workflow_run_failed(
+                    workflow_run_id, quota_result.error_message or "Quota exceeded"
+                )
+                await call_concurrency.release_workflow_run_slot(workflow_run_id)
+                return provider_class.generate_validation_error_response(
+                    TelephonyError.QUOTA_EXCEEDED
+                )
+
+            # Generate response URLs
+            backend_endpoint, wss_backend_endpoint = await get_backend_endpoints()
+            websocket_url = ws_auth.build_media_ws_url(
+                wss_backend_endpoint, workflow_id, organization_id, workflow_run_id
+            )
+
+            response = await provider_instance.start_inbound_stream(
+                websocket_url=websocket_url,
+                workflow_run_id=workflow_run_id,
+                normalized_data=normalized_data,
+                backend_endpoint=backend_endpoint,
+            )
+        except WorkflowRunSlotAlreadyBoundError:
+            return provider_class.generate_validation_error_response(
+                TelephonyError.CONCURRENT_CALL_LIMIT
+            )
+        except Exception as e:
+            if workflow_run_id:
+                await mark_workflow_run_failed(
+                    workflow_run_id, f"Inbound call failed to start: {e}"
+                )
+                await call_concurrency.release_workflow_run_slot(workflow_run_id)
+            else:
+                await call_concurrency.release_slot(concurrency_slot)
+            raise
 
         logger.info(
             f"Generated {normalized_data.provider} response for call {normalized_data.call_id}"

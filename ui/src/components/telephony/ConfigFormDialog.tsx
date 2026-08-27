@@ -38,21 +38,70 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { detailFromError } from "@/lib/apiError";
 import { useAuth } from "@/lib/auth";
+import { copyTextToClipboard } from "@/lib/clipboard";
 
 interface ConfigFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   // When provided, the dialog is in edit mode.
   existing?: TelephonyConfigurationDetail | null;
+  /**
+   * Pre-check "set as default for outbound" because the organization has no
+   * default yet. Nothing picks a default on the customer's behalf, so this is
+   * how the common single-configuration case gets one: as a visible, editable
+   * choice in the form rather than a write they never saw.
+   */
+  suggestDefaultOutbound?: boolean;
   onSaved: () => void;
 }
 
-type FieldValues = Record<string, string | number | undefined>;
+type FieldValue = string | number | boolean | undefined;
+type FieldValues = Record<string, FieldValue>;
+
+function flattenValues(
+  value: Record<string, unknown>,
+  prefix = "",
+): FieldValues {
+  const flattened: FieldValues = {};
+  for (const [key, child] of Object.entries(value)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (child && typeof child === "object" && !Array.isArray(child)) {
+      Object.assign(flattened, flattenValues(child as Record<string, unknown>, path));
+    } else if (
+      child === undefined ||
+      typeof child === "string" ||
+      typeof child === "number" ||
+      typeof child === "boolean"
+    ) {
+      flattened[path] = child;
+    }
+  }
+  return flattened;
+}
+
+function nestValues(values: FieldValues): Record<string, unknown> {
+  const nested: Record<string, unknown> = {};
+  for (const [path, value] of Object.entries(values)) {
+    if (value === undefined || value === "") continue;
+    const parts = path.split(".");
+    let current = nested;
+    for (const part of parts.slice(0, -1)) {
+      const child = current[part];
+      if (!child || typeof child !== "object" || Array.isArray(child)) {
+        current[part] = {};
+      }
+      current = current[part] as Record<string, unknown>;
+    }
+    current[parts[parts.length - 1]] = value;
+  }
+  return nested;
+}
 
 export function ConfigFormDialog({
   open,
   onOpenChange,
   existing,
+  suggestDefaultOutbound = false,
   onSaved,
 }: ConfigFormDialogProps) {
   const { user, getAccessToken } = useAuth();
@@ -69,6 +118,23 @@ export function ConfigFormDialog({
   const currentProvider = useMemo(
     () => providers.find((p) => p.provider === providerName),
     [providers, providerName],
+  );
+  const visibleFields = useMemo(
+    () =>
+      // Trunks are their own resource, edited alongside the SIP endpoints on
+      // the configuration detail page, so nothing provider-specific needs
+      // filtering out of the generic credentials dialog.
+      currentProvider?.fields.filter(
+        (field) =>
+          // A readonly field reports a value the server assigned. Before the
+          // configuration exists there is nothing to report, and announcing a
+          // field that is not there yet reads as something the user forgot to
+          // fill in — so it appears only once it has a value.
+          !(field.type === "readonly" && !values[field.name]) &&
+          (!field.visible_when ||
+            values[field.visible_when.field] === field.visible_when.equals),
+      ) ?? [],
+    [currentProvider, values],
   );
 
   // Fetch provider metadata once when the dialog opens.
@@ -87,10 +153,13 @@ export function ConfigFormDialog({
         setProviderName(existing.provider);
         setName(existing.name);
         setIsDefault(existing.is_default_outbound);
-        setValues((existing.credentials ?? {}) as FieldValues);
-      } else if (list.length > 0 && !providerName) {
-        setProviderName(list[0].provider);
-        setValues({});
+        setValues(flattenValues(existing.credentials ?? {}));
+      } else {
+        setIsDefault(suggestDefaultOutbound);
+        if (list.length > 0 && !providerName) {
+          setProviderName(list[0].provider);
+          setValues({});
+        }
       }
     })();
     return () => {
@@ -104,8 +173,16 @@ export function ConfigFormDialog({
     if (!isEdit) setValues({});
   }, [providerName, isEdit]);
 
-  const updateField = (fieldName: string, value: string | number) => {
-    setValues((prev) => ({ ...prev, [fieldName]: value }));
+  const updateField = (fieldName: string, value: FieldValue) => {
+    setValues((prev) => {
+      const next = { ...prev, [fieldName]: value };
+      if (value === undefined) {
+        for (const field of currentProvider?.fields ?? []) {
+          if (field.visible_when?.field === fieldName) delete next[field.name];
+        }
+      }
+      return next;
+    });
   };
 
   const handleSubmit = async () => {
@@ -122,7 +199,7 @@ export function ConfigFormDialog({
       // Build the provider-discriminated config payload from collected values.
       const configPayload = {
         provider: providerName,
-        ...values,
+        ...nestValues(values),
       } as unknown as TelephonyConfigPayload;
 
       if (isEdit && existing) {
@@ -179,8 +256,7 @@ export function ConfigFormDialog({
               <button
                 type="button"
                 onClick={() => {
-                  navigator.clipboard
-                    .writeText(String(existing.id))
+                  copyTextToClipboard(String(existing.id))
                     .then(() => toast.success("Configuration ID copied"))
                     .catch(() => toast.error("Failed to copy ID"));
                 }}
@@ -244,6 +320,9 @@ export function ConfigFormDialog({
                 <Label className="text-sm">Set as default for outbound calls</Label>
                 <p className="text-xs text-muted-foreground">
                   Used by test calls and campaigns when no specific config is selected.
+                  {suggestDefaultOutbound
+                    ? " Your organization has no default yet."
+                    : ""}
                 </p>
               </div>
               <Switch checked={isDefault} onCheckedChange={setIsDefault} />
@@ -252,11 +331,16 @@ export function ConfigFormDialog({
 
           {currentProvider && (
             <div className="space-y-3 border-t pt-3">
-              {currentProvider.fields.map((field) => (
+              {visibleFields.map((field, index) => (
                 <div className="space-y-1" key={field.name}>
+                  {field.section && field.section !== visibleFields[index - 1]?.section && (
+                    <div className="pb-2 pt-3">
+                      <h3 className="text-sm font-semibold">{field.section}</h3>
+                    </div>
+                  )}
                   <Label htmlFor={`cfg-field-${field.name}`}>
                     {field.label}
-                    {!field.required && (
+                    {!field.required && field.type !== "readonly" && (
                       <span className="ml-1 text-xs text-muted-foreground">
                         (optional)
                       </span>
@@ -292,8 +376,8 @@ export function ConfigFormDialog({
 
 interface FieldInputProps {
   field: TelephonyProviderMetadata["fields"][number];
-  value: string | number | undefined;
-  onChange: (v: string | number) => void;
+  value: FieldValue;
+  onChange: (v: FieldValue) => void;
   isEdit: boolean;
 }
 
@@ -312,6 +396,28 @@ function FieldInput({ field, value, onChange, isEdit }: FieldInputProps) {
     field.placeholder ??
     (field.sensitive && isEdit ? "Leave masked to keep existing" : "");
 
+  // Server-generated and not editable. Shown because the customer has to copy
+  // it into configuration we do not control, so it cannot be hidden the way
+  // other server-managed fields are. Only rendered once a value exists —
+  // visibleFields drops it otherwise.
+  if (field.type === "readonly") {
+    const generated = String(value ?? "");
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          copyTextToClipboard(generated)
+            .then(() => toast.success(`${field.label} copied`))
+            .catch(() => toast.error("Failed to copy"));
+        }}
+        title="Click to copy"
+        className="group flex w-full items-center gap-2 rounded-md border bg-muted/20 p-2 text-left font-mono text-xs transition-colors hover:bg-muted/40"
+      >
+        <code className="flex-1 truncate">{generated}</code>
+        <Copy className="h-3 w-3 shrink-0 text-muted-foreground group-hover:text-foreground" />
+      </button>
+    );
+  }
   if (field.type === "textarea") {
     return (
       <Textarea
@@ -333,6 +439,35 @@ function FieldInput({ field, value, onChange, isEdit }: FieldInputProps) {
         value={value as number | string | undefined ?? ""}
         onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
       />
+    );
+  }
+  if (field.type === "boolean") {
+    return (
+      <Switch
+        id={`cfg-field-${field.name}`}
+        checked={Boolean(value)}
+        onCheckedChange={onChange}
+      />
+    );
+  }
+  if (field.type === "select") {
+    return (
+      <Select
+        value={value === undefined ? "__none__" : String(value)}
+        onValueChange={(next) => onChange(next === "__none__" ? undefined : next)}
+      >
+        <SelectTrigger id={`cfg-field-${field.name}`}>
+          <SelectValue placeholder={placeholder || "Select an option"} />
+        </SelectTrigger>
+        <SelectContent>
+          {!field.required && <SelectItem value="__none__">Not configured</SelectItem>}
+          {(field.options ?? []).map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     );
   }
   return (

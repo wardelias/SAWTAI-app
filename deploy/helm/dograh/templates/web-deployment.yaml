@@ -1,0 +1,116 @@
+{{- /* The preStop drain runs preStopSleepSeconds THEN loops up to
+       drainMaxWaitSeconds; if their sum reaches terminationGracePeriodSeconds the
+       kubelet SIGKILLs mid-drain and cuts live calls. Fail the render instead of
+       shipping that. 30s headroom covers SIGTERM handling / uvicorn shutdown. */}}
+{{- $drainBudget := add (int .Values.web.preStopSleepSeconds) (int .Values.web.drainMaxWaitSeconds) 30 }}
+{{- if gt $drainBudget (int .Values.web.terminationGracePeriodSeconds) }}
+{{- fail (printf "web.preStopSleepSeconds (%d) + web.drainMaxWaitSeconds (%d) + 30s headroom = %ds exceeds web.terminationGracePeriodSeconds (%d); raise the grace period or lower the drain window" (int .Values.web.preStopSleepSeconds) (int .Values.web.drainMaxWaitSeconds) $drainBudget (int .Values.web.terminationGracePeriodSeconds)) }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dograh.web.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dograh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  {{- /* Omit spec.replicas only when an autoscaler will actually own this
+         Deployment — either the CPU/mem HPA (web-hpa.yaml) renders, or the KEDA
+         ScaledObject (web-keda-scaledobject.yaml) is enabled. If HPA is enabled
+         but both metric targets are null the HPA is suppressed, so we must keep
+         the static replica count here to avoid a Deployment with no owner. */ -}}
+  {{- if not (or (and .Values.autoscaling.web.enabled (or .Values.autoscaling.web.targetCPUUtilizationPercentage .Values.autoscaling.web.targetMemoryUtilizationPercentage)) .Values.autoscaling.web.keda.enabled) }}
+  replicas: {{ .Values.web.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "dograh.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        {{- include "dograh.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+      annotations:
+        # Roll pods when the ConfigMap changes (e.g. `helm upgrade --set
+        # config.enableSignup=false`). envFrom values are otherwise only read
+        # at pod startup, so a ConfigMap-only upgrade would leave running pods
+        # on the stale value until an unrelated restart.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.web.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "dograh.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Long-lived signaling WebSockets keep state in-process; honor the
+      # configured drain window so in-flight calls survive a rolling
+      # update. See README "Decisions log".
+      terminationGracePeriodSeconds: {{ .Values.web.terminationGracePeriodSeconds }}
+      containers:
+        - name: web
+          image: {{ include "dograh.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["./scripts/run_web.sh"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.web.port }}
+              protocol: TCP
+          envFrom:
+            {{- include "dograh.backendEnvFrom" . | nindent 12 }}
+          env:
+            - name: WEB_PORT
+              value: {{ .Values.web.port | quote }}
+            # Trust proxy headers from these peers so request.url reflects the
+            # original https scheme — see web.forwardedAllowIps in values.yaml.
+            - name: FORWARDED_ALLOW_IPS
+              value: {{ .Values.web.forwardedAllowIps | quote }}
+            # Drain tuning (scripts/drain_web.sh, the preStop hook below). Keep
+            # DRAIN_MAX_WAIT below terminationGracePeriodSeconds
+            # ({{ .Values.web.terminationGracePeriodSeconds }}s) or the kubelet
+            # SIGKILLs mid-drain and cuts live calls.
+            - name: DRAIN_INITIAL_DELAY
+              value: {{ .Values.web.preStopSleepSeconds | quote }}
+            - name: DRAIN_MAX_WAIT
+              value: {{ .Values.web.drainMaxWaitSeconds | quote }}
+            {{- include "dograh.dbEnv" . | nindent 12 }}
+          # Distinct probes: readiness flips fast (drain), liveness is
+          # slower (process aliveness).
+          livenessProbe:
+            {{- toYaml .Values.web.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.web.readinessProbe | nindent 12 }}
+          lifecycle:
+            preStop:
+              # Drain in-flight calls to zero before SIGTERM so scale-down /
+              # rolling updates don't cut live call WebSockets. Falls back to a
+              # fixed sleep when the devops secret is unset. See scripts/drain_web.sh.
+              exec:
+                command: ["./scripts/drain_web.sh"]
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+      {{- with .Values.web.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.web.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.web.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.web.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

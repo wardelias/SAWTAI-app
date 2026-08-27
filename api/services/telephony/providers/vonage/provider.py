@@ -2,8 +2,8 @@
 Vonage (Nexmo) implementation of the TelephonyProvider interface.
 """
 
+import hashlib
 import json
-import random
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -12,14 +12,17 @@ import jwt
 from fastapi import HTTPException, Response
 from loguru import logger
 
-from api.enums import WorkflowRunMode
+from api.enums import TelephonyCallStatus, WorkflowRunMode
+from api.services.telephony import ws_auth
 from api.services.telephony.base import (
     CallInitiationResult,
     NormalizedInboundData,
+    ProviderPhoneNumberLookupError,
     ProviderSyncResult,
     TelephonyProvider,
 )
 from api.utils.common import get_backend_endpoints
+from api.utils.telephony_address import normalize_telephony_address
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
@@ -44,13 +47,16 @@ class VonageProvider(TelephonyProvider):
                 - api_secret: Vonage API Secret
                 - application_id: Vonage Application ID
                 - private_key: Private key for JWT generation
+                - signature_secret: Signature secret for signed webhooks
                 - from_numbers: List of phone numbers to use
         """
         self.api_key = config.get("api_key")
         self.api_secret = config.get("api_secret")
         self.application_id = config.get("application_id")
         self.private_key = config.get("private_key")
+        self.signature_secret = config.get("signature_secret")
         self.from_numbers = config.get("from_numbers", [])
+        self.default_from_number = config.get("default_from_number")
 
         # Handle both single number (string) and multiple numbers (list)
         if isinstance(self.from_numbers, str):
@@ -90,9 +96,7 @@ class VonageProvider(TelephonyProvider):
 
         endpoint = f"{self.base_url}/v1/calls"
 
-        # Use provided from_number or select a random one
-        if from_number is None:
-            from_number = random.choice(self.from_numbers)
+        from_number = self.select_from_number(from_number)
         # Remove '+' prefix for Vonage
         from_number = from_number.replace("+", "")
         to_number = to_number.replace("+", "")
@@ -186,30 +190,34 @@ class VonageProvider(TelephonyProvider):
         Verify Vonage webhook signature for security.
         Vonage uses JWT for webhook signatures.
         """
-        if not self.api_secret:
-            logger.error("No API secret available for webhook signature verification")
+        if not self.signature_secret:
+            logger.error(
+                "No signature secret available for Vonage webhook verification"
+            )
             return False
 
         try:
-            # Vonage sends JWT in Authorization header. Verify the JWT signature
-            decoded = jwt.decode(
+            jwt.decode(
                 signature,
-                self.api_secret,
+                self.signature_secret,
                 algorithms=["HS256"],
-                options={"verify_signature": True},
+                options={"verify_signature": True, "verify_aud": False},
             )
             return True
         except jwt.InvalidTokenError:
             return False
 
     async def get_webhook_response(
-        self, workflow_id: int, user_id: int, workflow_run_id: int
+        self, workflow_id: int, organization_id: int, workflow_run_id: int
     ) -> str:
         """
         Generate NCCO response for starting a call session.
         NCCO (Nexmo Call Control Objects) is JSON-based, unlike TwiML which is XML.
         """
         _, wss_backend_endpoint = await get_backend_endpoints()
+        ws_url = ws_auth.build_media_ws_url(
+            wss_backend_endpoint, workflow_id, organization_id, workflow_run_id
+        )
 
         # NCCO for WebSocket connection
         ncco = [
@@ -218,7 +226,7 @@ class VonageProvider(TelephonyProvider):
                 "endpoint": [
                     {
                         "type": "websocket",
-                        "uri": f"{wss_backend_endpoint}/api/v1/telephony/ws/{workflow_id}/{user_id}/{workflow_run_id}",
+                        "uri": ws_url,
                         "content-type": "audio/l16;rate=16000",  # 16kHz Linear PCM
                         "headers": {},
                     }
@@ -291,14 +299,18 @@ class VonageProvider(TelephonyProvider):
         """
         # Map Vonage status to common format
         status_map = {
-            "started": "initiated",
-            "ringing": "ringing",
-            "answered": "answered",
-            "complete": "completed",
-            "failed": "failed",
-            "busy": "busy",
-            "timeout": "no-answer",
-            "rejected": "busy",
+            "started": TelephonyCallStatus.INITIATED,
+            "ringing": TelephonyCallStatus.RINGING,
+            "answered": TelephonyCallStatus.ANSWERED,
+            "complete": TelephonyCallStatus.COMPLETED,
+            "completed": TelephonyCallStatus.COMPLETED,
+            "disconnected": TelephonyCallStatus.COMPLETED,
+            "failed": TelephonyCallStatus.FAILED,
+            "busy": TelephonyCallStatus.BUSY,
+            "timeout": TelephonyCallStatus.NO_ANSWER,
+            "unanswered": TelephonyCallStatus.NO_ANSWER,
+            "cancelled": TelephonyCallStatus.NO_ANSWER,
+            "rejected": TelephonyCallStatus.BUSY,
         }
 
         return {
@@ -315,7 +327,7 @@ class VonageProvider(TelephonyProvider):
         self,
         websocket: "WebSocket",
         workflow_id: int,
-        user_id: int,
+        organization_id: int,
         workflow_run_id: int,
     ) -> None:
         """
@@ -330,14 +342,17 @@ class VonageProvider(TelephonyProvider):
 
         try:
             # Get workflow run to extract call UUID
-            workflow_run = await db_client.get_workflow_run(workflow_run_id)
+            workflow_run = await db_client.get_workflow_run(
+                workflow_run_id, organization_id=organization_id
+            )
             if not workflow_run:
                 logger.error(f"Workflow run {workflow_run_id} not found")
                 await websocket.close(code=4404, reason="Workflow run not found")
                 return
 
-            # Get workflow for organization info
-            workflow = await db_client.get_workflow(workflow_id, user_id)
+            workflow = await db_client.get_workflow(
+                workflow_id, organization_id=organization_id
+            )
             if not workflow:
                 logger.error(f"Workflow {workflow_id} not found")
                 await websocket.close(code=4404, reason="Workflow not found")
@@ -349,6 +364,8 @@ class VonageProvider(TelephonyProvider):
                 if workflow_run.gathered_context
                 else None
             )
+            if not call_uuid and workflow_run.gathered_context:
+                call_uuid = workflow_run.gathered_context.get("call_id")
 
             if not call_uuid:
                 logger.error(
@@ -382,7 +399,7 @@ class VonageProvider(TelephonyProvider):
                 provider_name=self.PROVIDER_NAME,
                 workflow_id=workflow_id,
                 workflow_run_id=workflow_run_id,
-                user_id=user_id,
+                organization_id=organization_id,
                 call_id=call_uuid,
                 transport_kwargs={"call_uuid": call_uuid},
             )
@@ -400,25 +417,125 @@ class VonageProvider(TelephonyProvider):
         """
         Determine if this provider can handle the incoming webhook.
         """
-        return False
+        claims = cls._decode_unverified_signed_claims(headers)
+        if claims.get("api_key") or claims.get("application_id"):
+            return True
+
+        return bool(
+            webhook_data.get("uuid")
+            and webhook_data.get("conversation_uuid")
+            and webhook_data.get("from")
+            and webhook_data.get("to")
+        )
 
     @staticmethod
-    def parse_inbound_webhook(webhook_data: Dict[str, Any]) -> NormalizedInboundData:
+    def parse_inbound_webhook(
+        webhook_data: Dict[str, Any], headers: Optional[Dict[str, str]] = None
+    ) -> NormalizedInboundData:
         """
         Parse Vonage-specific inbound webhook data into normalized format.
         """
+        claims = VonageProvider._decode_unverified_signed_claims(headers or {})
+        direction = webhook_data.get("direction") or "inbound"
+        status = webhook_data.get("status") or "started"
+
         return NormalizedInboundData(
             provider=VonageProvider.PROVIDER_NAME,
             call_id=webhook_data.get("uuid", ""),
             from_number=webhook_data.get("from", ""),
             to_number=webhook_data.get("to", ""),
-            direction=webhook_data.get("direction", ""),
-            call_status=webhook_data.get("status", ""),
-            account_id=webhook_data.get("account_id"),
+            direction=direction,
+            call_status=status,
+            account_id=claims.get("api_key") or webhook_data.get("account_id"),
             from_country=None,
             to_country=None,
             raw_data=webhook_data,
         )
+
+    @staticmethod
+    def _header(headers: Dict[str, str], name: str) -> Optional[str]:
+        for key, value in headers.items():
+            if key.lower() == name.lower():
+                return value
+        return None
+
+    @classmethod
+    def _bearer_token(cls, headers: Dict[str, str]) -> Optional[str]:
+        auth_header = cls._header(headers, "authorization")
+        if not auth_header:
+            return None
+        parts = auth_header.split(None, 1)
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            return None
+        return parts[1].strip()
+
+    @classmethod
+    def _decode_unverified_signed_claims(
+        cls, headers: Dict[str, str]
+    ) -> Dict[str, Any]:
+        token = cls._bearer_token(headers)
+        if not token:
+            return {}
+        try:
+            claims = jwt.decode(
+                token,
+                options={
+                    "verify_signature": False,
+                    "verify_aud": False,
+                    "verify_exp": False,
+                },
+            )
+        except jwt.InvalidTokenError:
+            return {}
+        return claims if isinstance(claims, dict) else {}
+
+    def _verify_signed_claims(
+        self, headers: Dict[str, str], body: str = ""
+    ) -> Optional[Dict[str, Any]]:
+        token = self._bearer_token(headers)
+        if not token:
+            logger.warning("Missing Vonage Authorization bearer token")
+            return None
+        if not self.signature_secret:
+            logger.error("Missing Vonage signature_secret for signed webhook")
+            return None
+
+        try:
+            claims = jwt.decode(
+                token,
+                self.signature_secret,
+                algorithms=["HS256"],
+                options={"verify_signature": True, "verify_aud": False},
+            )
+        except jwt.InvalidTokenError as exc:
+            logger.warning(f"Invalid Vonage signed webhook JWT: {exc}")
+            return None
+
+        if claims.get("iss") != "Vonage":
+            logger.warning("Vonage signed webhook JWT has unexpected issuer")
+            return None
+
+        if self.api_key and claims.get("api_key") != self.api_key:
+            logger.warning("Vonage signed webhook api_key does not match config")
+            return None
+
+        claim_application_id = claims.get("application_id")
+        if (
+            self.application_id
+            and claim_application_id
+            and claim_application_id != self.application_id
+        ):
+            logger.warning("Vonage signed webhook application_id does not match config")
+            return None
+
+        payload_hash = claims.get("payload_hash")
+        if payload_hash:
+            actual_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+            if actual_hash != payload_hash:
+                logger.warning("Vonage signed webhook payload hash mismatch")
+                return None
+
+        return claims
 
     @staticmethod
     def validate_account_id(config_data: dict, webhook_account_id: str) -> bool:
@@ -437,9 +554,10 @@ class VonageProvider(TelephonyProvider):
         body: str = "",
     ) -> bool:
         """
-        Vonage inbound signature verification - minimalist implementation.
+        Verify Vonage signed webhook JWT and optional payload hash.
         """
-        return True
+        claims = self._verify_signed_claims(headers, body)
+        return claims is not None
 
     async def configure_inbound(
         self, address: str, webhook_url: Optional[str]
@@ -486,6 +604,15 @@ class VonageProvider(TelephonyProvider):
                 ),
             )
 
+        if not self.signature_secret:
+            return ProviderSyncResult(
+                ok=False,
+                message=(
+                    "Vonage signature_secret is required because inbound calls "
+                    "use signed webhook verification"
+                ),
+            )
+
         app_endpoint = f"{self.base_url}/v2/applications/{self.application_id}"
         auth = aiohttp.BasicAuth(self.api_key, self.api_secret)
 
@@ -510,12 +637,18 @@ class VonageProvider(TelephonyProvider):
         capabilities = app_data.get("capabilities") or {}
         voice = capabilities.get("voice") or {}
         webhooks = voice.get("webhooks") or {}
+        backend_endpoint, _ = await get_backend_endpoints()
 
         webhooks["answer_url"] = {
             "address": webhook_url,
             "http_method": "POST",
         }
+        webhooks["event_url"] = {
+            "address": f"{backend_endpoint}/api/v1/telephony/vonage/events",
+            "http_method": "POST",
+        }
         voice["webhooks"] = webhooks
+        voice["signed_callbacks"] = True
         capabilities["voice"] = voice
 
         update_body = {
@@ -550,6 +683,57 @@ class VonageProvider(TelephonyProvider):
         )
         return ProviderSyncResult(ok=True)
 
+    async def validate_phone_number(self, address: str) -> ProviderSyncResult:
+        """Verify PSTN ownership through Vonage's owned-numbers endpoint."""
+        normalized = normalize_telephony_address(address)
+        if normalized.address_type != "pstn":
+            return ProviderSyncResult(ok=True)
+        if not (self.api_key and self.api_secret):
+            raise ProviderPhoneNumberLookupError(
+                "Vonage API key and secret are required to validate "
+                "phone-number ownership"
+            )
+
+        expected = normalized.canonical.lstrip("+")
+        endpoint = "https://rest.nexmo.com/account/numbers"
+        params = {
+            "pattern": expected,
+            "search_pattern": 0,
+            "size": 100,
+        }
+        auth = aiohttp.BasicAuth(self.api_key, self.api_secret)
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(endpoint, params=params, auth=auth) as response:
+                    if response.status != 200:
+                        body = await response.text()
+                        raise ProviderPhoneNumberLookupError(
+                            f"Vonage API {response.status}: {body}",
+                            status_code=response.status,
+                        )
+                    data = await response.json()
+        except ProviderPhoneNumberLookupError:
+            raise
+        except Exception as e:
+            raise ProviderPhoneNumberLookupError(
+                f"Vonage phone-number lookup failed: {e}"
+            ) from e
+
+        owned = any(
+            str(item.get("msisdn") or item.get("number") or "").lstrip("+") == expected
+            for item in (data.get("numbers") or [])
+        )
+        if owned:
+            return ProviderSyncResult(ok=True)
+        return ProviderSyncResult(
+            ok=False,
+            message=(
+                f"Phone number {normalized.canonical} is not owned by this "
+                f"Vonage account ({self.api_key}). Add it in the Vonage "
+                "dashboard first."
+            ),
+        )
+
     async def start_inbound_stream(
         self,
         *,
@@ -561,13 +745,24 @@ class VonageProvider(TelephonyProvider):
         """
         Generate NCCO response for inbound Vonage webhook.
         """
-        # Minimalist NCCO response for interface compliance
         ncco_response = [
             {
-                "action": "talk",
-                "text": "Vonage inbound calls are not currently supported.",
-            },
-            {"action": "hangup"},
+                "action": "connect",
+                "eventUrl": [
+                    f"{backend_endpoint}/api/v1/telephony/vonage/events/{workflow_run_id}"
+                ],
+                "endpoint": [
+                    {
+                        "type": "websocket",
+                        "uri": websocket_url,
+                        "content-type": "audio/l16;rate=16000",
+                        "headers": {
+                            "workflow_run_id": str(workflow_run_id),
+                            "call_uuid": normalized_data.call_id,
+                        },
+                    }
+                ],
+            }
         ]
 
         return Response(

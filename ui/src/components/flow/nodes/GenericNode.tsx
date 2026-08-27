@@ -3,6 +3,7 @@ import * as LucideIcons from "lucide-react";
 import { Check, Circle, Copy, Edit, type LucideIcon, Trash2Icon } from "lucide-react";
 import Link from "next/link";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { useWorkflow } from "@/app/workflow/[workflowId]/contexts/WorkflowContext";
 import type { NodeSpec } from "@/client/types.gen";
@@ -13,7 +14,11 @@ import { FlowNodeData } from "@/components/flow/types";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NODE_DOCUMENTATION_URLS } from "@/constants/documentation";
+import { useAppConfig } from "@/context/AppConfigContext";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
+import { createUuid } from "@/lib/uuid";
+import { resolveWebhookBaseUrl } from "@/lib/webhookUrl";
 
 import { NodeContent } from "./common/NodeContent";
 import { NodeEditDialog } from "./common/NodeEditDialog";
@@ -90,14 +95,12 @@ interface TriggerEndpoints {
 
 function buildTriggerEndpoints(
     triggerPath: string | undefined,
+    baseUrl: string,
 ): TriggerEndpoints {
     if (!triggerPath) return { production: "", test: "" };
-    const backendUrl =
-        process.env.NEXT_PUBLIC_BACKEND_URL ||
-        (typeof window !== "undefined" ? window.location.origin : "");
     return {
-        production: `${backendUrl}/api/v1/public/agent/${triggerPath}`,
-        test: `${backendUrl}/api/v1/public/agent/test/${triggerPath}`,
+        production: `${baseUrl}/api/v1/public/agent/${triggerPath}`,
+        test: `${baseUrl}/api/v1/public/agent/test/${triggerPath}`,
     };
 }
 
@@ -117,12 +120,20 @@ function resolveIntegrationSummary(
     spec: NodeSpec,
     data: FlowNodeData,
 ): string {
+    let hasSecret = false;
     for (const prop of spec.properties) {
-        if (
-            prop.name === "name" ||
-            prop.name.endsWith("enabled") ||
-            /api[_-]?key|token|secret/i.test(prop.name)
-        ) {
+        if (prop.name === "name" || prop.name.endsWith("enabled")) {
+            continue;
+        }
+        // A configured API key/token/secret is never displayed, but it does
+        // prove the node is set up. Remember that so a node whose only real
+        // config is a secret (e.g. an integration identified solely by its key)
+        // isn't mislabelled "Not configured".
+        if (/api[_-]?key|token|secret/i.test(prop.name)) {
+            const secret = data[prop.name];
+            if (typeof secret === "string" && secret.trim().length > 0) {
+                hasSecret = true;
+            }
             continue;
         }
 
@@ -134,7 +145,7 @@ function resolveIntegrationSummary(
             return String(value);
         }
     }
-    return "Not configured";
+    return hasSecret ? "Configured" : "Not configured";
 }
 
 function getBadgeForSpec(
@@ -182,8 +193,12 @@ function CanvasPreview({
     onStaleTools: (uuids: string[]) => void;
     onStaleDocuments: (uuids: string[]) => void;
 }) {
+    const { config: appConfig } = useAppConfig();
     if (spec.name === "trigger") {
-        const endpoint = buildTriggerEndpoints(data.trigger_path).production;
+        const endpoint = buildTriggerEndpoints(
+            data.trigger_path,
+            resolveWebhookBaseUrl(appConfig?.tunnelUrl),
+        ).production;
         return (
             <div className="space-y-2">
                 <p className="text-xs text-muted-foreground">API Endpoint:</p>
@@ -345,9 +360,13 @@ function ClickToCopy({
     const [copied, setCopied] = useState(false);
     const onCopy = async () => {
         if (!value) return;
-        await navigator.clipboard.writeText(value);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
+        try {
+            await copyTextToClipboard(value);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } catch {
+            toast.error("Failed to copy value");
+        }
     };
     return (
         <button
@@ -474,7 +493,9 @@ export const GenericNode = memo(({ data, selected, id, type }: GenericNodeProps)
     });
     const { saveWorkflow, tools, documents, recordings } = useWorkflow();
     const { bySpecName } = useNodeSpecs();
+    const { config: appConfig } = useAppConfig();
     const spec = bySpecName.get(type);
+    const webhookBaseUrl = resolveWebhookBaseUrl(appConfig?.tunnelUrl);
 
     // ── Form state ─────────────────────────────────────────────────────
     // mcp_tool_filters is not a spec property, so seedValues won't carry it;
@@ -500,18 +521,22 @@ export const GenericNode = memo(({ data, selected, id, type }: GenericNodeProps)
     // ── Trigger auto-UUID + canvas copy state ──────────────────────────
     const [triggerCopied, setTriggerCopied] = useState(false);
     const handleCopyTrigger = useCallback(async () => {
-        const endpoint = buildTriggerEndpoints(data.trigger_path).production;
+        const endpoint = buildTriggerEndpoints(data.trigger_path, webhookBaseUrl).production;
         if (!endpoint) return;
-        await navigator.clipboard.writeText(endpoint);
-        setTriggerCopied(true);
-        setTimeout(() => setTriggerCopied(false), 2000);
-    }, [data.trigger_path]);
+        try {
+            await copyTextToClipboard(endpoint);
+            setTriggerCopied(true);
+            setTimeout(() => setTriggerCopied(false), 2000);
+        } catch {
+            toast.error("Failed to copy trigger URL");
+        }
+    }, [data.trigger_path, webhookBaseUrl]);
 
     // For trigger nodes without a path yet, generate one and persist.
     useEffect(() => {
         if (type !== "trigger") return;
         if (data.trigger_path) return;
-        const newPath = crypto.randomUUID();
+        const newPath = createUuid();
         handleSaveNodeData({ ...data, trigger_path: newPath });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [type]);
@@ -591,7 +616,7 @@ export const GenericNode = memo(({ data, selected, id, type }: GenericNodeProps)
             : { source: true, target: true });
     const badge = getBadgeForSpec(spec, styleVariant);
     const Icon = spec ? resolveIcon(spec.icon) : Circle;
-    const docUrl = DOC_URL_BY_SPEC[type];
+    const docUrl = spec?.docs_url ?? DOC_URL_BY_SPEC[type];
     const contentLabel = spec?.properties.some((p) => p.name === "prompt")
         ? "Prompt"
         : "Details";
@@ -684,7 +709,7 @@ export const GenericNode = memo(({ data, selected, id, type }: GenericNodeProps)
                         />
                         {type === "trigger" && (
                             <TriggerWebhookUrls
-                                endpoints={buildTriggerEndpoints(data.trigger_path)}
+                                endpoints={buildTriggerEndpoints(data.trigger_path, webhookBaseUrl)}
                             />
                         )}
                     </div>

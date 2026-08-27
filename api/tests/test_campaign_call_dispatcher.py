@@ -25,6 +25,7 @@ from api.db.models import (
     WorkflowModel,
     WorkflowRunModel,
 )
+from api.services.call_concurrency import CallConcurrencySlot
 from api.services.campaign.campaign_call_dispatcher import CampaignCallDispatcher
 
 # =============================================================================
@@ -257,6 +258,27 @@ def mock_rate_limiter():
         "get_workflow_from_number_mapping": mock_get_from_number_mapping,
         "delete_workflow_from_number_mapping": mock_delete_from_number_mapping,
     }
+
+
+@pytest.fixture(autouse=True)
+def mock_call_concurrency():
+    async def acquire_slot(organization_id, *, source, **kwargs):
+        return CallConcurrencySlot(
+            organization_id=organization_id,
+            slot_id=f"slot-{uuid.uuid4().hex[:8]}",
+            max_concurrent=20,
+            source=source,
+            scope_key=kwargs.get("scope_key"),
+        )
+
+    with patch(
+        "api.services.campaign.campaign_call_dispatcher.call_concurrency"
+    ) as mock_concurrency:
+        mock_concurrency.acquire_org_slot = AsyncMock(side_effect=acquire_slot)
+        mock_concurrency.bind_workflow_run = AsyncMock()
+        mock_concurrency.release_slot = AsyncMock(return_value=True)
+        mock_concurrency.release_workflow_run_slot = AsyncMock(return_value=True)
+        yield mock_concurrency
 
 
 # =============================================================================
@@ -728,6 +750,67 @@ class TestProcessBatchCancellation:
                 [101, 102, 103]
             )
 
+    @pytest.mark.asyncio
+    async def test_readiness_failure_returns_claimed_runs_without_workflows(self):
+        from api.services.telephony.outbound_readiness import (
+            OutboundSetupIncompleteError,
+        )
+
+        dispatcher = CampaignCallDispatcher()
+        campaign = MagicMock()
+        campaign.id = 42
+        campaign.state = "running"
+        campaign.organization_id = 7
+        campaign.rate_limit_per_second = 1
+        campaign.telephony_configuration_id = 170
+
+        queued_runs = [MagicMock(id=101), MagicMock(id=102)]
+        provider = MagicMock()
+        provider.from_numbers = []
+        readiness_error = OutboundSetupIncompleteError(
+            170,
+            "Twilio campaign",
+            "Add a caller ID before placing calls.",
+        )
+
+        with (
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.db_client"
+            ) as mock_db,
+            patch.object(
+                dispatcher,
+                "get_provider_for_campaign",
+                AsyncMock(return_value=provider),
+            ),
+            patch.object(dispatcher, "apply_rate_limit", AsyncMock()),
+            patch.object(
+                dispatcher,
+                "acquire_concurrent_slot",
+                AsyncMock(return_value=MagicMock()),
+            ),
+            patch.object(
+                dispatcher,
+                "dispatch_call",
+                AsyncMock(side_effect=readiness_error),
+            ),
+        ):
+            mock_db.get_campaign_by_id = AsyncMock(return_value=campaign)
+            mock_db.claim_queued_runs_for_processing = AsyncMock(
+                return_value=queued_runs
+            )
+            mock_db.return_processing_queued_runs_without_workflow = AsyncMock(
+                return_value=2
+            )
+            mock_db.update_queued_run = AsyncMock()
+
+            with pytest.raises(OutboundSetupIncompleteError):
+                await dispatcher.process_batch(campaign_id=42, batch_size=2)
+
+        mock_db.return_processing_queued_runs_without_workflow.assert_awaited_once_with(
+            [101, 102]
+        )
+        mock_db.update_queued_run.assert_not_awaited()
+
 
 class TestProcessBatchEdgeCases:
     """Edge case tests for process_batch."""
@@ -793,3 +876,47 @@ class TestProcessBatchEdgeCases:
                     {"campaign_id": campaign_test_data.campaign_id},
                 )
                 await session.commit()
+
+
+class TestAcquireConcurrentSlotScoping:
+    """Campaign max_concurrency must scope to the campaign, not the org counter."""
+
+    def _campaign(self, orchestrator_metadata):
+        campaign = MagicMock()
+        campaign.id = 42
+        campaign.orchestrator_metadata = orchestrator_metadata
+        return campaign
+
+    @pytest.mark.asyncio
+    async def test_campaign_max_concurrency_uses_campaign_scope(
+        self, mock_call_concurrency
+    ):
+        dispatcher = CampaignCallDispatcher()
+        campaign = self._campaign({"max_concurrency": 3})
+
+        await dispatcher.acquire_concurrent_slot(7, campaign, timeout=5)
+
+        mock_call_concurrency.acquire_org_slot.assert_awaited_once_with(
+            7,
+            source="campaign:42",
+            timeout=5,
+            scope_key="campaign:42",
+            scope_max_concurrent=3,
+            retry_interval=1,
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_campaign_max_concurrency_skips_scope(self, mock_call_concurrency):
+        dispatcher = CampaignCallDispatcher()
+        campaign = self._campaign({})
+
+        await dispatcher.acquire_concurrent_slot(7, campaign, timeout=5)
+
+        mock_call_concurrency.acquire_org_slot.assert_awaited_once_with(
+            7,
+            source="campaign:42",
+            timeout=5,
+            scope_key=None,
+            scope_max_concurrent=None,
+            retry_interval=1,
+        )

@@ -3,10 +3,11 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import Float, Integer, Text, and_, cast, func
+from sqlalchemy import Float, Text, and_, cast, func
 from sqlalchemy.dialects.postgresql import JSONB
 
 from api.db.models import WorkflowRunModel
+from api.enums import WORKFLOW_RUN_MODES_BY_CHANNEL, CallType
 
 
 def get_workflow_run_order_clause(
@@ -52,6 +53,8 @@ ATTRIBUTE_FIELD_MAPPING = {
     "callTags": "gathered_context.call_tags",
     "callerNumber": "initial_context.caller_number",
     "calledNumber": "initial_context.called_number",
+    "callDirection": "call_type",
+    "callChannel": "mode",
 }
 
 
@@ -73,6 +76,8 @@ def apply_workflow_run_filters(
     - callTags: Filter by gathered_context.call_tags (array of strings)
     - callerNumber: Filter by initial_context.caller_number (text search)
     - calledNumber: Filter by initial_context.called_number (text search)
+    - callDirection: Filter by call_type (inbound / outbound)
+    - callChannel: Filter by mode, grouped into telephony / web / chat
 
     Args:
         base_query: The base SQLAlchemy query to apply filters to
@@ -162,6 +167,20 @@ def apply_workflow_run_filters(
                 elif status == "in_progress":
                     filter_conditions.append(WorkflowRunModel.is_completed == False)
 
+            elif filter_type == "radio" and field == "call_type":
+                # RadioValue carries the choice under "status" for every radio
+                # filter, not just the completion one.
+                direction = value.get("status")
+                if direction in {call_type.value for call_type in CallType}:
+                    filter_conditions.append(WorkflowRunModel.call_type == direction)
+
+            elif filter_type == "radio" and field == "mode":
+                # The UI filters by channel (telephony / web / chat); the column
+                # stores the provider-level mode, so expand to that channel's modes.
+                modes = WORKFLOW_RUN_MODES_BY_CHANNEL.get(value.get("status"))
+                if modes:
+                    filter_conditions.append(WorkflowRunModel.mode.in_(modes))
+
             elif (
                 filter_type in ("tags", "multiSelect")
                 and field == "gathered_context.call_tags"
@@ -211,17 +230,16 @@ def apply_workflow_run_filters(
                 if field == "usage_info.call_duration_seconds":
                     # Use ->> operator for compatibility with all PostgreSQL versions
                     # (subscript [] only works in PostgreSQL 14+)
+                    # Cast to Float, not Integer: some rows store the value as
+                    # a JSON float (e.g. 0.0), and Postgres can't cast the text
+                    # '0.0' to integer.
                     duration_text = cast(WorkflowRunModel.usage_info, JSONB).op("->>")(
                         "call_duration_seconds"
                     )
                     if min_val is not None:
-                        filter_conditions.append(
-                            cast(duration_text, Integer) >= min_val
-                        )
+                        filter_conditions.append(cast(duration_text, Float) >= min_val)
                     if max_val is not None:
-                        filter_conditions.append(
-                            cast(duration_text, Integer) <= max_val
-                        )
+                        filter_conditions.append(cast(duration_text, Float) <= max_val)
 
                 elif field == "cost_info.total_cost_usd":
                     # Use ->> operator for compatibility with all PostgreSQL versions
@@ -229,9 +247,9 @@ def apply_workflow_run_filters(
                         "total_cost_usd"
                     )
                     if min_val is not None:
-                        filter_conditions.append(cast(cost_text, Integer) >= min_val)
+                        filter_conditions.append(cast(cost_text, Float) >= min_val)
                     if max_val is not None:
-                        filter_conditions.append(cast(cost_text, Integer) <= max_val)
+                        filter_conditions.append(cast(cost_text, Float) <= max_val)
 
     if filter_conditions:
         base_query = base_query.where(and_(*filter_conditions))

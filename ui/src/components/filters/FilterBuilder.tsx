@@ -1,10 +1,11 @@
-import { AlertCircle, Calendar, CheckSquare, Hash, Radio, RefreshCw, Tag, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { AlertCircle, Calendar, CheckSquare, Hash, ListFilter, Radio, RefreshCw, Tag, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { MultiSelectFilter } from "@/components/filters/MultiSelectFilter";
 import { NumberFilter } from "@/components/filters/NumberFilter";
 import { NumberRangeFilter } from "@/components/filters/NumberRangeFilter";
+import { NumberSelectFilter } from "@/components/filters/NumberSelectFilter";
 import { RadioFilter } from "@/components/filters/RadioFilter";
 import { TagInputFilter } from "@/components/filters/TagInputFilter";
 import { TextFilter } from "@/components/filters/TextFilter";
@@ -26,7 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { formatDateRange, formatNumberRange, getDefaultValue, validateFilter } from "@/lib/filters";
+import { formatDateRange, formatNumberRange, getDefaultValue, resolveFilterAttributes, validateFilter } from "@/lib/filters";
 import { ActiveFilter, DateRangeValue, FilterAttribute, FilterTemplate, filterTemplates, FilterValue, MultiSelectValue, NumberRangeValue, NumberValue, RadioValue, TextValue } from "@/types/filters";
 
 interface FilterBuilderProps {
@@ -54,13 +55,17 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({
 }) => {
   const [selectedAttribute, setSelectedAttribute] = useState<string>("");
   const [expandedFilters, setExpandedFilters] = useState<Set<number>>(new Set());
+  const resolvedActiveFilters = useMemo(
+    () => resolveFilterAttributes(activeFilters, availableAttributes),
+    [activeFilters, availableAttributes]
+  );
 
   // Auto-expand new filters
   useEffect(() => {
-    if (activeFilters.length > 0) {
-      setExpandedFilters(new Set([activeFilters.length - 1]));
+    if (resolvedActiveFilters.length > 0) {
+      setExpandedFilters(new Set([resolvedActiveFilters.length - 1]));
     }
-  }, [activeFilters.length]);
+  }, [resolvedActiveFilters.length]);
 
   // Handle Command+Enter (Mac) or Ctrl+Enter (Windows/Linux) to apply filters
   useEffect(() => {
@@ -70,8 +75,8 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({
 
       if (isModifierPressed && event.key === 'Enter') {
         event.preventDefault();
-        const allFiltersValid = activeFilters.every(f => f.isValid);
-        const canApply = (activeFilters.length > 0 && allFiltersValid) || (activeFilters.length === 0 && hasAppliedFilters);
+        const allFiltersValid = resolvedActiveFilters.every(f => f.isValid);
+        const canApply = (resolvedActiveFilters.length > 0 && allFiltersValid) || (resolvedActiveFilters.length === 0 && hasAppliedFilters);
         if (canApply && !isExecuting) {
           onApplyFilters();
         }
@@ -82,7 +87,7 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [activeFilters, isExecuting, onApplyFilters, hasAppliedFilters]);
+  }, [resolvedActiveFilters, isExecuting, onApplyFilters, hasAppliedFilters]);
 
   const addFilter = useCallback((attributeId: string) => {
     const attribute = availableAttributes.find(attr => attr.id === attributeId);
@@ -95,25 +100,31 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({
       isValid: false,
     };
 
-    onFiltersChange([...activeFilters, newFilter]);
+    onFiltersChange([...resolvedActiveFilters, newFilter]);
     setSelectedAttribute("");
-  }, [availableAttributes, activeFilters, onFiltersChange]);
+  }, [availableAttributes, resolvedActiveFilters, onFiltersChange]);
 
   const updateFilter = useCallback((index: number, value: FilterValue) => {
-    const newFilters = [...activeFilters];
-    newFilters[index].value = value;
-    newFilters[index].isValid = validateFilter(newFilters[index]) === null;
+    const newFilters = resolvedActiveFilters.map((filter, filterIndex) => {
+      if (filterIndex !== index) return filter;
+
+      const updatedFilter = { ...filter, value };
+      return {
+        ...updatedFilter,
+        isValid: validateFilter(updatedFilter) === null,
+      };
+    });
     onFiltersChange(newFilters);
-  }, [activeFilters, onFiltersChange]);
+  }, [resolvedActiveFilters, onFiltersChange]);
 
   const removeFilter = useCallback((index: number) => {
-    onFiltersChange(activeFilters.filter((_, i) => i !== index));
+    onFiltersChange(resolvedActiveFilters.filter((_, i) => i !== index));
     setExpandedFilters(prev => {
       const newSet = new Set(prev);
       newSet.delete(index);
       return newSet;
     });
-  }, [activeFilters, onFiltersChange]);
+  }, [resolvedActiveFilters, onFiltersChange]);
 
   const clearAllFilters = useCallback(() => {
     onFiltersChange([]);
@@ -165,6 +176,8 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({
       case "number":
       case "numberRange":
         return <Hash className="h-4 w-4" />;
+      case "numberSelect":
+        return <ListFilter className="h-4 w-4" />;
       case "radio":
         return <Radio className="h-4 w-4" />;
       case "tags":
@@ -187,6 +200,12 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({
       case "number": {
         const value = filter.value as NumberValue;
         return value.value !== null ? value.value.toString() : "No value";
+      }
+      case "numberSelect": {
+        const value = filter.value as NumberValue;
+        if (value.value === null) return "No value";
+        return filter.attribute.config.numberSelectOptions?.find(option => option.value === value.value)?.label
+          || value.value.toString();
       }
       case "numberRange":
         return formatNumberRange(filter.value as NumberRangeValue, filter.attribute.config.unit);
@@ -244,6 +263,18 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({
             step={filter.attribute.config.step}
           />
         );
+      case "numberSelect":
+        return (
+          <NumberSelectFilter
+            value={filter.value as NumberValue}
+            onChange={(value) => updateFilter(index, value)}
+            error={error}
+            label={filter.attribute.config.numberSelectLabel}
+            placeholder={filter.attribute.config.placeholder}
+            options={filter.attribute.config.numberSelectOptions || []}
+            isLoading={filter.attribute.config.numberSelectOptionsLoading}
+          />
+        );
       case "numberRange":
         return (
           <NumberRangeFilter
@@ -264,6 +295,7 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({
             onChange={(value) => updateFilter(index, value)}
             error={error}
             options={filter.attribute.config.radioOptions || []}
+            label={`Select ${filter.attribute.label}`}
           />
         );
       case "tags":
@@ -287,9 +319,9 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({
     }
   };
 
-  const allFiltersValid = activeFilters.every(f => f.isValid);
+  const allFiltersValid = resolvedActiveFilters.every(f => f.isValid);
   const availableAttributesForAdding = availableAttributes.filter(
-    attr => !activeFilters.some(f => f.attribute.id === attr.id)
+    attr => !resolvedActiveFilters.some(f => f.attribute.id === attr.id)
   );
 
   return (
@@ -354,11 +386,11 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({
           </div>
 
           {/* Active Filters */}
-          {activeFilters.length > 0 && (
+          {resolvedActiveFilters.length > 0 && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <h4 className="text-sm font-medium">Active Filters</h4>
-                {activeFilters.length > 1 && (
+                {resolvedActiveFilters.length > 1 && (
                   <Button
                     variant="ghost"
                     size="sm"
@@ -369,7 +401,7 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({
                 )}
               </div>
 
-              {activeFilters.map((filter, index) => (
+              {resolvedActiveFilters.map((filter, index) => (
                 <Card key={index} className={filter.isValid ? "" : "border-red-200"}>
                   <CardHeader className="pb-3">
                     <div
@@ -414,7 +446,7 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({
           )}
 
           {/* Apply Filters Button */}
-          {(activeFilters.length > 0 || hasAppliedFilters) && (
+          {(resolvedActiveFilters.length > 0 || hasAppliedFilters) && (
             <div className="flex justify-between items-center gap-2 pt-2">
               {/* Auto-refresh toggle on the left */}
               {onAutoRefreshChange && (
@@ -443,7 +475,7 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({
                 </Button>
                 <Button
                   onClick={onApplyFilters}
-                  disabled={(activeFilters.length > 0 && !allFiltersValid) || isExecuting}
+                  disabled={(resolvedActiveFilters.length > 0 && !allFiltersValid) || isExecuting}
                   title={"Apply filters"}
                 >
                   {isExecuting ? "Applying..." : `Apply (${navigator.userAgent.toUpperCase().indexOf('MAC') >= 0 ? '⌘' : 'Ctrl'}+Enter)`}

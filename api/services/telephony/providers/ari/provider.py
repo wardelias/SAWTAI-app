@@ -14,12 +14,14 @@ from fastapi import HTTPException
 from loguru import logger
 
 from api.db import db_client
-from api.enums import WorkflowRunMode
+from api.enums import TelephonyCallStatus, WorkflowRunMode
 from api.services.telephony.base import (
     CallInitiationResult,
     NormalizedInboundData,
+    ProviderSyncResult,
     TelephonyProvider,
 )
+from api.services.telephony.providers.ari.external_pbx import create_adapter
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
@@ -43,14 +45,24 @@ class ARIProvider(TelephonyProvider):
         Args:
             config: Dictionary containing:
                 - ari_endpoint: ARI base URL (e.g., http://asterisk:8088)
-                - app_name: Stasis application name
+                - app_name: ARI username (ari.conf section name)
                 - app_password: ARI user password
+                - stasis_app_name: Stasis application to originate into
                 - from_numbers: List of SIP extensions/numbers (optional)
+
+        ``app_name`` authenticates to Asterisk; ``stasis_app_name`` names the
+        dialplan application calls are placed into. Asterisk treats these as
+        unrelated namespaces, and Dograh generates the second one so two
+        configurations can never claim the same application. Configurations
+        written before the split have only ``app_name`` and use it for both.
         """
         self.ari_endpoint = config.get("ari_endpoint", "").rstrip("/")
         self.app_name = config.get("app_name", "")
         self.app_password = config.get("app_password", "")
+        self.stasis_app_name = config.get("stasis_app_name") or self.app_name
         self.from_numbers = config.get("from_numbers", [])
+        self.default_from_number = config.get("default_from_number")
+        self.external_pbx_adapter = create_adapter(config.get("external_pbx"))
 
         if isinstance(self.from_numbers, str):
             self.from_numbers = [self.from_numbers]
@@ -92,25 +104,27 @@ class ARIProvider(TelephonyProvider):
         # Prepare channel creation data
         params = {
             "endpoint": sip_endpoint,
-            "app": self.app_name,
+            "app": self.stasis_app_name,
             "appArgs": ",".join(
                 filter(
                     None,
                     [
                         f"workflow_run_id={workflow_run_id}",
                         f"workflow_id={kwargs.get('workflow_id', '')}",
-                        f"user_id={kwargs.get('user_id', '')}",
                     ],
                 )
             ),
         }
 
+        # ARI omits callerId entirely when nothing is requested (the trunk
+        # decides), so only fall back to the config's default — never random.
+        from_number = from_number or self.default_from_number
         if from_number:
             params["callerId"] = from_number
 
         logger.info(
             f"[ARI] Initiating call to {sip_endpoint} "
-            f"via app={self.app_name}, workflow_run_id={workflow_run_id}"
+            f"via app={self.stasis_app_name}, workflow_run_id={workflow_run_id}"
         )
 
         async with aiohttp.ClientSession() as session:
@@ -122,10 +136,6 @@ class ARIProvider(TelephonyProvider):
                 response_text = await response.text()
 
                 if response.status != 200:
-                    logger.error(
-                        f"[ARI] Channel creation failed: "
-                        f"HTTP {response.status} - {response_text}"
-                    )
                     raise HTTPException(
                         status_code=response.status,
                         detail=f"Failed to create ARI channel: {response_text}",
@@ -172,6 +182,15 @@ class ARIProvider(TelephonyProvider):
         """Validate ARI configuration."""
         return bool(self.ari_endpoint and self.app_name and self.app_password)
 
+    async def validate_phone_number(self, address: str) -> ProviderSyncResult:
+        """Accept PBX-managed caller IDs and extensions.
+
+        ARI exposes channel endpoints and accepts ``callerId`` during channel
+        origination, but it has no carrier-number ownership resource. The PBX
+        dialplan and outbound trunk remain authoritative for these addresses.
+        """
+        return ProviderSyncResult(ok=True)
+
     async def verify_webhook_signature(
         self, url: str, params: Dict[str, Any], signature: str
     ) -> bool:
@@ -179,7 +198,7 @@ class ARIProvider(TelephonyProvider):
         return True
 
     async def get_webhook_response(
-        self, workflow_id: int, user_id: int, workflow_run_id: int
+        self, workflow_id: int, organization_id: int, workflow_run_id: int
     ) -> str:
         """ARI does not use webhook responses - call control is via REST API."""
         logger.warning(
@@ -205,12 +224,12 @@ class ARIProvider(TelephonyProvider):
         """
         # Map ARI channel states to common status format
         state_map = {
-            "Up": "answered",
-            "Down": "completed",
-            "Ringing": "ringing",
-            "Ring": "ringing",
-            "Busy": "busy",
-            "Unavailable": "failed",
+            "Up": TelephonyCallStatus.ANSWERED,
+            "Down": TelephonyCallStatus.COMPLETED,
+            "Ringing": TelephonyCallStatus.RINGING,
+            "Ring": TelephonyCallStatus.RINGING,
+            "Busy": TelephonyCallStatus.BUSY,
+            "Unavailable": TelephonyCallStatus.FAILED,
         }
 
         channel_state = data.get("channel", {}).get("state", "")
@@ -218,11 +237,11 @@ class ARIProvider(TelephonyProvider):
 
         # Determine status from event type
         if event_type == "StasisStart":
-            status = "answered"
+            status = TelephonyCallStatus.ANSWERED
         elif event_type == "StasisEnd":
-            status = "completed"
+            status = TelephonyCallStatus.COMPLETED
         elif event_type == "ChannelDestroyed":
-            status = "completed"
+            status = TelephonyCallStatus.COMPLETED
         else:
             status = state_map.get(channel_state, channel_state.lower())
 
@@ -241,7 +260,7 @@ class ARIProvider(TelephonyProvider):
         self,
         websocket: "WebSocket",
         workflow_id: int,
-        user_id: int,
+        organization_id: int,
         workflow_run_id: int,
     ) -> None:
         """
@@ -253,7 +272,9 @@ class ARIProvider(TelephonyProvider):
         from api.services.pipecat.run_pipeline import run_pipeline_telephony
 
         # Get channel_id from workflow run context
-        workflow_run = await db_client.get_workflow_run(workflow_run_id, user_id)
+        workflow_run = await db_client.get_workflow_run(
+            workflow_run_id, organization_id=organization_id
+        )
         channel_id = ""
         if workflow_run and workflow_run.gathered_context:
             channel_id = workflow_run.gathered_context.get("call_id", "")
@@ -267,7 +288,7 @@ class ARIProvider(TelephonyProvider):
             provider_name=self.PROVIDER_NAME,
             workflow_id=workflow_id,
             workflow_run_id=workflow_run_id,
-            user_id=user_id,
+            organization_id=organization_id,
             call_id=channel_id,
             transport_kwargs={"channel_id": channel_id},
         )
@@ -362,6 +383,53 @@ class ARIProvider(TelephonyProvider):
         """ARI supports call transfers via bridge manipulation."""
         return True
 
+    async def transfer_external_pbx_call(
+        self,
+        *,
+        identity: Dict[str, Any],
+        destination: str,
+        field_updates: Optional[Dict[str, str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Delegate a PBX-owned customer leg to the configured adapter."""
+
+        adapter = self.external_pbx_adapter
+        if adapter is None or not identity:
+            return None
+        identity_type = identity.get("type") or identity.get("provider")
+        if identity_type != adapter.type:
+            logger.warning(
+                "[ARI External PBX] Captured identity does not match configured "
+                f"adapter: identity={identity_type!r} adapter={adapter.type!r}"
+            )
+            return {
+                "status": "failed",
+                "action": "external_pbx_transfer",
+                "message": "The external PBX call identity is invalid.",
+                "reason": "external_pbx_identity_mismatch",
+            }
+
+        update_result = None
+        if field_updates:
+            update_result = await adapter.update_fields(identity, field_updates)
+            if not update_result.ok:
+                logger.warning(
+                    "[ARI External PBX] Field update failed; continuing transfer "
+                    f"adapter={adapter.type} message={update_result.message}"
+                )
+
+        transfer_result = await adapter.transfer(identity, destination)
+        return {
+            "status": "success" if transfer_result.ok else "failed",
+            "action": "external_pbx_transfer",
+            "message": (
+                "Transferring your call now."
+                if transfer_result.ok
+                else "I'm sorry, I couldn't complete the transfer."
+            ),
+            "reason": None if transfer_result.ok else "external_pbx_transfer_failed",
+            "field_update_ok": update_result.ok if update_result else None,
+        }
+
     async def transfer_call(
         self,
         destination: str,
@@ -418,7 +486,7 @@ class ARIProvider(TelephonyProvider):
             endpoint = f"{self.base_url}/channels"
             params = {
                 "endpoint": sip_endpoint,
-                "app": self.app_name,
+                "app": self.stasis_app_name,
                 "appArgs": app_args,
                 "timeout": timeout,  # Keep timeout for transfer calls
             }
@@ -523,6 +591,6 @@ class ARIProvider(TelephonyProvider):
         return (
             f"{ws_scheme}://{parsed.netloc}/ari/events"
             f"?api_key={self.app_name}:{self.app_password}"
-            f"&app={self.app_name}"
+            f"&app={self.stasis_app_name}"
             f"&subscribeAll=true"
         )

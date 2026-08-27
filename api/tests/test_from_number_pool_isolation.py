@@ -20,8 +20,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from api.services.call_concurrency import CallConcurrencySlot
+from api.services.call_concurrency.rate_limiter import RateLimiter
 from api.services.campaign.campaign_call_dispatcher import CampaignCallDispatcher
-from api.services.campaign.rate_limiter import RateLimiter
 
 
 def _unique_id() -> int:
@@ -201,7 +202,7 @@ class TestRateLimiterFromNumberPoolIsolation:
 def _make_campaign(
     *,
     organization_id: int,
-    telephony_configuration_id: int,
+    telephony_configuration_id: int | None,
     workflow_id: int = 1,
     campaign_id: int = 99,
 ) -> SimpleNamespace:
@@ -232,6 +233,34 @@ def _make_queued_run(
 class TestDispatcherThreadsTelephonyConfig:
     """The dispatcher must pass telephony_configuration_id when acquiring,
     storing the mapping, and releasing the from_number."""
+
+    @pytest.mark.asyncio
+    async def test_legacy_campaign_pins_the_ready_resolved_config(self):
+        campaign = _make_campaign(
+            organization_id=7,
+            telephony_configuration_id=None,
+        )
+        provider = MagicMock()
+        resolver = AsyncMock(return_value=4242)
+        provider_factory = AsyncMock(return_value=provider)
+        dispatcher = CampaignCallDispatcher()
+
+        with (
+            patch(
+                "api.services.telephony.outbound_readiness.resolve_outbound_configuration_id",
+                resolver,
+            ),
+            patch(
+                "api.services.telephony.factory.get_telephony_provider_by_id",
+                provider_factory,
+            ),
+        ):
+            result = await dispatcher.get_provider_for_campaign(campaign)
+
+        assert result is provider
+        assert campaign.telephony_configuration_id == 4242
+        assert resolver.await_args.args == (None, 7)
+        provider_factory.assert_awaited_once_with(4242, 7)
 
     @pytest.mark.asyncio
     async def test_dispatch_call_acquires_from_number_for_campaign_config(self):
@@ -267,6 +296,9 @@ class TestDispatcherThreadsTelephonyConfig:
                 "api.services.campaign.campaign_call_dispatcher.rate_limiter"
             ) as mock_rl,
             patch(
+                "api.services.campaign.campaign_call_dispatcher.call_concurrency"
+            ) as mock_concurrency,
+            patch(
                 "api.services.campaign.campaign_call_dispatcher.get_backend_endpoints",
                 AsyncMock(return_value=("https://example.com", None)),
             ),
@@ -277,17 +309,46 @@ class TestDispatcherThreadsTelephonyConfig:
                 ),
             ),
         ):
-            mock_db.get_workflow_by_id = AsyncMock(return_value=SimpleNamespace(id=1))
+            mock_db.get_workflow = AsyncMock(return_value=SimpleNamespace(id=1))
+            mock_db.get_telephony_configuration_for_org = AsyncMock(
+                return_value=SimpleNamespace(
+                    id=config_id,
+                    name="Twilio campaign",
+                    provider="twilio",
+                    credentials={},
+                )
+            )
+            mock_db.list_phone_numbers_for_config = AsyncMock(
+                return_value=[
+                    SimpleNamespace(
+                        is_active=True,
+                        inbound_workflow_id=None,
+                        telephony_trunk_id=None,
+                    )
+                ]
+            )
             mock_db.create_workflow_run = AsyncMock(return_value=workflow_run)
             mock_db.update_workflow_run = AsyncMock()
+            mock_concurrency.bind_workflow_run = AsyncMock()
+            mock_concurrency.release_slot = AsyncMock()
+            mock_concurrency.release_workflow_run_slot = AsyncMock()
 
             mock_rl.acquire_from_number = AsyncMock(return_value="+15551110001")
             mock_rl.release_from_number = AsyncMock()
-            mock_rl.release_concurrent_slot = AsyncMock()
-            mock_rl.store_workflow_slot_mapping = AsyncMock()
             mock_rl.store_workflow_from_number_mapping = AsyncMock()
 
-            await dispatcher.dispatch_call(queued_run, campaign, slot_id="slot-1")
+            slot = CallConcurrencySlot(
+                organization_id=org_id,
+                slot_id="slot-1",
+                max_concurrent=1,
+                source="test",
+            )
+            await dispatcher.dispatch_call(queued_run, campaign, slot)
+
+            mock_db.get_workflow.assert_awaited_once_with(
+                campaign.workflow_id,
+                organization_id=org_id,
+            )
 
             # acquire_from_number on rate_limiter must be called with the
             # campaign's telephony_configuration_id.
@@ -327,6 +388,57 @@ class TestDispatcherThreadsTelephonyConfig:
             )
 
     @pytest.mark.asyncio
+    async def test_dispatch_rejects_incomplete_setup_before_creating_run(self):
+        from api.services.telephony.outbound_readiness import (
+            OutboundSetupIncompleteError,
+        )
+
+        org_id = 7
+        config_id = 4242
+        campaign = _make_campaign(
+            organization_id=org_id, telephony_configuration_id=config_id
+        )
+        queued_run = _make_queued_run()
+        provider = MagicMock(PROVIDER_NAME="twilio")
+        dispatcher = CampaignCallDispatcher()
+
+        with (
+            patch.object(
+                dispatcher,
+                "get_provider_for_campaign",
+                AsyncMock(
+                    side_effect=OutboundSetupIncompleteError(
+                        config_id,
+                        "Twilio campaign",
+                        "Add a caller ID before placing calls.",
+                    )
+                ),
+            ),
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.db_client"
+            ) as mock_db,
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.call_concurrency"
+            ) as mock_concurrency,
+        ):
+            mock_db.get_workflow = AsyncMock(return_value=SimpleNamespace(id=1))
+            mock_db.create_workflow_run = AsyncMock()
+            mock_concurrency.release_slot = AsyncMock()
+
+            slot = CallConcurrencySlot(
+                organization_id=org_id,
+                slot_id="slot-1",
+                max_concurrent=1,
+                source="test",
+            )
+            with pytest.raises(OutboundSetupIncompleteError):
+                await dispatcher.dispatch_call(queued_run, campaign, slot)
+
+        mock_db.create_workflow_run.assert_not_awaited()
+        provider.initiate_call.assert_not_called()
+        mock_concurrency.release_slot.assert_awaited_once_with(slot)
+
+    @pytest.mark.asyncio
     async def test_release_call_slot_uses_stored_telephony_config(self):
         """When a call completes, release_call_slot must release the from_number
         to the same telephony config it was acquired from."""
@@ -337,10 +449,15 @@ class TestDispatcherThreadsTelephonyConfig:
 
         dispatcher = CampaignCallDispatcher()
 
-        with patch(
-            "api.services.campaign.campaign_call_dispatcher.rate_limiter"
-        ) as mock_rl:
-            mock_rl.get_workflow_slot_mapping = AsyncMock(return_value=None)
+        with (
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.rate_limiter"
+            ) as mock_rl,
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.call_concurrency"
+            ) as mock_concurrency,
+        ):
+            mock_concurrency.release_workflow_run_slot = AsyncMock(return_value=False)
             mock_rl.get_workflow_from_number_mapping = AsyncMock(
                 return_value=(org_id, from_number, config_id)
             )

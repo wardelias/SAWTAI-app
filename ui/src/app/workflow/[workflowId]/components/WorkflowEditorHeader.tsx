@@ -26,6 +26,7 @@ import {
     PopoverTrigger,
 } from "@/components/ui/popover";
 import { useSidebar } from "@/components/ui/sidebar";
+import { copyTextToClipboard } from "@/lib/clipboard";
 
 interface WorkflowEditorHeaderProps {
     workflowName: string;
@@ -142,7 +143,7 @@ export const WorkflowEditorHeader = ({
             return;
         }
         try {
-            await navigator.clipboard.writeText(workflowUuid);
+            await copyTextToClipboard(workflowUuid);
             toast.success("Agent UUID copied");
         } catch {
             toast.error("Failed to copy Agent UUID");
@@ -304,7 +305,7 @@ export const WorkflowEditorHeader = ({
                     <div className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-blue-500/30 bg-blue-500/10">
                         <Eye className="w-4 h-4 text-blue-400" />
                         <span className="text-sm text-blue-400">
-                            Viewing {activeVersionLabel} — Read only
+                            Viewing {activeVersionLabel} - Read only
                         </span>
                     </div>
                 )}

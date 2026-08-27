@@ -5,13 +5,19 @@ import { type ReactNode } from "react";
 
 import type {
     CalculatorToolDefinition,
+    ContextDestinationMappingConfig,
+    ContextDestinationRoute,
+    ContextDestinationRule,
     EndCallConfig,
     EndCallToolDefinition,
     HttpApiToolDefinition,
     McpToolDefinition,
+    PresetToolParameter,
+    ToolParameter,
     TransferCallConfig,
     TransferCallToolDefinition,
 } from "@/client/types.gen";
+import { createUuid } from "@/lib/uuid";
 
 export type ToolCategory = "http_api" | "end_call" | "transfer_call" | "calculator" | "native" | "integration" | "mcp" | "behavior" | "book_meeting";
 
@@ -124,6 +130,79 @@ export const BEHAVIOR_PRESETS: BehaviorPreset[] = [
 ];
 
 export type EndCallMessageType = "none" | "custom" | "audio";
+export type TransferDestinationSource = "static" | "dynamic" | "context_mapping";
+
+export interface ContextDestinationRouteRow extends ContextDestinationRoute {
+    id: string;
+}
+
+export interface ContextDestinationRuleRow {
+    id: string;
+    context_path: string;
+    routes: ContextDestinationRouteRow[];
+}
+
+export function createContextDestinationRouteRow(
+    route?: Partial<ContextDestinationRoute>,
+): ContextDestinationRouteRow {
+    return {
+        id: createUuid(),
+        context_value: route?.context_value ?? "",
+        destination: route?.destination ?? "",
+    };
+}
+
+export function createContextDestinationRuleRow(
+    rule?: Partial<ContextDestinationRule>,
+): ContextDestinationRuleRow {
+    return {
+        id: createUuid(),
+        context_path: rule?.context_path ?? "",
+        routes: (rule?.routes ?? [{}]).map(createContextDestinationRouteRow),
+    };
+}
+
+/** Normalize a stored mapping (ordered or legacy single-rule) into editable rows. */
+export function contextMappingToRuleRows(
+    mapping?: ContextDestinationMappingConfig | null,
+): ContextDestinationRuleRow[] {
+    if (!mapping) return [];
+    const rules = mapping.rules?.length
+        ? mapping.rules
+        : mapping.context_path || mapping.routes?.length
+            ? [{ context_path: mapping.context_path || "", routes: mapping.routes || [] }]
+            : [];
+    return rules.map(createContextDestinationRuleRow);
+}
+
+export function ruleRowsToContextMappingRules(
+    rows: ContextDestinationRuleRow[],
+): ContextDestinationRule[] {
+    return rows.map((rule) => ({
+        context_path: rule.context_path.trim(),
+        routes: rule.routes.map((route) => ({
+            context_value: route.context_value.trim(),
+            destination: route.destination.trim(),
+        })),
+    }));
+}
+
+export interface TransferResolverConfig {
+    type: "http";
+    url: string;
+    headers?: Record<string, string> | null;
+    credential_uuid?: string | null;
+    timeout_ms: number;
+    wait_message?: string | null;
+    parameters?: ToolParameter[] | null;
+    preset_parameters?: PresetToolParameter[] | null;
+}
+
+export interface ExtendedTransferCallConfig extends Omit<TransferCallConfig, "context_mapping"> {
+    destination_source?: TransferDestinationSource;
+    resolver?: TransferResolverConfig | null;
+    context_mapping?: ContextDestinationMappingConfig | null;
+}
 
 export interface ToolCategoryConfig {
     value: ToolCategory;
@@ -166,7 +245,7 @@ export const TOOL_CATEGORIES: ToolCategoryConfig[] = [
     {
         value: "transfer_call",
         label: "Transfer Call",
-        description: "Transfer the call to another phone number (Twilio only)",
+        description: "Transfer the call to another phone number (Twilio, Plivo)",
         icon: PhoneForwarded,
         iconName: "phone-forwarded",
         iconColor: "#10B981",

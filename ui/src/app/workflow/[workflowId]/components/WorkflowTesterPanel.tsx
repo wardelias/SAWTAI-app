@@ -47,7 +47,7 @@ export function WorkflowTesterPanel({
     onRuntimeNodeTransition,
 }: WorkflowTesterPanelProps) {
     const auth = useAuth();
-    const { hasSeenTooltip, markTooltipSeen, markActionCompleted } = useOnboarding();
+    const { markActionCompleted } = useOnboarding();
     const { isAuthenticated, loading: authLoading, getAccessToken } = auth;
     const [accessToken, setAccessToken] = useState<string | null>(null);
     const [activeMode, setActiveMode] = useState<"audio" | "text">("audio");
@@ -113,7 +113,6 @@ export function WorkflowTesterPanel({
             }
 
             markActionCompleted("web_call_started");
-            markTooltipSeen("web_call");
             posthog.capture(PostHogEvent.WEB_CALL_INITIATED, {
                 workflow_id: workflowId,
                 workflow_run_id: response.data.id,
@@ -126,28 +125,40 @@ export function WorkflowTesterPanel({
         } finally {
             setCreatingVoiceRun(false);
         }
-    }, [accessToken, disabled, markActionCompleted, markTooltipSeen, workflowId]);
+    }, [accessToken, disabled, markActionCompleted, workflowId]);
 
     const authUnavailableReason = tokenReady && !accessToken
         ? "Authentication is required before testing can start."
         : null;
     const effectiveDisabledReason = disabledReason ?? authUnavailableReason;
     const testerBlocked = disabled || authUnavailableReason !== null;
-    const showRunTestTooltip =
+    const runTestTooltipEnabled =
         showWebCallOnboarding &&
         isVisible &&
         activeMode === "audio" &&
         !voiceRunId &&
         tokenReady &&
         !!accessToken &&
-        !testerBlocked &&
-        !hasSeenTooltip("web_call");
+        !testerBlocked;
+
+    const handleModeChange = (value: string) => {
+        const mode = value as "audio" | "text";
+        setActiveMode(mode);
+        if (mode !== "audio") {
+            // Leaving this tab unmounts EmbeddedVoiceTester, whose cleanup closes
+            // the socket and peer connection — the call is over at that point and
+            // the backend completes the run. A run may only be called once, so
+            // release the id here; coming back mints a fresh one rather than
+            // re-offering a finished run.
+            setVoiceRunId(null);
+        }
+    };
 
     return (
         <div className={cn("flex h-full min-h-0 flex-col bg-background", className)}>
             <Tabs
                 value={activeMode}
-                onValueChange={(value) => setActiveMode(value as "audio" | "text")}
+                onValueChange={handleModeChange}
                 className="min-h-0 flex-1 gap-0"
             >
                 <div className="border-b border-border/70 px-4 py-3">
@@ -265,12 +276,12 @@ export function WorkflowTesterPanel({
             </Tabs>
 
             <OnboardingTooltip
+                tooltipKey="web_call"
                 targetRef={runTestButtonRef}
                 title="Try Your First Web Call"
                 message="Start a browser call here to hear the agent, inspect the transcript, and validate the workflow before you customize it further."
-                onDismiss={() => markTooltipSeen("web_call")}
                 showNext={false}
-                isVisible={showRunTestTooltip}
+                enabled={runTestTooltipEnabled}
             />
         </div>
     );

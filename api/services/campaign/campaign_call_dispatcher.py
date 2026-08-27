@@ -5,17 +5,23 @@ from typing import TYPE_CHECKING, Optional
 
 from loguru import logger
 
-from api.constants import DEFAULT_ORG_CONCURRENCY_LIMIT
 from api.db import db_client
 from api.db.models import QueuedRunModel, WorkflowRunModel
-from api.enums import OrganizationConfigurationKey, WorkflowRunState
+from api.enums import WorkflowRunState
+from api.services.call_concurrency import (
+    CallConcurrencyLimitError,
+    CallConcurrencySlot,
+    call_concurrency,
+)
+from api.services.call_concurrency.rate_limiter import rate_limiter
 from api.services.campaign.circuit_breaker import circuit_breaker
 from api.services.campaign.errors import (
     ConcurrentSlotAcquisitionError,
     PhoneNumberPoolExhaustedError,
 )
-from api.services.campaign.rate_limiter import rate_limiter
 from api.services.quota_service import authorize_workflow_run_start
+from api.services.workflow.initial_context import merge_external_initial_context
+from api.services.workflow.run_creation import prepare_workflow_run_inputs
 from api.utils.common import get_backend_endpoints
 
 if TYPE_CHECKING:
@@ -29,42 +35,36 @@ if TYPE_CHECKING:
 class CampaignCallDispatcher:
     """Manages rate-limited and concurrent-limited call dispatching"""
 
-    def __init__(self):
-        self.default_concurrent_limit = int(DEFAULT_ORG_CONCURRENCY_LIMIT)
-
     async def get_provider_for_campaign(self, campaign) -> "TelephonyProvider":
-        """Get the telephony provider pinned to this campaign's config. Falls back
-        to the org's default config for legacy campaigns whose
-        ``telephony_configuration_id`` was never backfilled."""
-        from api.services.telephony.factory import (
-            get_default_telephony_provider,
-            get_telephony_provider_by_id,
+        """Resolve and pre-flight the provider used by a campaign.
+
+        Legacy campaigns without a pinned configuration select the first active
+        outbound-ready config, preferring an explicit default. The resolved id
+        is pinned on this detached campaign instance for the rest of the batch.
+        """
+        from api.services.telephony.factory import get_telephony_provider_by_id
+        from api.services.telephony.outbound_readiness import (
+            resolve_outbound_configuration_id,
         )
 
-        if campaign.telephony_configuration_id:
-            return await get_telephony_provider_by_id(
-                campaign.telephony_configuration_id, campaign.organization_id
-            )
-        logger.warning(
-            f"Campaign {campaign.id} has no telephony_configuration_id; "
-            f"falling back to org default for {campaign.organization_id}"
+        requested_id = campaign.telephony_configuration_id
+        resolved_id = await resolve_outbound_configuration_id(
+            requested_id,
+            campaign.organization_id,
+            db=db_client,
         )
-        return await get_default_telephony_provider(campaign.organization_id)
+        if requested_id is None:
+            logger.warning(
+                f"Campaign {campaign.id} has no telephony_configuration_id; "
+                f"using ready config {resolved_id} for org "
+                f"{campaign.organization_id}"
+            )
+            campaign.telephony_configuration_id = resolved_id
+        return await get_telephony_provider_by_id(resolved_id, campaign.organization_id)
 
     async def get_org_concurrent_limit(self, organization_id: int) -> int:
         """Get the concurrent call limit for an organization."""
-        try:
-            config = await db_client.get_configuration(
-                organization_id,
-                OrganizationConfigurationKey.CONCURRENT_CALL_LIMIT.value,
-            )
-            if config and config.value:
-                return int(config.value["value"])
-        except Exception as e:
-            logger.warning(
-                f"Error getting concurrent limit for org {organization_id}: {e}"
-            )
-        return self.default_concurrent_limit
+        return await call_concurrency.get_org_concurrent_limit(organization_id)
 
     async def process_batch(self, campaign_id: int, batch_size: int = 10) -> int:
         """
@@ -72,6 +72,10 @@ class CampaignCallDispatcher:
         Thread-safe: uses SELECT FOR UPDATE SKIP LOCKED to prevent concurrent processing.
         Returns: number of processed runs
         """
+        # Lazy to preserve this module's import-cycle boundary with telephony
+        # provider registration. See the TYPE_CHECKING note above.
+        from api.services.telephony.outbound_readiness import OutboundReadinessError
+
         # Get campaign details
         campaign = await db_client.get_campaign_by_id(campaign_id)
         if not campaign:
@@ -119,12 +123,14 @@ class CampaignCallDispatcher:
                 )
 
                 # Acquire concurrent slot - waits until a slot is available
-                slot_id = await self.acquire_concurrent_slot(
+                concurrency_slot = await self.acquire_concurrent_slot(
                     campaign.organization_id, campaign
                 )
 
                 # Dispatch the call
-                workflow_run = await self.dispatch_call(queued_run, campaign, slot_id)
+                workflow_run = await self.dispatch_call(
+                    queued_run, campaign, concurrency_slot
+                )
 
                 # Update queued run as processed
                 await db_client.update_queued_run(
@@ -149,6 +155,19 @@ class CampaignCallDispatcher:
                 )
                 await self._return_unprocessed_claims(
                     queued_runs, processed_run_ids, reason="task_cancelled"
+                )
+                raise
+
+            except OutboundReadinessError as e:
+                logger.warning(
+                    f"Outbound setup is incomplete for campaign {campaign_id}; "
+                    "returning claimed queued runs without dispatching calls: "
+                    f"{e}"
+                )
+                await self._return_unprocessed_claims(
+                    queued_runs,
+                    processed_run_ids,
+                    reason="outbound_readiness_failed",
                 )
                 raise
 
@@ -233,68 +252,66 @@ class CampaignCallDispatcher:
             )
 
     async def dispatch_call(
-        self, queued_run: QueuedRunModel, campaign: any, slot_id: str
+        self,
+        queued_run: QueuedRunModel,
+        campaign: any,
+        concurrency_slot: CallConcurrencySlot,
     ) -> Optional[WorkflowRunModel]:
-        """Creates workflow run and initiates call. Requires a pre-acquired slot_id."""
+        """Creates workflow run and initiates call. Requires a pre-acquired slot."""
         from_number = None
+        workflow_run = None
+        slot_bound = False
 
-        # Get workflow details
-        workflow = await db_client.get_workflow_by_id(campaign.workflow_id)
-        if not workflow:
-            # Release slot before raising
-            await rate_limiter.release_concurrent_slot(
-                campaign.organization_id, slot_id
-            )
-            raise ValueError(f"Workflow {campaign.workflow_id} not found")
-
-        # Extract phone number
-        phone_number = queued_run.context_variables.get("phone_number")
-        if not phone_number:
-            # Release slot before raising
-            await rate_limiter.release_concurrent_slot(
-                campaign.organization_id, slot_id
-            )
-            raise ValueError(f"No phone number in queued run {queued_run.id}")
-
-        # Get provider for this campaign's pinned telephony config.
-        provider = await self.get_provider_for_campaign(campaign)
-        workflow_run_mode = provider.PROVIDER_NAME
-
-        # Acquire a unique from_number from the pool scoped to this campaign's
-        # telephony configuration so orgs with multiple configs don't leak
-        # caller IDs across configs.
-        from_number = await self.acquire_from_number(
-            campaign.organization_id,
-            telephony_configuration_id=campaign.telephony_configuration_id,
-        )
-        if from_number is None:
-            # Release concurrent slot before raising
-            await rate_limiter.release_concurrent_slot(
-                campaign.organization_id, slot_id
-            )
-            raise PhoneNumberPoolExhaustedError(
-                organization_id=campaign.organization_id
-            )
-
-        logger.info(f"Provider name: {provider.PROVIDER_NAME}")
-        logger.info(f"Queued run context: {queued_run.context_variables}")
-
-        # Merge context variables (queued_run context already includes retry info if applicable)
-        initial_context = {
-            **queued_run.context_variables,
-            "campaign_id": campaign.id,
-            "provider": provider.PROVIDER_NAME,
-            "source_uuid": queued_run.source_uuid,
-            "caller_number": from_number,
-            "called_number": phone_number,
-            "telephony_configuration_id": campaign.telephony_configuration_id,
-        }
-
-        logger.info(f"Final initial_context: {initial_context}")
-
-        # Create workflow run with queued_run_id tracking
-        workflow_run_name = f"WR-CAMPAIGN-{campaign.id}-{queued_run.id}"
         try:
+            # Get workflow details
+            workflow = await db_client.get_workflow(
+                campaign.workflow_id,
+                organization_id=campaign.organization_id,
+            )
+            if not workflow:
+                raise ValueError(f"Workflow {campaign.workflow_id} not found")
+
+            # Extract phone number
+            phone_number = queued_run.context_variables.get("phone_number")
+            if not phone_number:
+                raise ValueError(f"No phone number in queued run {queued_run.id}")
+
+            # Get provider for this campaign's pinned telephony config.
+            provider = await self.get_provider_for_campaign(campaign)
+            workflow_run_mode = provider.PROVIDER_NAME
+
+            # Acquire a unique from_number from the pool scoped to this campaign's
+            # telephony configuration so orgs with multiple configs don't leak
+            # caller IDs across configs.
+            from_number = await self.acquire_from_number(
+                campaign.organization_id,
+                telephony_configuration_id=campaign.telephony_configuration_id,
+            )
+            if from_number is None:
+                raise PhoneNumberPoolExhaustedError(
+                    organization_id=campaign.organization_id
+                )
+
+            logger.info(f"Provider name: {provider.PROVIDER_NAME}")
+            logger.info(f"Queued run context: {queued_run.context_variables}")
+
+            # Merge context variables (queued_run context already includes retry info if applicable)
+            initial_context = {
+                **merge_external_initial_context({}, queued_run.context_variables),
+                "campaign_id": campaign.id,
+                "provider": provider.PROVIDER_NAME,
+                "source_uuid": queued_run.source_uuid,
+                "caller_number": from_number,
+                "called_number": phone_number,
+                "direction": "outbound",
+                "telephony_configuration_id": campaign.telephony_configuration_id,
+            }
+
+            logger.info(f"Final initial_context: {initial_context}")
+
+            # Create workflow run with queued_run_id tracking
+            workflow_run_name = f"WR-CAMPAIGN-{campaign.id}-{queued_run.id}"
+            run_inputs = await prepare_workflow_run_inputs(db_client, workflow)
             workflow_run = await db_client.create_workflow_run(
                 name=workflow_run_name,
                 workflow_id=campaign.workflow_id,
@@ -303,12 +320,11 @@ class CampaignCallDispatcher:
                 initial_context=initial_context,
                 campaign_id=campaign.id,
                 queued_run_id=queued_run.id,  # Link to queued run for retry tracking
+                organization_id=campaign.organization_id,
+                definition_id=run_inputs.definition_id,
             )
-
-            # Store slot_id mapping in Redis for cleanup later
-            await rate_limiter.store_workflow_slot_mapping(
-                workflow_run.id, campaign.organization_id, slot_id
-            )
+            await call_concurrency.bind_workflow_run(concurrency_slot, workflow_run.id)
+            slot_bound = True
 
             # Store from_number mapping for cleanup on call completion
             await rate_limiter.store_workflow_from_number_mapping(
@@ -317,11 +333,12 @@ class CampaignCallDispatcher:
                 from_number,
                 telephony_configuration_id=campaign.telephony_configuration_id,
             )
-        except Exception as e:
+        except Exception:
             # Release slot and from_number on error
-            await rate_limiter.release_concurrent_slot(
-                campaign.organization_id, slot_id
-            )
+            if slot_bound and workflow_run:
+                await call_concurrency.release_workflow_run_slot(workflow_run.id)
+            else:
+                await call_concurrency.release_slot(concurrency_slot)
             if from_number:
                 await rate_limiter.release_from_number(
                     campaign.organization_id,
@@ -342,6 +359,7 @@ class CampaignCallDispatcher:
 
         quota_result = await authorize_workflow_run_start(
             workflow_id=campaign.workflow_id,
+            organization_id=campaign.organization_id,
             workflow_run_id=workflow_run.id,
         )
         if not quota_result.has_quota:
@@ -357,21 +375,7 @@ class CampaignCallDispatcher:
                 gathered_context={"error": error_message},
             )
 
-            mapping = await rate_limiter.get_workflow_slot_mapping(workflow_run.id)
-            if mapping:
-                org_id, mapped_slot_id = mapping
-                await rate_limiter.release_concurrent_slot(org_id, mapped_slot_id)
-                await rate_limiter.delete_workflow_slot_mapping(workflow_run.id)
-
-            from_number_mapping = await rate_limiter.get_workflow_from_number_mapping(
-                workflow_run.id
-            )
-            if from_number_mapping:
-                fn_org_id, fn_number, fn_tcid = from_number_mapping
-                await rate_limiter.release_from_number(
-                    fn_org_id, fn_number, telephony_configuration_id=fn_tcid
-                )
-                await rate_limiter.delete_workflow_from_number_mapping(workflow_run.id)
+            await self.release_call_slot(workflow_run.id)
 
             raise ValueError(error_message)
 
@@ -383,7 +387,6 @@ class CampaignCallDispatcher:
             webhook_url = (
                 f"{backend_endpoint}/api/v1/telephony/{webhook_endpoint}"
                 f"?workflow_id={campaign.workflow_id}"
-                f"&user_id={campaign.created_by}"
                 f"&workflow_run_id={workflow_run.id}"
                 f"&organization_id={campaign.organization_id}"
             )
@@ -394,7 +397,7 @@ class CampaignCallDispatcher:
                 workflow_run_id=workflow_run.id,
                 from_number=from_number,
                 workflow_id=campaign.workflow_id,
-                user_id=campaign.created_by,
+                organization_id=campaign.organization_id,
             )
 
             # Store provider type and metadata in gathered_context
@@ -446,23 +449,7 @@ class CampaignCallDispatcher:
                 reason="call_initiation_failed",
             )
 
-            # Release concurrent slot on failure
-            mapping = await rate_limiter.get_workflow_slot_mapping(workflow_run.id)
-            if mapping:
-                org_id, slot_id = mapping
-                await rate_limiter.release_concurrent_slot(org_id, slot_id)
-                await rate_limiter.delete_workflow_slot_mapping(workflow_run.id)
-
-            # Release from_number on failure
-            from_number_mapping = await rate_limiter.get_workflow_from_number_mapping(
-                workflow_run.id
-            )
-            if from_number_mapping:
-                fn_org_id, fn_number, fn_tcid = from_number_mapping
-                await rate_limiter.release_from_number(
-                    fn_org_id, fn_number, telephony_configuration_id=fn_tcid
-                )
-                await rate_limiter.delete_workflow_from_number_mapping(workflow_run.id)
+            await self.release_call_slot(workflow_run.id)
 
             raise
 
@@ -501,7 +488,7 @@ class CampaignCallDispatcher:
 
     async def acquire_concurrent_slot(
         self, organization_id: int, campaign: any, timeout: float = 600
-    ) -> str:
+    ) -> CallConcurrencySlot:
         """
         Acquires a concurrent call slot - waits if necessary until a slot is available.
 
@@ -510,54 +497,41 @@ class CampaignCallDispatcher:
             campaign: The campaign object
             timeout: Maximum time to wait for a slot (default 10 minutes)
 
-        Returns the slot_id which must be released when the call completes.
+        Returns the slot which must be released when the call completes.
 
         Raises:
             ConcurrentSlotAcquisitionError: If slot cannot be acquired within timeout
         """
-        # Get concurrent limit for organization
-        org_concurrent_limit = await self.get_org_concurrent_limit(organization_id)
-
-        # Check for campaign-level max_concurrency in orchestrator_metadata
+        # Check for campaign-level max_concurrency in orchestrator_metadata.
+        # It caps this campaign's own concurrent calls via a campaign-scoped
+        # counter — the org-wide limit still applies on top, but calls from
+        # other sources (WebRTC, inbound, other campaigns) don't count
+        # against the campaign's cap.
         campaign_max_concurrency = None
         if campaign.orchestrator_metadata:
             campaign_max_concurrency = campaign.orchestrator_metadata.get(
                 "max_concurrency"
             )
 
-        # Use the lower of campaign limit and org limit
-        if campaign_max_concurrency is not None:
-            max_concurrent = min(campaign_max_concurrency, org_concurrent_limit)
-        else:
-            max_concurrent = org_concurrent_limit
-
-        # Track wait time for alerting
-        wait_start = time.time()
-
-        # Wait until we can acquire a concurrent slot
-        while True:
-            slot_id = await rate_limiter.try_acquire_concurrent_slot(
-                organization_id, max_concurrent
+        try:
+            return await call_concurrency.acquire_org_slot(
+                organization_id,
+                source=f"campaign:{campaign.id}",
+                timeout=timeout,
+                scope_key=(
+                    f"campaign:{campaign.id}"
+                    if campaign_max_concurrency is not None
+                    else None
+                ),
+                scope_max_concurrent=campaign_max_concurrency,
+                retry_interval=1,
             )
-            if slot_id:
-                return slot_id
-
-            # Check if we've been waiting too long
-            wait_time = time.time() - wait_start
-            if wait_time > timeout:
-                raise ConcurrentSlotAcquisitionError(
-                    organization_id=organization_id,
-                    campaign_id=campaign.id,
-                    wait_time=wait_time,
-                )
-
-            logger.debug(
-                f"Attempting to get a slot for {organization_id} {campaign.id}, "
-                f"waited {wait_time:.1f}s"
-            )
-
-            # Wait before retrying
-            await asyncio.sleep(1)
+        except CallConcurrencyLimitError as e:
+            raise ConcurrentSlotAcquisitionError(
+                organization_id=organization_id,
+                campaign_id=campaign.id,
+                wait_time=e.wait_time,
+            ) from e
 
     async def acquire_from_number(
         self,
@@ -602,17 +576,9 @@ class CampaignCallDispatcher:
         Release concurrent slot and from_number when a call completes.
         Called by Twilio webhooks or workflow completion handlers.
         """
-        slot_released = False
-        mapping = await rate_limiter.get_workflow_slot_mapping(workflow_run_id)
-        if mapping:
-            org_id, slot_id = mapping
-            success = await rate_limiter.release_concurrent_slot(org_id, slot_id)
-            if success:
-                await rate_limiter.delete_workflow_slot_mapping(workflow_run_id)
-                logger.info(
-                    f"Released concurrent slot for workflow run {workflow_run_id}"
-                )
-                slot_released = True
+        slot_released = await call_concurrency.release_workflow_run_slot(
+            workflow_run_id
+        )
 
         # Release from_number back to its (org, telephony config) pool
         from_number_mapping = await rate_limiter.get_workflow_from_number_mapping(

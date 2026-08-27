@@ -1,4 +1,7 @@
-from fastapi import APIRouter
+import secrets
+from typing import Annotated
+
+from fastapi import APIRouter, Header, HTTPException, status
 from loguru import logger
 from pydantic import BaseModel
 
@@ -17,6 +20,7 @@ from api.routes.organization_usage import router as organization_usage_router
 from api.routes.public_agent import router as public_agent_router
 from api.routes.public_download import router as public_download_router
 from api.routes.public_embed import router as public_embed_router
+from api.routes.public_embed_chat import router as public_embed_chat_router
 from api.routes.reports import router as reports_router
 from api.routes.s3_signed_url import router as s3_router
 from api.routes.sequences import router as sequences_router
@@ -54,6 +58,7 @@ router.include_router(reports_router)
 router.include_router(webrtc_signaling_router)
 router.include_router(turn_credentials_router)
 router.include_router(public_embed_router)
+router.include_router(public_embed_chat_router)
 router.include_router(public_agent_router)
 router.include_router(public_download_router)
 router.include_router(workflow_embed_router)
@@ -76,10 +81,20 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     backend_api_endpoint: str
+    # Public URL the deployment is reachable at when it sits behind a Cloudflare
+    # tunnel (the host has no public IP). null for a directly-reachable deployment.
+    # The UI shows this so operators know the URL telephony providers should call.
+    tunnel_url: str | None = None
     deployment_mode: str
     auth_provider: str
     turn_enabled: bool
     force_turn_relay: bool
+    signup_enabled: bool
+    # Public Stack Auth client config — only populated when auth_provider == "stack".
+    # The UI reads these at runtime to initialize Stack, so they no longer need to
+    # be baked into the browser bundle at build time. Both are public values.
+    stack_project_id: str | None = None
+    stack_publishable_client_key: str | None = None
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -87,20 +102,142 @@ async def health() -> HealthResponse:
     from api.constants import (
         APP_VERSION,
         AUTH_PROVIDER,
+        BACKEND_API_ENDPOINT,
         DEPLOYMENT_MODE,
+        ENABLE_COTURN,
+        ENABLE_SIGNUP,
         FORCE_TURN_RELAY,
-        TURN_SECRET,
+        STACK_AUTH_PROJECT_ID,
+        STACK_PUBLISHABLE_CLIENT_KEY,
     )
-    from api.utils.common import get_backend_endpoints
+    from api.utils.common import get_backend_endpoints, is_local_or_private_url
 
     logger.debug("Health endpoint called")
     backend_endpoint, _ = await get_backend_endpoints()
+    # tunnel_url is set only when a Cloudflare tunnel was actually resolved: the
+    # configured address isn't publicly reachable, but get_backend_endpoints found
+    # a public tunnel URL for it. This is the URL the UI shows for inbound webhooks.
+    # It stays null for a directly-reachable (public IP / domain) deployment, where
+    # backend_api_endpoint itself is the public URL.
+    tunnel_url = (
+        backend_endpoint
+        if is_local_or_private_url(BACKEND_API_ENDPOINT)
+        and not is_local_or_private_url(backend_endpoint)
+        else None
+    )
+    is_stack = AUTH_PROVIDER == "stack"
     return HealthResponse(
         status="ok",
         version=APP_VERSION,
-        backend_api_endpoint=backend_endpoint,
+        backend_api_endpoint=BACKEND_API_ENDPOINT,
+        tunnel_url=tunnel_url,
         deployment_mode=DEPLOYMENT_MODE,
         auth_provider=AUTH_PROVIDER,
-        turn_enabled=bool(TURN_SECRET),
+        turn_enabled=ENABLE_COTURN,
         force_turn_relay=FORCE_TURN_RELAY,
+        signup_enabled=ENABLE_SIGNUP,
+        stack_project_id=STACK_AUTH_PROJECT_ID if is_stack else None,
+        stack_publishable_client_key=(
+            STACK_PUBLISHABLE_CLIENT_KEY if is_stack else None
+        ),
     )
+
+
+class ActiveCallsResponse(BaseModel):
+    active_calls: int
+    # Event-loop lag over the recent window (ms). The per-pod saturation signal
+    # for autoscaling load tests; see api/services/observability/loop_lag.py.
+    loop_lag_p95_ms: float = 0.0
+    loop_lag_max_ms: float = 0.0
+
+
+class AutoscaleMetricResponse(BaseModel):
+    # Fleet-wide active calls plus the warm buffer. KEDA divides this by the
+    # per-pod target (K) to get desiredPods = ceil((calls + buffer) / K).
+    value: int
+
+
+DOGRAH_DEVOPS_SECRET_HEADER = "X-Dograh-Devops-Secret"
+
+
+def _verify_devops_secret(
+    configured_secret: str | None,
+    provided_secret: str | None,
+) -> None:
+    if not configured_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Devops secret is not configured",
+        )
+    if not provided_secret or not secrets.compare_digest(
+        provided_secret,
+        configured_secret,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden",
+        )
+
+
+@router.get("/health/active-calls", response_model=ActiveCallsResponse)
+async def active_calls(
+    x_dograh_devops_secret: Annotated[
+        str | None,
+        Header(alias=DOGRAH_DEVOPS_SECRET_HEADER),
+    ] = None,
+) -> ActiveCallsResponse:
+    """In-flight call count for THIS worker — the drain signal for deploys.
+
+    A deploy orchestrator polls this per worker and waits for zero before
+    sending SIGTERM, because uvicorn force-closes live call WebSockets (close
+    code 1012) on SIGTERM and would cut calls mid-conversation otherwise. The
+    count is per-process: one uvicorn per VM port (scripts/rolling_update.sh)
+    or per Kubernetes pod (preStop hook). See api/services/observability/active_calls.py.
+    """
+    from api.constants import DOGRAH_DEVOPS_SECRET
+    from api.services.observability import loop_lag
+    from api.services.observability.active_calls import active_call_count
+
+    _verify_devops_secret(DOGRAH_DEVOPS_SECRET, x_dograh_devops_secret)
+    lag = loop_lag.stats()
+    return ActiveCallsResponse(
+        active_calls=active_call_count(),
+        loop_lag_p95_ms=lag["p95_ms"],
+        loop_lag_max_ms=lag["max_ms"],
+    )
+
+
+@router.get("/health/autoscale-metric", response_model=AutoscaleMetricResponse)
+async def autoscale_metric(
+    buffer: int = 0,
+    x_dograh_devops_secret: Annotated[
+        str | None,
+        Header(alias=DOGRAH_DEVOPS_SECRET_HEADER),
+    ] = None,
+) -> AutoscaleMetricResponse:
+    """Fleet-wide autoscaling signal for KEDA: total active calls + warm buffer.
+
+    Unlike /health/active-calls (a per-worker drain signal), this is the whole
+    fleet's active-call count read from Redis, so a single scrape drives the
+    ScaledObject. ``buffer`` (query param, in calls) is the warm headroom: KEDA
+    divides value by the per-pod target K, giving desiredPods =
+    ceil((calls + buffer) / K). All scaling policy — K, buffer, min/max — lives
+    in the ScaledObject; this endpoint is pure signal.
+
+    When the fleet count cannot be read (Redis down) this responds 503, NOT 0:
+    a failed scrape makes KEDA's HPA hold the current replica count, while a
+    successful scrape of 0 would instruct it to scale toward minReplicas.
+    """
+    from api.constants import DOGRAH_DEVOPS_SECRET
+    from api.services.call_concurrency import call_concurrency
+
+    _verify_devops_secret(DOGRAH_DEVOPS_SECRET, x_dograh_devops_secret)
+    try:
+        calls = await call_concurrency.get_fleet_active_calls()
+    except Exception as e:
+        logger.error(f"Fleet active-call count unavailable: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Fleet call count unavailable",
+        )
+    return AutoscaleMetricResponse(value=calls + max(0, buffer))

@@ -1,13 +1,13 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Download, Globe } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Download, Globe } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import TimezoneSelect, { type ITimezoneOption } from 'react-timezone-select';
 import { toast } from 'sonner';
 
-import { downloadUsageRunsReportApiV1OrganizationsUsageRunsReportGet, getDailyUsageBreakdownApiV1OrganizationsUsageDailyBreakdownGet, getPreferencesApiV1OrganizationsPreferencesGet, getUsageHistoryApiV1OrganizationsUsageRunsGet, savePreferencesApiV1OrganizationsPreferencesPut } from '@/client/sdk.gen';
-import type { DailyUsageBreakdownResponse, OrganizationPreferences, UsageHistoryResponse, WorkflowRunUsageResponse } from '@/client/types.gen';
+import { downloadUsageRunsReportApiV1OrganizationsUsageRunsReportGet, getDailyUsageBreakdownApiV1OrganizationsUsageDailyBreakdownGet, getPreferencesApiV1OrganizationsPreferencesGet, getUsageHistoryApiV1OrganizationsUsageRunsGet, getWorkflowsSummaryApiV1WorkflowSummaryGet, savePreferencesApiV1OrganizationsPreferencesPut } from '@/client/sdk.gen';
+import type { DailyUsageBreakdownResponse, OrganizationPreferences, UsageHistoryResponse, WorkflowRunUsageResponse, WorkflowSummaryResponse } from '@/client/types.gen';
 import { CallTypeCell } from '@/components/CallTypeCell';
 import { DailyUsageTable } from '@/components/DailyUsageTable';
 import { FilterBuilder } from '@/components/filters/FilterBuilder';
@@ -24,13 +24,42 @@ import {
     TableRow,
 } from '@/components/ui/table';
 import { useUserConfig } from '@/context/UserConfigContext';
+import { useDispositionCodes } from '@/hooks/useDispositionCodes';
+import { detailFromError } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
-import { usageFilterAttributes } from '@/lib/filterAttributes';
+import { formatDateTime, getLocalTimezone } from '@/lib/dateTime';
+import { usageFilterAttributes, withDispositionCodeOptions } from '@/lib/filterAttributes';
 import { decodeFiltersFromURL, encodeFiltersToURL } from '@/lib/filters';
-import { ActiveFilter, DateRangeValue } from '@/types/filters';
+import type { ActiveFilter, DateRangeValue, FilterAttribute, NumberFilterOption } from '@/types/filters';
 
-// Get local timezone
-const getLocalTimezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+const buildUsageFilterAttributes = (
+    agentOptions: NumberFilterOption[] | null,
+    isLoadingAgentOptions: boolean,
+    dispositionCodes: string[]
+): FilterAttribute[] => {
+    return withDispositionCodeOptions(usageFilterAttributes, dispositionCodes).map(attribute => {
+        if (attribute.id !== 'workflowId') {
+            return attribute;
+        }
+
+        return {
+            ...attribute,
+            label: 'Agent',
+            type: 'numberSelect',
+            config: {
+                ...attribute.config,
+                placeholder: 'Select an agent',
+                numberSelectLabel: 'Agent',
+                ...(agentOptions || isLoadingAgentOptions
+                    ? {
+                        numberSelectOptions: agentOptions ?? [],
+                        numberSelectOptionsLoading: isLoadingAgentOptions,
+                    }
+                    : {}),
+            },
+        } satisfies FilterAttribute;
+    });
+};
 
 export default function UsagePage() {
     const router = useRouter();
@@ -46,7 +75,23 @@ export default function UsagePage() {
         return pageParam ? parseInt(pageParam, 10) : 1;
     });
     const [isExecutingFilters, setIsExecutingFilters] = useState(false);
+    // Sort state (initialized from URL). Sorting is server-side because the
+    // listing is paginated — sorting the current page client-side would only
+    // reorder the 50 rows in hand.
+    const [sortBy, setSortBy] = useState<string | null>(() => {
+        return searchParams.get('sort_by') || null;
+    });
+    const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(() => {
+        return searchParams.get('sort_order') === 'asc' ? 'asc' : 'desc';
+    });
     const [isDownloadingReport, setIsDownloadingReport] = useState(false);
+    const [agentFilterOptions, setAgentFilterOptions] = useState<NumberFilterOption[] | null>(null);
+    const [isLoadingAgentFilterOptions, setIsLoadingAgentFilterOptions] = useState(false);
+    const { codes: dispositionCodes } = useDispositionCodes();
+    const availableUsageFilterAttributes = useMemo(
+        () => buildUsageFilterAttributes(agentFilterOptions, isLoadingAgentFilterOptions, dispositionCodes),
+        [agentFilterOptions, isLoadingAgentFilterOptions, dispositionCodes]
+    );
 
     // Daily usage breakdown state (only for paid orgs)
     const [dailyUsage, setDailyUsage] = useState<DailyUsageBreakdownResponse | null>(null);
@@ -56,10 +101,10 @@ export default function UsagePage() {
     // edits in the FilterBuilder; `appliedFilters` is what's actually been
     // committed via Apply (and what drives fetching + the download button).
     const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>(() => {
-        return decodeFiltersFromURL(searchParams, usageFilterAttributes);
+        return decodeFiltersFromURL(searchParams, availableUsageFilterAttributes);
     });
     const [appliedFilters, setAppliedFilters] = useState<ActiveFilter[]>(() => {
-        return decodeFiltersFromURL(searchParams, usageFilterAttributes);
+        return decodeFiltersFromURL(searchParams, availableUsageFilterAttributes);
     });
 
     // Media preview dialog
@@ -93,7 +138,7 @@ export default function UsagePage() {
             if (otherFilters.length > 0) {
                 const filterData = otherFilters.map(filter => ({
                     attribute: filter.attribute.id,
-                    type: filter.attribute.type,
+                    type: filter.attribute.type === 'numberSelect' ? 'number' : filter.attribute.type,
                     value: filter.value,
                 }));
                 filterParam = JSON.stringify(filterData);
@@ -108,7 +153,12 @@ export default function UsagePage() {
     };
 
     // Fetch usage history
-    const fetchUsageHistory = useCallback(async (page: number, filters?: ActiveFilter[]) => {
+    const fetchUsageHistory = useCallback(async (
+        page: number,
+        filters?: ActiveFilter[],
+        sortByParam?: string | null,
+        sortOrderParam?: 'asc' | 'desc'
+    ) => {
         if (!auth.isAuthenticated) return;
         setIsLoadingHistory(true);
         try {
@@ -117,6 +167,8 @@ export default function UsagePage() {
                     page,
                     limit: 50,
                     ...buildUsageQueryParams(filters),
+                    ...(sortByParam && { sort_by: sortByParam }),
+                    ...(sortOrderParam && { sort_order: sortOrderParam }),
                 },
             });
 
@@ -149,6 +201,37 @@ export default function UsagePage() {
             setIsLoadingDaily(false);
         }
     }, [auth.isAuthenticated, organizationPricing]);
+
+    const fetchAgentFilterOptions = useCallback(async () => {
+        if (!auth.isAuthenticated) return;
+
+        setIsLoadingAgentFilterOptions(true);
+        try {
+            const response = await getWorkflowsSummaryApiV1WorkflowSummaryGet({
+                query: {
+                    status: 'active',
+                },
+            });
+            if (response.error) {
+                throw new Error(detailFromError(response.error, 'Failed to load agents'));
+            }
+
+            const options = [...(response.data ?? [])]
+                .sort((a: WorkflowSummaryResponse, b: WorkflowSummaryResponse) => (
+                    a.name.localeCompare(b.name) || a.id - b.id
+                ))
+                .map((workflow: WorkflowSummaryResponse) => ({
+                    label: `${workflow.name || 'Untitled Agent'} (#${workflow.id})`,
+                    value: workflow.id,
+                }));
+            setAgentFilterOptions(options);
+        } catch (error) {
+            console.error('Failed to fetch agent filter options:', error);
+            setAgentFilterOptions(null);
+        } finally {
+            setIsLoadingAgentFilterOptions(false);
+        }
+    }, [auth.isAuthenticated]);
 
     const fetchPreferences = useCallback(async () => {
         if (!auth.isAuthenticated) return;
@@ -228,12 +311,39 @@ export default function UsagePage() {
         fetchPreferences();
     }, [fetchPreferences]);
 
+    useEffect(() => {
+        fetchAgentFilterOptions();
+    }, [fetchAgentFilterOptions]);
+
+    useEffect(() => {
+        setActiveFilters(currentFilters => {
+            let changed = false;
+            const nextFilters = currentFilters.map(filter => {
+                const updatedAttribute = availableUsageFilterAttributes.find(
+                    attribute => attribute.id === filter.attribute.id
+                );
+
+                if (!updatedAttribute || updatedAttribute === filter.attribute) {
+                    return filter;
+                }
+
+                changed = true;
+                return {
+                    ...filter,
+                    attribute: updatedAttribute,
+                };
+            });
+
+            return changed ? nextFilters : currentFilters;
+        });
+    }, [availableUsageFilterAttributes]);
+
     // Initial load - fetch when auth becomes available
     useEffect(() => {
         if (auth.isAuthenticated) {
-            fetchUsageHistory(currentPage, appliedFilters);
+            fetchUsageHistory(currentPage, appliedFilters, sortBy, sortOrder);
         }
-    }, [auth.isAuthenticated, currentPage, appliedFilters, fetchUsageHistory]);
+    }, [auth.isAuthenticated, currentPage, appliedFilters, sortBy, sortOrder, fetchUsageHistory]);
 
     // Fetch daily usage when organizationPricing becomes available
     useEffect(() => {
@@ -243,11 +353,21 @@ export default function UsagePage() {
     }, [auth.isAuthenticated, organizationPricing, fetchDailyUsage]);
 
     // Update URL with query parameters
-    const updateUrlParams = useCallback((params: { page?: number; filters?: ActiveFilter[] }) => {
+    const updateUrlParams = useCallback((params: {
+        page?: number;
+        filters?: ActiveFilter[];
+        sortBy?: string | null;
+        sortOrder?: 'asc' | 'desc';
+    }) => {
         const newParams = new URLSearchParams();
 
         if (params.page !== undefined) {
             newParams.set('page', params.page.toString());
+        }
+
+        if (params.sortBy) {
+            newParams.set('sort_by', params.sortBy);
+            newParams.set('sort_order', params.sortOrder || 'desc');
         }
 
         // Add filters to URL if present
@@ -266,10 +386,10 @@ export default function UsagePage() {
         setIsExecutingFilters(true);
         setCurrentPage(1); // Reset to first page when applying filters
         setAppliedFilters(activeFilters);
-        updateUrlParams({ page: 1, filters: activeFilters });
-        await fetchUsageHistory(1, activeFilters);
+        updateUrlParams({ page: 1, filters: activeFilters, sortBy, sortOrder });
+        await fetchUsageHistory(1, activeFilters, sortBy, sortOrder);
         setIsExecutingFilters(false);
-    }, [activeFilters, fetchUsageHistory, updateUrlParams]);
+    }, [activeFilters, fetchUsageHistory, updateUrlParams, sortBy, sortOrder]);
 
     const handleFiltersChange = useCallback((filters: ActiveFilter[]) => {
         setActiveFilters(filters);
@@ -280,39 +400,36 @@ export default function UsagePage() {
         setCurrentPage(1);
         setActiveFilters([]);
         setAppliedFilters([]);
-        updateUrlParams({ page: 1, filters: [] }); // Clear filters from URL
-        await fetchUsageHistory(1, []); // Fetch all runs without filters
+        updateUrlParams({ page: 1, filters: [], sortBy, sortOrder }); // Clear filters from URL
+        await fetchUsageHistory(1, [], sortBy, sortOrder); // Fetch all runs without filters
         setIsExecutingFilters(false);
-    }, [fetchUsageHistory, updateUrlParams]);
+    }, [fetchUsageHistory, updateUrlParams, sortBy, sortOrder]);
 
     // Handle page change
     const handlePageChange = (newPage: number) => {
         setCurrentPage(newPage);
-        updateUrlParams({ page: newPage, filters: appliedFilters });
-        fetchUsageHistory(newPage, appliedFilters);
+        updateUrlParams({ page: newPage, filters: appliedFilters, sortBy, sortOrder });
+        fetchUsageHistory(newPage, appliedFilters, sortBy, sortOrder);
     };
+
+    // Toggle sort direction on repeat clicks, otherwise start descending.
+    // The fetch effect above picks up the new state; page resets to 1 because
+    // the ordering of every page changes.
+    const handleSort = useCallback((field: string) => {
+        const newSortOrder = sortBy === field && sortOrder === 'desc' ? 'asc' : 'desc';
+        setSortBy(field);
+        setSortOrder(newSortOrder);
+        setCurrentPage(1);
+        updateUrlParams({ page: 1, filters: appliedFilters, sortBy: field, sortOrder: newSortOrder });
+    }, [sortBy, sortOrder, appliedFilters, updateUrlParams]);
 
     // Handle row click to navigate to workflow run
     const handleRowClick = (run: WorkflowRunUsageResponse) => {
         router.push(`/workflow/${run.workflow_id}/run/${run.id}`);
     };
 
-    // Format datetime for display with timezone support
-    const formatDateTime = (dateString: string) => {
-        const date = new Date(dateString);
-        const tzValue = typeof selectedTimezone === 'string' ? selectedTimezone : selectedTimezone.value;
-        // Use local timezone if none selected (during loading)
-        const effectiveTz = tzValue || localTimezone;
-        return date.toLocaleString('en-US', {
-            timeZone: effectiveTz,
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: true
-        });
-    };
+    const timezoneValue = typeof selectedTimezone === 'string' ? selectedTimezone : selectedTimezone.value;
+    const effectiveTimezone = timezoneValue || localTimezone;
 
     // Format duration for display
     const formatDuration = (seconds: number) => {
@@ -420,7 +537,7 @@ export default function UsagePage() {
                 {/* Filter Builder */}
                 <div className="mb-6 space-y-3">
                     <FilterBuilder
-                        availableAttributes={usageFilterAttributes}
+                        availableAttributes={availableUsageFilterAttributes}
                         activeFilters={activeFilters}
                         onFiltersChange={handleFiltersChange}
                         onApplyFilters={handleApplyFilters}
@@ -473,7 +590,19 @@ export default function UsagePage() {
                                                 <TableHead className="font-semibold">Phone Number</TableHead>
                                                 <TableHead className="font-semibold">Disposition</TableHead>
                                                 <TableHead className="font-semibold">Date</TableHead>
-                                                <TableHead className="font-semibold text-right">Duration</TableHead>
+                                                <TableHead
+                                                    className="font-semibold text-right cursor-pointer hover:bg-muted/50 select-none"
+                                                    onClick={() => handleSort('duration')}
+                                                >
+                                                    <div className="flex items-center justify-end gap-1">
+                                                        Duration
+                                                        {sortBy === 'duration' ? (
+                                                            sortOrder === 'asc' ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />
+                                                        ) : (
+                                                            <ArrowUpDown className="h-4 w-4 text-muted-foreground" />
+                                                        )}
+                                                    </div>
+                                                </TableHead>
                                                 {organizationPricing?.price_per_second_usd && (
                                                     <TableHead className="font-semibold text-right">Cost (USD)</TableHead>
                                                 )}
@@ -509,7 +638,7 @@ export default function UsagePage() {
                                                             <span className="text-sm text-muted-foreground">-</span>
                                                         )}
                                                     </TableCell>
-                                                    <TableCell>{formatDateTime(run.created_at)}</TableCell>
+                                                    <TableCell>{formatDateTime(run.created_at, effectiveTimezone)}</TableCell>
                                                     <TableCell className="text-right">
                                                         {formatDuration(run.call_duration_seconds)}
                                                     </TableCell>

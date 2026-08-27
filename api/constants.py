@@ -17,9 +17,47 @@ VOICEMAIL_RECORDING_DURATION = 5.0
 LANGFUSE_HOST = os.getenv("LANGFUSE_HOST")
 LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
+LANGFUSE_PROJECT_ID = os.getenv("LANGFUSE_PROJECT_ID")
+
+# Tracing as a whole is optional, but a half-configured Langfuse silently
+# produces dead trace links, so fail loudly at import instead.
+if all([LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY]) and not (
+    LANGFUSE_PROJECT_ID
+):
+    raise RuntimeError(
+        "LANGFUSE_PROJECT_ID is required when LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY "
+        "and LANGFUSE_SECRET_KEY are set. Find it in your Langfuse project URL "
+        "(/project/<project_id>/...) or via GET <host>/api/public/projects."
+    )
 
 # URLs for deployment
-BACKEND_API_ENDPOINT = os.getenv("BACKEND_API_ENDPOINT", "http://localhost:8000")
+#
+# PUBLIC_BASE_URL is the single canonical origin a deployment is reached at
+# (scheme + host, e.g. https://203-0-113-10.sslip.io). For a standard single-host
+# install it is the only endpoint value an operator sets — the per-subsystem URLs
+# below derive from it (and from PUBLIC_HOST for the TURN/ICE host). Each derived
+# var can still be set explicitly to override it for a split deployment.
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL") or None
+PUBLIC_HOST = os.getenv("PUBLIC_HOST") or None
+
+# The server's own IPv4 address, as the operator supplied it to the setup
+# script. Usually identical to PUBLIC_HOST, but kept distinct because it must
+# stay a raw IP (coturn's external-ip needs one) while PUBLIC_HOST may be a
+# hostname such as an sslip.io name. resolve_ice_filter_policies() classifies
+# it to detect a private-LAN or CGNAT deployment (e.g. Tailscale, no public
+# IP) and pick ICE candidate filtering accordingly, so an empty value here is
+# read as "public deployment" — every consumer of this must be wired through
+# docker-compose, or that detection silently misfires.
+SERVER_IP = os.getenv("SERVER_IP", "")
+
+# Public URL the backend builds webhook/callback/embed links from. Derives from
+# PUBLIC_BASE_URL (public IP / domain), falling back to localhost for local dev.
+# When this is a non-public address (localhost or a private/reserved IP) the host
+# isn't reachable from the internet, so get_backend_endpoints() resolves a running
+# Cloudflare tunnel's URL at runtime instead (see api/utils/common.py).
+BACKEND_API_ENDPOINT = (
+    os.getenv("BACKEND_API_ENDPOINT") or PUBLIC_BASE_URL or "http://localhost:8000"
+)
 UI_APP_URL = os.getenv("UI_APP_URL", "http://localhost:3010")
 
 DATABASE_URL = os.environ["DATABASE_URL"]
@@ -30,15 +68,28 @@ CORS_ALLOWED_ORIGINS = [
     o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()
 ]
 AUTH_PROVIDER = os.getenv("AUTH_PROVIDER", "local")
+ENABLE_SIGNUP = os.getenv("ENABLE_SIGNUP", "true").lower() == "true"
+# Stack Auth public client config. These are safe to expose to the browser (the
+# publishable client key is public by design, and the project id is non-sensitive),
+# and are served to the UI at runtime via /api/v1/health so the frontend no longer
+# needs them baked into the bundle at build time.
+STACK_AUTH_PROJECT_ID = os.getenv("STACK_AUTH_PROJECT_ID")
+STACK_PUBLISHABLE_CLIENT_KEY = os.getenv("STACK_PUBLISHABLE_CLIENT_KEY")
 DOGRAH_MPS_SECRET_KEY = os.getenv("DOGRAH_MPS_SECRET_KEY", None)
 MPS_API_URL = os.getenv("MPS_API_URL", "https://services.dograh.com")
+DOGRAH_DEVOPS_SECRET = os.getenv("DOGRAH_DEVOPS_SECRET") or None
 
 # Storage Configuration
 ENABLE_AWS_S3 = os.getenv("ENABLE_AWS_S3", "false").lower() == "true"
 
 # MinIO Configuration
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-MINIO_PUBLIC_ENDPOINT = os.getenv("MINIO_PUBLIC_ENDPOINT")
+# Full URL (scheme + host) browsers use to reach object storage. Derives from
+# PUBLIC_BASE_URL (remote nginx proxies /voice-audio/ to MinIO); set explicitly
+# only to point object storage at a separate origin.
+MINIO_PUBLIC_ENDPOINT = (
+    os.getenv("MINIO_PUBLIC_ENDPOINT") or PUBLIC_BASE_URL or "http://localhost:9000"
+)
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "voice-audio")
@@ -47,6 +98,17 @@ MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
 # AWS S3 Configuration
 S3_BUCKET = os.environ.get("S3_BUCKET")
 S3_REGION = os.environ.get("S3_REGION", "us-east-1")
+# Optional overrides for S3-compatible backends (e.g. MinIO, rustfs, Ceph).
+# S3_ENDPOINT_URL: full URL of a custom S3 endpoint (e.g. "https://s3.example.com").
+#   Leave unset to use AWS's default endpoint resolution.
+# S3_SIGNATURE_VERSION: botocore signature version used to sign requests and
+#   presigned URLs. Defaults to None (botocore's default, currently SigV2 for
+#   presigned URLs). Set to "s3v4" for S3-compatible servers that require SigV4.
+# S3_ADDRESSING_STYLE: "auto" (default), "path", or "virtual". Many S3-compatible
+#   servers and TLS setups require "path".
+S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL")
+S3_SIGNATURE_VERSION = os.environ.get("S3_SIGNATURE_VERSION")
+S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE")
 
 # Sentry configuration
 SENTRY_DSN = os.getenv("SENTRY_DSN")
@@ -59,6 +121,22 @@ POSTHOG_HOST = os.getenv("POSTHOG_HOST", "https://us.i.posthog.com")
 ENABLE_ARI_STASIS = os.getenv("ENABLE_ARI_STASIS", "false").lower() == "true"
 SERIALIZE_LOG_OUTPUT = os.getenv("SERIALIZE_LOG_OUTPUT", "false").lower() == "true"
 
+# Telephony media WebSocket authentication.
+# The carrier/connector dials back the media socket
+# /api/v1/telephony/ws/{workflow_id}/{organization_id}/{workflow_run_id}, whose
+# id triple is otherwise a guessable bearer capability. When a secret is set,
+# providers append an HMAC token to that URL as a trailing path segment (carriers
+# strip query strings; ARI is the exception and passes ?token=) and the handler
+# verifies it (see api/services/telephony/ws_auth.py).
+# Two-phase, backward-compatible rollout:
+#   * secret unset            -> feature off, URLs unchanged (default)
+#   * secret set, enforce off -> tokens minted + verified; invalid ones only logged
+#   * secret set, enforce on  -> invalid/missing tokens rejected (WS close 4401)
+TELEPHONY_WS_TOKEN_SECRET = os.getenv("TELEPHONY_WS_TOKEN_SECRET") or None
+TELEPHONY_WS_TOKEN_ENFORCE = (
+    os.getenv("TELEPHONY_WS_TOKEN_ENFORCE", "false").lower() == "true"
+)
+
 # Logging configuration
 LOG_FILE_PATH = os.getenv("LOG_FILE_PATH", None)
 LOG_LEVEL = os.getenv("LOG_LEVEL", "DEBUG").upper()
@@ -67,7 +145,7 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "DEBUG").upper()
 LOG_ROTATION_SIZE = os.getenv("LOG_ROTATION_SIZE", "100 MB")
 LOG_RETENTION = os.getenv("LOG_RETENTION", "7 days")
 LOG_COMPRESSION = os.getenv("LOG_COMPRESSION", "gz")
-ENABLE_TELEMETRY = os.getenv("ENABLE_TELEMETRY", "false").lower() == "true"
+ENABLE_TELEMETRY = os.getenv("ENABLE_TELEMETRY", "true").lower() == "true"
 
 
 def _get_version() -> str:
@@ -111,7 +189,11 @@ COUNTRY_CODES = {
     "IE": "353",  # Ireland
 }
 
-DEFAULT_ORG_CONCURRENCY_LIMIT = os.getenv("DEFAULT_ORG_CONCURRENCY_LIMIT", 2)
+# Floor at 1 so a misconfigured env var (0 or negative) can't silently block
+# every call in the deployment.
+DEFAULT_ORG_CONCURRENCY_LIMIT = max(
+    1, int(os.getenv("DEFAULT_ORG_CONCURRENCY_LIMIT", "10"))
+)
 DEFAULT_CAMPAIGN_RETRY_CONFIG = {
     "enabled": True,
     "max_retries": 1,
@@ -120,6 +202,32 @@ DEFAULT_CAMPAIGN_RETRY_CONFIG = {
     "retry_on_no_answer": True,
     "retry_on_voicemail": False,
 }
+
+
+# Outbound webhook delivery: bounded retry with exponential backoff.
+# Delivery is persisted (see WebhookDeliveryModel) and retried by an ARQ task so a
+# transient network error can't permanently drop a final webhook. After
+# ``max_attempts`` transient failures the delivery is parked as ``dead_letter``.
+DEFAULT_WEBHOOK_DELIVERY_CONFIG = {
+    "max_attempts": int(os.getenv("WEBHOOK_DELIVERY_MAX_ATTEMPTS", 5)),
+    "base_delay_seconds": int(os.getenv("WEBHOOK_DELIVERY_BASE_DELAY_SECONDS", 30)),
+    "max_delay_seconds": int(os.getenv("WEBHOOK_DELIVERY_MAX_DELAY_SECONDS", 600)),
+    "timeout_seconds": int(os.getenv("WEBHOOK_DELIVERY_TIMEOUT_SECONDS", 30)),
+}
+
+# Text chats have no transport disconnect event, so a periodic worker closes
+# sessions that have stopped changing. Workflows can override this default.
+MIN_TEXT_CHAT_INACTIVITY_TIMEOUT_SECONDS = 60
+TEXT_CHAT_INACTIVITY_TIMEOUT_SECONDS = 1800
+TEXT_CHAT_INACTIVITY_SWEEP_INTERVAL_MINUTES = 5
+TEXT_CHAT_INACTIVITY_SWEEP_LOOKBACK_SECONDS = 3 * 60 * 60
+MAX_TEXT_CHAT_INACTIVITY_TIMEOUT_SECONDS = (
+    TEXT_CHAT_INACTIVITY_SWEEP_LOOKBACK_SECONDS
+    - TEXT_CHAT_INACTIVITY_SWEEP_INTERVAL_MINUTES * 60
+)
+TEXT_CHAT_INACTIVITY_SWEEP_PAGE_SIZE = 500
+TEXT_CHAT_INACTIVITY_SWEEP_MAX_PAGES = 10
+TEXT_CHAT_INACTIVITY_SWEEP_ENQUEUE_LIMIT = 500
 
 
 # Circuit breaker defaults for campaign call failure detection
@@ -131,8 +239,12 @@ DEFAULT_CIRCUIT_BREAKER_CONFIG = {
 }
 
 
+# Whether this deployment runs a TURN server (coturn).
+ENABLE_COTURN = os.getenv("ENABLE_COTURN", "false").lower() == "true"
 TURN_SECRET = os.getenv("TURN_SECRET")
-TURN_HOST = os.getenv("TURN_HOST", "localhost")
+# Host browsers dial for TURN/ICE. Derives from PUBLIC_HOST; set explicitly only
+# when the TURN server runs on a separate host from the app.
+TURN_HOST = os.getenv("TURN_HOST") or PUBLIC_HOST or "localhost"
 TURN_PORT = int(os.getenv("TURN_PORT", "3478"))
 TURN_TLS_PORT = int(os.getenv("TURN_TLS_PORT", "5349"))
 TURN_CREDENTIAL_TTL = int(os.getenv("TURN_CREDENTIAL_TTL", "86400"))

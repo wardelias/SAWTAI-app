@@ -17,6 +17,7 @@ from api.db.models import (
 from api.enums import CallType, StorageBackend
 from api.schemas.workflow import WorkflowRunResponseSchema
 from api.services.workflow.run_usage_response import format_public_cost_info
+from api.utils.recording_artifacts import get_recording_storage_key
 
 
 class WorkflowRunClient(BaseDBClient):
@@ -32,72 +33,49 @@ class WorkflowRunClient(BaseDBClient):
         logs: dict = None,
         campaign_id: int = None,
         queued_run_id: int = None,
-        use_draft: bool = False,
         organization_id: int | None = None,
+        definition_id: int | None = None,
     ) -> WorkflowRunModel:
         async with self.async_session() as session:
             workflow_query = (
                 select(WorkflowModel)
                 .options(joinedload(WorkflowModel.user))
-                .where(
-                    WorkflowModel.id == workflow_id, WorkflowModel.user_id == user_id
-                )
+                .where(WorkflowModel.id == workflow_id)
             )
             if organization_id is not None:
                 workflow_query = workflow_query.where(
                     WorkflowModel.organization_id == organization_id
                 )
+            elif user_id is not None:
+                workflow_query = workflow_query.where(WorkflowModel.user_id == user_id)
 
             workflow = await session.execute(workflow_query)
             workflow = workflow.scalars().first()
             if not workflow:
                 raise ValueError(f"Workflow with ID {workflow_id} not found")
 
-            # Resolve which definition to bind to this run
-            target_def = None
-
-            if use_draft:
-                # For test calls: prefer draft if it exists, fall back to published
-                draft_result = await session.execute(
-                    select(WorkflowDefinitionModel).where(
+            if definition_id is not None:
+                definition_result = await session.execute(
+                    select(WorkflowDefinitionModel.id).where(
+                        WorkflowDefinitionModel.id == definition_id,
                         WorkflowDefinitionModel.workflow_id == workflow.id,
-                        WorkflowDefinitionModel.status == "draft",
                     )
                 )
-                target_def = draft_result.scalars().first()
-
-            if target_def is None:
-                # Use the published version via released_definition_id (preferred)
-                # or fall back to is_current for backward compatibility
-                if workflow.released_definition_id:
-                    target_def = await session.get(
-                        WorkflowDefinitionModel, workflow.released_definition_id
+                if definition_result.scalar_one_or_none() is None:
+                    raise ValueError(
+                        f"Workflow definition {definition_id} does not belong to "
+                        f"workflow {workflow.id}"
                     )
-                else:
-                    pub_result = await session.execute(
-                        select(WorkflowDefinitionModel).where(
-                            WorkflowDefinitionModel.workflow_id == workflow.id,
-                            WorkflowDefinitionModel.is_current == True,
-                        )
-                    )
-                    target_def = pub_result.scalars().first()
 
             # Get the current storage backend based on ENABLE_AWS_S3 flag
             current_backend = StorageBackend.get_current_backend()
-
-            # Use initial_context from the version if available, else from workflow
-            default_context = (
-                target_def.template_context_variables
-                if target_def and target_def.template_context_variables
-                else workflow.template_context_variables
-            )
 
             new_run = WorkflowRunModel(
                 name=name,
                 workflow=workflow,
                 mode=mode,
-                definition_id=target_def.id if target_def else None,
-                initial_context=initial_context or default_context,
+                definition_id=definition_id,
+                initial_context=initial_context or {},
                 gathered_context=gathered_context or {},
                 logs=logs or {},
                 campaign_id=campaign_id,
@@ -188,13 +166,19 @@ class WorkflowRunClient(BaseDBClient):
                         "workflow_name": run.workflow.name if run.workflow else None,
                         "user_id": run.workflow.user_id if run.workflow else None,
                         "organization_id": organization.id if organization else None,
-                        "organization_name": organization.provider_id
-                        if organization
-                        else None,
+                        "organization_name": (
+                            organization.provider_id if organization else None
+                        ),
                         "mode": run.mode,
                         "is_completed": run.is_completed,
                         "recording_url": run.recording_url,
                         "transcript_url": run.transcript_url,
+                        "user_recording_url": get_recording_storage_key(
+                            run.extra, "user"
+                        ),
+                        "bot_recording_url": get_recording_storage_key(
+                            run.extra, "bot"
+                        ),
                         "usage_info": run.usage_info,
                         "cost_info": run.cost_info,
                         "initial_context": run.initial_context,
@@ -244,6 +228,26 @@ class WorkflowRunClient(BaseDBClient):
                 .where(WorkflowRunModel.id == run_id)
             )
             return result.scalars().first()
+
+    async def get_workflow_run_configurations(
+        self, run_id: int, organization_id: int
+    ) -> dict:
+        """Load the immutable workflow configuration snapshot for one run."""
+
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(WorkflowDefinitionModel.workflow_configurations)
+                .join(
+                    WorkflowRunModel,
+                    WorkflowRunModel.definition_id == WorkflowDefinitionModel.id,
+                )
+                .join(WorkflowModel, WorkflowRunModel.workflow_id == WorkflowModel.id)
+                .where(
+                    WorkflowRunModel.id == run_id,
+                    WorkflowModel.organization_id == organization_id,
+                )
+            )
+            return result.scalar_one_or_none() or {}
 
     async def get_organization_id_by_workflow_run_id(
         self, run_id: int | None
@@ -313,6 +317,12 @@ class WorkflowRunClient(BaseDBClient):
                         "is_completed": run.is_completed,
                         "recording_url": run.recording_url,
                         "transcript_url": run.transcript_url,
+                        "user_recording_url": get_recording_storage_key(
+                            run.extra, "user"
+                        ),
+                        "bot_recording_url": get_recording_storage_key(
+                            run.extra, "bot"
+                        ),
                         "cost_info": format_public_cost_info(
                             run.cost_info, run.usage_info
                         ),
@@ -340,6 +350,7 @@ class WorkflowRunClient(BaseDBClient):
         logs: dict | None = None,
         state: str | None = None,
         annotations: dict | None = None,
+        extra: dict | None = None,
     ) -> WorkflowRunModel:
         async with self.async_session() as session:
             # Use SELECT FOR UPDATE to lock the row during the update
@@ -362,7 +373,12 @@ class WorkflowRunClient(BaseDBClient):
             if cost_info:
                 run.cost_info = cost_info
             if initial_context:
-                run.initial_context = initial_context
+                # Merge initial context patches so independent call-start/runtime
+                # writers do not erase keys stored earlier in the run lifecycle.
+                run.initial_context = {
+                    **(run.initial_context or {}),
+                    **initial_context,
+                }
             if gathered_context:
                 # Lets merge the incoming gathered context keys with the existing ones
                 run.gathered_context = {
@@ -374,6 +390,8 @@ class WorkflowRunClient(BaseDBClient):
                 run.logs = {**run.logs, **logs}
             if annotations:
                 run.annotations = {**run.annotations, **annotations}
+            if extra:
+                run.extra = {**run.extra, **extra}
             if is_completed:
                 run.is_completed = is_completed
             if state:
@@ -412,10 +430,10 @@ class WorkflowRunClient(BaseDBClient):
             if not workflow_run:
                 return None, None
 
-            if not workflow_run.workflow or not workflow_run.workflow.user:
+            if not workflow_run.workflow:
                 return workflow_run, None
 
-            organization_id = workflow_run.workflow.user.selected_organization_id
+            organization_id = workflow_run.workflow.organization_id
             return workflow_run, organization_id
 
     async def ensure_public_access_token(self, workflow_run_id: int) -> Optional[str]:

@@ -12,6 +12,7 @@ from loguru import logger
 
 from api.constants import DEPLOYMENT_MODE
 from api.db import db_client
+from api.enums import WorkflowRunMode
 from api.services.managed_model_services import get_mps_correlation_id
 from api.services.mps_service_key_client import mps_service_key_client
 
@@ -32,11 +33,11 @@ def _duration_seconds_from_usage_info(workflow_run) -> float | None:
     return duration_seconds if duration_seconds > 0 else None
 
 
-async def _organization_uses_mps_billing_v2(organization_id: int) -> bool:
-    account = await mps_service_key_client.get_billing_account_status(
-        organization_id=organization_id
-    )
-    return bool(account and account.get("billing_mode") == "v2")
+def _is_usage_not_ready_error(exc: Exception) -> bool:
+    response = getattr(exc, "response", None)
+    if getattr(response, "status_code", None) != 409:
+        return False
+    return "usage_not_ready" in (getattr(response, "text", "") or "")
 
 
 async def report_workflow_run_platform_usage(workflow_run) -> None:
@@ -44,7 +45,17 @@ async def report_workflow_run_platform_usage(workflow_run) -> None:
     if DEPLOYMENT_MODE == "oss":
         return
 
+    if getattr(workflow_run, "mode", None) == WorkflowRunMode.TEXTCHAT.value:
+        logger.info(
+            "Skipping platform usage report for text chat workflow run {}",
+            workflow_run.id,
+        )
+        return
+
     if not getattr(workflow_run, "is_completed", False):
+        logger.warning(
+            "Workflow run is not completed in report_workflow_run_platform_usage"
+        )
         return
 
     organization_id = _workflow_run_organization_id(workflow_run)
@@ -69,9 +80,6 @@ async def report_workflow_run_platform_usage(workflow_run) -> None:
         return
 
     try:
-        if not await _organization_uses_mps_billing_v2(organization_id):
-            return
-
         result = await mps_service_key_client.report_platform_usage(
             organization_id=organization_id,
             correlation_id=correlation_id,
@@ -91,11 +99,21 @@ async def report_workflow_run_platform_usage(workflow_run) -> None:
             result,
         )
     except Exception as e:
-        logger.error(
-            "Failed to report platform usage for workflow run {}: {}",
-            workflow_run.id,
-            e,
-        )
+        if _is_usage_not_ready_error(e):
+            # A run can start and receive an MPS correlation id, then fail or end
+            # before billable STT usage is recorded. MPS returns usage_not_ready
+            # for that no-platform-fee path, so keep it out of error alerts.
+            logger.warning(
+                "Failed to report platform usage for workflow run {}: {}",
+                workflow_run.id,
+                e,
+            )
+        else:
+            logger.error(
+                "Failed to report platform usage for workflow run {}: {}",
+                workflow_run.id,
+                e,
+            )
 
 
 async def report_completed_workflow_run_platform_usage(workflow_run_id: int) -> None:

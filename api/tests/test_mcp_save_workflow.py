@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -240,6 +241,122 @@ const only = wf.addTyped(endCall({ name: "only", prompt: "bye" }));
     result = await save_workflow(workflow_id=1, code=code)
     assert result["saved"] is False
     assert result["error_code"] == "graph_validation"
+    save_mock.assert_not_awaited()
+    update_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_graph_validation_catches_duplicate_api_triggers(mock_backends):
+    save_mock, update_mock = mock_backends
+    payload = {
+        "nodes": [
+            {
+                "id": "start-1",
+                "type": "startCall",
+                "position": {"x": 0, "y": 0},
+                "data": {"name": "Start", "prompt": "Greet."},
+            },
+            {
+                "id": "trigger-1",
+                "type": "trigger",
+                "position": {"x": 0, "y": 200},
+                "data": {"name": "Trigger A", "trigger_path": "support_west"},
+            },
+            {
+                "id": "trigger-2",
+                "type": "trigger",
+                "position": {"x": 0, "y": 400},
+                "data": {"name": "Trigger B", "trigger_path": "support_east"},
+            },
+        ],
+        "edges": [],
+    }
+
+    with (
+        patch(
+            "api.mcp_server.tools.save_workflow.parse_code",
+            AsyncMock(
+                return_value={
+                    "ok": True,
+                    "workflowName": _FakeWorkflowModel.name,
+                    "workflow": payload,
+                }
+            ),
+        ),
+        patch(
+            "api.mcp_server.tools.save_workflow.reconcile_positions",
+            return_value=payload,
+        ),
+    ):
+        result = await save_workflow(workflow_id=1, code="ignored")
+
+    assert result["saved"] is False
+    assert result["error_code"] == "graph_validation"
+    assert "at most one API Trigger" in result["error"]
+    save_mock.assert_not_awaited()
+    update_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_graph_validation_catches_duplicate_transition_tools(mock_backends):
+    save_mock, update_mock = mock_backends
+    code = """import { Workflow } from "@dograh/sdk";
+import { startCall, endCall } from "@dograh/sdk/typed";
+const wf = new Workflow({ name: "duplicate-transitions" });
+const start = wf.addTyped(startCall({ name: "start", prompt: "Hi." }));
+const first = wf.addTyped(endCall({ name: "first", prompt: "Bye." }));
+const second = wf.addTyped(endCall({ name: "second", prompt: "Bye." }));
+wf.edge(start, first, { label: "handoff", condition: "caller wants sales" });
+wf.edge(start, second, { label: "handoff", condition: "caller wants support" });
+"""
+
+    result = await save_workflow(workflow_id=1, code=code)
+
+    assert result["saved"] is False
+    assert result["error_code"] == "graph_validation"
+    assert 'Transition tool name "handoff" is duplicated' in result["error"]
+    save_mock.assert_not_awaited()
+    update_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_graph_validation_catches_transition_custom_tool_collision(
+    mock_backends,
+):
+    save_mock, update_mock = mock_backends
+    code = """import { Workflow } from "@dograh/sdk";
+import { startCall, endCall } from "@dograh/sdk/typed";
+const wf = new Workflow({ name: "tool-transition-collision" });
+const start = wf.addTyped(startCall({
+  name: "start",
+  prompt: "Hi.",
+  tool_uuids: ["tool-uuid-1"]
+}));
+const done = wf.addTyped(endCall({ name: "done", prompt: "Bye." }));
+wf.edge(start, done, {
+  label: "transfer callback",
+  condition: "caller requested a callback"
+});
+"""
+    tool = SimpleNamespace(
+        tool_uuid="tool-uuid-1",
+        name="Transfer Callback",
+        category="transfer_call",
+    )
+
+    with patch(
+        "api.services.workflow.tool_name_validation.db_client.get_tools_by_uuids",
+        AsyncMock(return_value=[tool]),
+    ) as get_tools_mock:
+        result = await save_workflow(workflow_id=1, code=code)
+
+    assert result["saved"] is False
+    assert result["error_code"] == "graph_validation"
+    assert (
+        'Transition tool name "transfer_callback" conflicts with custom tool '
+        '"Transfer Callback"' in result["error"]
+    )
+    get_tools_mock.assert_awaited_once_with(["tool-uuid-1"], 1)
     save_mock.assert_not_awaited()
     update_mock.assert_not_awaited()
 

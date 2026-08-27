@@ -31,10 +31,11 @@ class Webhook_Custom_headersRow:
 @dataclass(kw_only=True)
 class Webhook(TypedNode):
     """
-    Send HTTP request after the workflow completes.  LLM hint: Sends an HTTP
-    request to an external system after the workflow completes. The payload
-    is a Jinja-templated JSON body with access to `workflow_run_id`,
-    `initial_context`, `gathered_context`, `annotations`, and call metadata.
+    Sync data extracted during the conversation back to your systems after
+    the call.  LLM hint: Sends an HTTP request to an external system after
+    the workflow completes. The payload is a Jinja-templated JSON body with
+    access to `workflow_run_id`, `initial_context`, `gathered_context`,
+    `annotations`, and call metadata.
     """
 
     type: ClassVar[str] = 'webhook'
@@ -69,7 +70,7 @@ class Webhook(TypedNode):
     Additional HTTP headers to include with the request.
     """
 
-    payload_template: dict[str, Any] = field(default_factory=lambda: {'call_id': '{{workflow_run_id}}', 'first_name': '{{initial_context.first_name}}', 'rsvp': '{{gathered_context.rsvp}}', 'duration': '{{cost_info.call_duration_seconds}}', 'recording_url': '{{recording_url}}', 'transcript_url': '{{transcript_url}}'})
+    payload_template: dict[str, Any] = field(default_factory=lambda: {'call_id': '{{workflow_run_id}}', 'first_name': '{{initial_context.first_name}}', 'rsvp': '{{gathered_context.rsvp}}', 'duration': '{{cost_info.call_duration_seconds}}', 'recording_url': '{{recording_url}}', 'user_recording_url': '{{user_recording_url}}', 'bot_recording_url': '{{bot_recording_url}}', 'transcript_url': '{{transcript_url}}'})
     """
     JSON body of the request. Values are Jinja-rendered against the run
     context — `{{workflow_run_id}}`, `{{gathered_context.foo}}`,
