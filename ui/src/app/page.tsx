@@ -2,6 +2,7 @@ import { isNextRouterError } from "next/dist/client/components/is-next-router-er
 import { redirect } from "next/navigation";
 
 import { getWorkflowCountApiV1WorkflowCountGet } from "@/client/sdk.gen";
+import { LandingPage } from "@/components/landing/LandingPage";
 import { getServerAccessToken,getServerAuthProvider,getServerUser } from "@/lib/auth/server";
 import logger from '@/lib/logger';
 import { getRedirectUrl } from "@/lib/utils";
@@ -39,7 +40,7 @@ export default async function Home() {
           redirect('/workflow/create');
         }
       } else {
-        redirect('/auth/login');
+        return <LandingPage loginHref="/auth/login" signupHref="/auth/signup" />;
       }
     } catch (error) {
       // Re-throw navigation errors (redirects, not found, etc.) - they're intentional
@@ -91,6 +92,6 @@ export default async function Home() {
     }
   }
 
-  logger.debug('[HomePage] Redirecting unauthenticated Stack user to /handler/sign-in');
-  redirect('/handler/sign-in');
+  logger.debug('[HomePage] Showing landing page to unauthenticated Stack user');
+  return <LandingPage loginHref="/handler/sign-in" signupHref="/handler/sign-up" />;
 }
