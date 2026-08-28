@@ -1,5 +1,3 @@
 {
-  "git": {
-    "deploymentEnabled": false
-  }
+  "framework": "nextjs"
 }
