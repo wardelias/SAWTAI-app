@@ -60,7 +60,7 @@ function getCallerInfo(): string {
             .replace(/^webpack-internal:\/\/\/(?:\.\/)?\(rsc\)\/(?:\.\/)/, '')
             .replace(/^webpack-internal:\/\/\/(?:\.\/)/, '')
             // Remove absolute paths to make them relative
-            .replace(/^.*\/dograh\/ui\//, '')
+            .replace(/^.*\/(?:dograh|sawtai)\/ui\//, '')
             // Remove .next build paths
             .replace(/.*\.next\/server\/app\//, 'app/')
             .replace(/.*\.next\/server\//, '')

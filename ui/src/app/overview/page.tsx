@@ -392,7 +392,7 @@ export default function OverviewPage() {
                             </Button>
                             <Button asChild variant="outline">
                                 <a
-                                    href="https://github.com/dograh-hq/dograh/issues"
+                                    href="https://github.com/wardelias/SAWTAI/issues"
                                     target="_blank"
                                     rel="noopener noreferrer"
                                 >

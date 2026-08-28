@@ -1,5 +1,5 @@
 // Thin client for the SEPARATE user_onboarding service (its own base URL).
-// Not part of the generated Dograh SDK — a different host. All endpoints are PUBLIC
+// Not part of the generated API client SDK — a different host. All endpoints are PUBLIC
 // (no auth token); identity is the email carried in the body. Every call is
 // BEST-EFFORT: failures are swallowed so a down/erroring service never blocks the user.
 

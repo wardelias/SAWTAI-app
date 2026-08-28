@@ -18,7 +18,7 @@ export function GitHubStarBadge({ className, label, showCount, source }: GitHubS
 
   useEffect(() => {
     if (!showCount) return;
-    fetch("https://api.github.com/repos/dograh-hq/dograh")
+    fetch("https://api.github.com/repos/wardelias/SAWTAI")
       .then((res) => res.json())
       .then((data) => {
         if (data.stargazers_count != null) {
@@ -33,7 +33,7 @@ export function GitHubStarBadge({ className, label, showCount, source }: GitHubS
 
   return (
     <a
-      href="https://github.com/dograh-hq/dograh"
+      href="https://github.com/wardelias/SAWTAI"
       target="_blank"
       rel="noopener noreferrer"
       onClick={() => posthog.capture(PostHogEvent.GITHUB_STAR_CLICKED, { source })}

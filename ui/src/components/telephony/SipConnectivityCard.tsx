@@ -125,7 +125,7 @@ export function SipConnectivityCard({
               <div className="border-b bg-muted/20 p-4">
                 <h3 className="font-semibold">Inbound</h3>
                 <p className="text-sm text-muted-foreground">
-                  Route calls to {details.provider_display_name}/Dograh using this
+                  Route calls to {details.provider_display_name}/Sawt using this
                   SIP endpoint.
                 </p>
               </div>
@@ -164,7 +164,7 @@ export function SipConnectivityCard({
               <div className="border-b bg-muted/20 p-4">
                 <h3 className="font-semibold">Outbound</h3>
                 <p className="text-sm text-muted-foreground">
-                  Send calls from {details.provider_display_name}/Dograh to your SIP
+                  Send calls from {details.provider_display_name}/Sawt to your SIP
                   carrier or PBX.
                 </p>
               </div>
