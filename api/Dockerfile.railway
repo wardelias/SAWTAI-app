@@ -31,8 +31,11 @@ RUN uv pip install -r /tmp/req.txt
 
 # Pipecat deps — install directly from the dograh fork on GitHub so we don't
 # need the git submodule in the build context (Railway doesn't clone submodules).
+# Keep this commit in sync with the `pipecat` submodule pointer (api/Dockerfile
+# builds from the submodule directly, so it can't drift silently the way this
+# hardcoded SHA can).
 RUN uv pip install \
-    'pipecat-ai[cartesia,deepgram,openai,elevenlabs,groq,google,azure,sarvam,soundfile,silero,webrtc,speechmatics,openrouter,camb,mcp] @ git+https://github.com/dograh-hq/pipecat.git@b0ac013a08cf74131a93afc5213af6b4802e5871' \
+    'pipecat-ai[cartesia,deepgram,openai,elevenlabs,groq,google,azure,sarvam,soundfile,silero,webrtc,speechmatics,openrouter,camb,mcp,inworld,smallest] @ git+https://github.com/dograh-hq/pipecat.git@496607395f0df106cf5c352a3d219ff459940157' \
  && uv pip uninstall opencv-python \
  && uv pip install opencv-python-headless \
  && python -c "import nltk; nltk.download('punkt_tab', download_dir='/opt/venv/nltk_data', quiet=True)"
