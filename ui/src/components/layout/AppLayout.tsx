@@ -12,6 +12,7 @@ import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sideb
 import { PostHogEvent } from "@/constants/posthog-events";
 import { useAppConfig } from "@/context/AppConfigContext";
 import { LeadFormsProvider } from "@/context/LeadFormsContext";
+import { cn } from "@/lib/utils";
 
 import { AppSidebar } from "./AppSidebar";
 import { GitHubStarBadge } from "./GitHubStarBadge";
@@ -107,6 +108,11 @@ const AppLayout: React.FC<AppLayoutProps> = ({
   // Hide sidebar for root (/), /handler routes (Stack Auth routes), and /auth routes
   const shouldShowSidebar = pathname !== "/" && !pathname.startsWith("/handler") && !pathname.startsWith("/auth");
 
+  // The public landing page at "/" has its own background — it shouldn't pick
+  // up the app-wide watermark (a giant faded Dograh wordmark baked into the
+  // brand-imprint SVG assets) meant for the logged-in app surface.
+  const isLandingPage = pathname === "/";
+
   // Only match the exact editor page /workflow/<id>, not sub-routes like /workflow/<id>/runs
   const isWorkflowEditor = /^\/workflow\/\d+$/.test(pathname);
 
@@ -151,7 +157,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
           </div>
         </LeadFormsProvider>
       ) : (
-        <div className="app-surface w-full flex-1">
+        <div className={cn("w-full flex-1", !isLandingPage && "app-surface")}>
           <BackendStatusBanner />
           {children}
         </div>
