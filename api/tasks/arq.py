@@ -51,7 +51,6 @@ from api.tasks.campaign_tasks import (
 )
 from api.tasks.knowledge_base_processing import process_knowledge_base_document
 from api.tasks.run_integrations import run_integrations_post_workflow_run
-from api.tasks.s3_upload import upload_voicemail_audio_to_s3
 from api.tasks.sequence_tasks import process_due_enrollments
 from api.tasks.text_chat_inactivity import (
     complete_inactive_text_chat_session,

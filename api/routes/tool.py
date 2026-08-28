@@ -144,7 +144,7 @@ async def list_tools(
 )
 async def list_behavior_presets(
     user: UserModel = Depends(get_user),
-) -> List[BehaviorPresetResponse]:
+) -> list[BehaviorPresetResponse]:
     """List the built-in Behavior presets (ready-made prompt-instruction tools)."""
     from api.services.workflow.behaviors.presets import BEHAVIOR_PRESETS
 
