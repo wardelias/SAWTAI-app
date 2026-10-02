@@ -187,6 +187,12 @@ COUNTRY_CODES = {
     "BE": "32",  # Belgium
     "LU": "352",  # Luxembourg
     "IE": "353",  # Ireland
+    "IL": "972",  # Israel
+    "PS": "970",  # Palestine
+    "JO": "962",  # Jordan
+    "AE": "971",  # United Arab Emirates
+    "SA": "966",  # Saudi Arabia
+    "EG": "20",  # Egypt
 }
 
 # Floor at 1 so a misconfigured env var (0 or negative) can't silently block

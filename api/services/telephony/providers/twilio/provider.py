@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from loguru import logger
 from twilio.request_validator import RequestValidator
 
+from api.constants import COUNTRY_CODES
 from api.enums import TelephonyCallStatus, WorkflowRunMode
 from api.services.telephony import ws_auth
 from api.services.telephony.base import (
@@ -25,6 +26,38 @@ from api.utils.telephony_address import normalize_telephony_address
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
+
+# Italy keeps its leading 0 in international format ("+39 06 ..."); every
+# other country we know drops the national trunk prefix after the dial code.
+_TRUNK_ZERO_DIAL_CODES = sorted(
+    {code for iso, code in COUNTRY_CODES.items() if iso != "IT"},
+    key=len,
+    reverse=True,
+)
+
+
+def to_dial_address(raw: str) -> str:
+    """Return the value to send as Twilio's ``To`` for a destination.
+
+    PSTN input is coerced to E.164 ("972 76-532-4207" → "+972765324207") and a
+    national trunk "0" left after the country code ("+9720765324207", a
+    local number typed after picking a country) is dropped. SIP URIs and
+    extensions pass through untouched.
+    """
+    normalized = normalize_telephony_address(raw)
+    if normalized.address_type != "pstn":
+        return raw.strip()
+
+    canonical = normalized.canonical
+    for code in _TRUNK_ZERO_DIAL_CODES:
+        prefix = f"+{code}0"
+        if canonical.startswith(prefix):
+            fixed = f"+{code}{canonical[len(prefix) :].lstrip('0')}"
+            logger.warning(
+                f"Dropping national trunk prefix from {canonical} -> {fixed}"
+            )
+            return fixed
+    return canonical
 
 
 class TwilioProvider(TelephonyProvider):
@@ -75,7 +108,10 @@ class TwilioProvider(TelephonyProvider):
         endpoint = f"{self.base_url}/Calls.json"
 
         from_number = self.select_from_number(from_number)
-        logger.info(f"Selected phone number {from_number} for outbound call")
+        to_number = to_dial_address(to_number)
+        logger.info(
+            f"Selected phone number {from_number} for outbound call to {to_number}"
+        )
         logger.info(f"Webhook url received - {webhook_url}")
 
         # Prepare call data
@@ -682,7 +718,7 @@ class TwilioProvider(TelephonyProvider):
         # Prepare Twilio API call data
         endpoint = f"{self.base_url}/Calls.json"
         data = {
-            "To": destination,
+            "To": to_dial_address(destination),
             "From": from_number,
             "Timeout": timeout,
             "Twiml": twiml,
