@@ -58,7 +58,12 @@ export async function middleware(request: NextRequest) {
   // entry like `/embed` exempts `/embed` and `/embed/...` but NOT sibling
   // routes such as `/embed-admin` — a bare startsWith would let those bypass
   // authentication.
-  if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
+  // `/` is the public landing page; it's exempt as an exact match only, since
+  // every path is a subpath of `/`.
+  if (
+    pathname === '/' ||
+    PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))
+  ) {
     return NextResponse.next();
   }
 

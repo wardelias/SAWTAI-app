@@ -328,7 +328,7 @@ export function AppSidebar() {
         <div className="flex items-center justify-between gap-2">
           <div className={cn("flex items-center gap-2 min-w-0", isCollapsed && "hidden")}>
             <Link
-              href="/"
+              href="/after-sign-in"
               className="notranslate flex items-center gap-2"
               translate="no"
               aria-label="SawtAI"

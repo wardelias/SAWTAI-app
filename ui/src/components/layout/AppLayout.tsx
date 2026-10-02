@@ -24,7 +24,7 @@ function AppHeader() {
         <Button variant="ghost" size="icon" onClick={toggleSidebar} aria-label="Open menu">
           <Menu className="h-5 w-5" />
         </Button>
-        <Link href="/" aria-label="SawtAI">
+        <Link href="/after-sign-in" aria-label="SawtAI">
           <SawtLogo className="h-9 w-auto" />
         </Link>
       </div>

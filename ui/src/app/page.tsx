@@ -1,97 +1,29 @@
-import { isNextRouterError } from "next/dist/client/components/is-next-router-error";
-import { redirect } from "next/navigation";
-
-import { getWorkflowCountApiV1WorkflowCountGet } from "@/client/sdk.gen";
 import { LandingPage } from "@/components/landing/LandingPage";
-import { getServerAccessToken,getServerAuthProvider,getServerUser } from "@/lib/auth/server";
+import { getServerAccessToken, getServerAuthProvider, getServerUser } from "@/lib/auth/server";
 import logger from '@/lib/logger';
-import { getRedirectUrl } from "@/lib/utils";
 
 export const dynamic = 'force-dynamic';
 
+// The landing page is the front door for every visitor. Signed-in users get an
+// "Open dashboard" CTA that goes through /after-sign-in, which picks the right
+// in-app destination (workflow list, create flow, superadmin, ...).
 export default async function Home() {
-  logger.debug('[HomePage] Starting Home page render');
   const authProvider = await getServerAuthProvider();
-  logger.debug('[HomePage] Auth provider:', authProvider);
+  const isLocal = authProvider === 'local';
 
-  // For local/OSS provider, check if user has workflows
-  if (authProvider === 'local') {
-    logger.debug('[HomePage] Local provider detected, checking for workflows');
-
-    try {
-      const accessToken = await getServerAccessToken();
-      if (accessToken) {
-        const countResponse = await getWorkflowCountApiV1WorkflowCountGet({
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        });
-
-        logger.debug('[HomePage] Found workflows for local provider:', {
-          total: countResponse.data?.total,
-          active: countResponse.data?.active
-        });
-
-        if (countResponse.data && countResponse.data.active > 0) {
-          logger.debug('[HomePage] Redirecting to /workflow - user has workflows');
-          redirect('/workflow');
-        } else {
-          logger.debug('[HomePage] Redirecting to /workflow/create - no workflows found');
-          redirect('/workflow/create');
-        }
-      } else {
-        return <LandingPage loginHref="/auth/login" signupHref="/auth/signup" />;
-      }
-    } catch (error) {
-      // Re-throw navigation errors (redirects, not found, etc.) - they're intentional
-      if (isNextRouterError(error)) {
-        throw error;
-      }
-
-      logger.error('[HomePage] Error checking workflows for local provider:', error);
-      // Default to /workflow/create on actual errors
-      logger.debug('[HomePage] Defaulting to /workflow/create due to error');
-      redirect('/workflow/create');
-    }
+  let signedIn = false;
+  try {
+    signedIn = isLocal ? !!(await getServerAccessToken()) : !!(await getServerUser());
+  } catch (error) {
+    // Auth backend hiccups shouldn't take down the public landing page.
+    logger.error('[HomePage] Failed to resolve session, rendering signed-out landing:', error);
   }
 
-  logger.debug('[HomePage] Getting server user...');
-  const user = await getServerUser();
-
-  logger.debug('[HomePage] Server user result:', {
-    hasUser: !!user,
-    userId: user?.id,
-    authProvider
-  });
-
-  if (user) {
-    try {
-      // For Stack provider, get the token and permissions
-      if (authProvider === 'stack' && 'getAuthJson' in user) {
-        logger.debug('[HomePage] Getting auth token from Stack user...');
-        const token = await user.getAuthJson();
-        logger.debug('[HomePage] Got auth token:', { hasToken: !!token?.accessToken });
-        const permissions = 'listPermissions' in user && 'selectedTeam' in user
-          ? await user.listPermissions(user.selectedTeam!) ?? []
-          : [];
-        logger.debug('[HomePage] Got permissions:', { count: permissions.length });
-        logger.debug('[HomePage] Getting redirect URL...');
-        const redirectUrl = await getRedirectUrl(token?.accessToken ?? "", permissions);
-        logger.debug('[HomePage] Redirecting to:', redirectUrl);
-        redirect(redirectUrl);
-      }
-    } catch (error) {
-      // If it's a Next.js redirect, let it through
-      if (error instanceof Error && 'digest' in error &&
-          typeof error.digest === 'string' && error.digest.startsWith('NEXT_REDIRECT')) {
-        throw error;
-      }
-      // Only catch actual API errors
-      console.error("API unavailable, showing sign-in:", error);
-      // Show sign-in page if API is unavailable
-    }
-  }
-
-  logger.debug('[HomePage] Showing landing page to unauthenticated Stack user');
-  return <LandingPage loginHref="/handler/sign-in" signupHref="/handler/sign-up" />;
+  return (
+    <LandingPage
+      loginHref={isLocal ? "/auth/login" : "/handler/sign-in"}
+      signupHref={isLocal ? "/auth/signup" : "/handler/sign-up"}
+      dashboardHref={signedIn ? "/after-sign-in" : undefined}
+    />
+  );
 }
