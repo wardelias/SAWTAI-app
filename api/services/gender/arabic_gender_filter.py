@@ -7,7 +7,7 @@ common masculine second-person address tokens to their explicit feminine
 (diacritized) forms *before* synthesis — so correct pronunciation does not
 depend on the LLM remembering to add tashkeel.
 
-Two transforms, applied only for female callers:
+Transforms, applied only for female callers:
 
 - **Explicit map** (``FEMININE_ADDRESS_MAP``) for forms that are not just a
   ـك suffix — verbs (تريد → تريدين), pronouns (أنت → أنتِ), and common words.
@@ -15,6 +15,9 @@ Two transforms, applied only for female callers:
   (مشروعك → مشروعكِ، لتفهمك → لتفهمكِ), so arbitrary stems are covered.
   Guarded by a minimum length and a ``ROOT_KAF_EXCEPTIONS`` blocklist so words
   whose final kaf is a root letter (ملك، بنك، شريك، اشتراك) are never touched.
+- **Contextual adjectives** (``FEMININE_ADJECTIVE_MAP``): an adjective right
+  after a 2nd-person subject is feminized (هل أنت مهتم -> هل أنتِ مهتمة), while
+  the agent describing itself (أنا متأكد) is left alone.
 
 Other safeguards:
 
@@ -68,6 +71,7 @@ FEMININE_ADDRESS_MAP: dict[str, str] = {
     "لديك": "لديكِ",
     "إنك": "إنكِ",
     "انك": "إنكِ",
+    "أنك": "أنكِ",
     "أنت": "أنتِ",
     "انت": "أنتِ",
     # Common noun + 2nd-person possessive (address context).
@@ -77,16 +81,94 @@ FEMININE_ADDRESS_MAP: dict[str, str] = {
     "بريدك": "بريدكِ",
     "طلبك": "طلبكِ",
     "حسابك": "حسابكِ",
+    # Short dialect forms below the ـك suffix-rule length floor.
+    "إلك": "إلكِ",
+    "الك": "إلكِ",
+    "ليك": "ليكِ",
+    "بدك": "بدكِ",
+    # Direct address terms.
+    "عزيزي": "عزيزتي",
+    "سيدي": "سيدتي",
     # Common 2nd-person present verbs (masc -> fem ـين). May collide with
-    # third-person feminine; remove if that becomes a problem.
+    # third-person feminine; remove if that becomes a problem. Verbs that often
+    # take an inanimate feminine subject (تعمل "it works", تستخدم) are left out.
     "تريد": "تريدين",
     "تستطيع": "تستطيعين",
     "تحتاج": "تحتاجين",
     "تعرف": "تعرفين",
     "تود": "تودين",
-    # Common imperative.
+    "ترغب": "ترغبين",
+    "تحب": "تحبين",
+    "تبحث": "تبحثين",
+    "تفكر": "تفكرين",
+    "تقصد": "تقصدين",
+    "تقدر": "تقدرين",
+    "تفهم": "تفهمين",
+    "تسمع": "تسمعين",
+    "تشعر": "تشعرين",
+    "تسكن": "تسكنين",
+    "تنتظر": "تنتظرين",
+    "توافق": "توافقين",
+    "تسمح": "تسمحين",
+    "تمانع": "تمانعين",
+    # Common imperatives (masc -> fem ـي). Forms identical to a 1st-person verb
+    # (أرسل "I send") are left out so the agent's own speech isn't rewritten.
     "تفضل": "تفضلي",
+    "انتظر": "انتظري",
+    "اختر": "اختاري",
+    "أخبرني": "أخبريني",
+    "اخبرني": "أخبريني",
+    "قل": "قولي",
+    "اتصل": "اتصلي",
+    "تأكد": "تأكدي",
+    "اضغط": "اضغطي",
+    "اسمح": "اسمحي",
+    "خذ": "خذي",
+    "اكتب": "اكتبي",
+    "ابق": "ابقي",
+    "تخيل": "تخيلي",
 }
+
+# Adjectives describing the caller. Only feminized right after a 2nd-person
+# subject (``ADDRESS_SUBJECTS``), e.g. "هل أنت مهتم" -> "هل أنتِ مهتمة", so the
+# agent describing itself or a third party ("أنا متأكد") is never touched.
+FEMININE_ADJECTIVE_MAP: dict[str, str] = {
+    "مهتم": "مهتمة",
+    "متأكد": "متأكدة",
+    "متاكد": "متأكدة",
+    "جاهز": "جاهزة",
+    "مستعد": "مستعدة",
+    "موافق": "موافقة",
+    "متاح": "متاحة",
+    "متفرغ": "متفرغة",
+    "مشغول": "مشغولة",
+    "راض": "راضية",
+    "راضي": "راضية",
+    "مرتاح": "مرتاحة",
+    "سعيد": "سعيدة",
+    "مقتنع": "مقتنعة",
+    "مستعجل": "مستعجلة",
+    "متزوج": "متزوجة",
+}
+ADDRESS_SUBJECTS: set[str] = {"أنت", "انت", "حضرتك", "إنك", "انك", "أنك"}
+
+# Clitic prefixes that attach to a mapped word: conjunctions "و" (and) / "ف"
+# (so), e.g. "وأنت" -> "وأنتِ", and the future marker "س" (only on present
+# verbs, which start with ت), e.g. "ستحب" -> "ستحبين". Longest first.
+_CONJUNCTION_PREFIXES = ("وس", "فس", "و", "ف", "س")
+_FUTURE_PREFIX = "س"
+
+
+def _split_prefix(bare: str, table: Mapping[str, str]) -> Optional[tuple[str, str]]:
+    """Return ``(prefix, stem)`` when ``bare`` is a mapped word with a clitic."""
+    for prefix in _CONJUNCTION_PREFIXES:
+        stem = bare[len(prefix) :]
+        if not bare.startswith(prefix) or stem not in table:
+            continue
+        if prefix.endswith(_FUTURE_PREFIX) and not stem.startswith("ت"):
+            continue  # "س" + "لك" is سلك (wire), not a future verb
+        return prefix, stem
+    return None
 
 
 # The second-person ـك suffix attaches to arbitrary stems (مشروعك، طلبك،
@@ -173,16 +255,36 @@ class ArabicFeminineTextFilter(BaseTextFilter):
         if self._gender != "female" or not text or not _HAS_ARABIC_RE.search(text):
             return text
 
-        def _replace(match: re.Match) -> str:
+        out: list[str] = []
+        last = 0
+        prev_bare: Optional[str] = None
+        for match in _TOKEN_RE.finditer(text):
             token = match.group(0)
             bare = _strip_tashkeel(token)
-            # Explicit map (verbs, pronouns, common forms) takes precedence,
-            # then the general word-final ـك suffix rule.
-            if bare in self._bare_map:
-                return self._bare_map[bare]
-            return _feminize_kaf_suffix(token, bare, self._kaf_exceptions)
+            out.append(text[last : match.start()])
+            out.append(self._feminize_token(token, bare, prev_bare))
+            last = match.end()
+            prev_bare = bare
+        out.append(text[last:])
+        return "".join(out)
 
-        return _TOKEN_RE.sub(_replace, text)
+    def _feminize_token(self, token: str, bare: str, prev_bare: Optional[str]) -> str:
+        # Adjective describing the caller, right after a 2nd-person subject.
+        if prev_bare is not None and bare in FEMININE_ADJECTIVE_MAP:
+            subject = prev_bare
+            split = _split_prefix(prev_bare, {s: s for s in ADDRESS_SUBJECTS})
+            if split:
+                subject = split[1]
+            if subject in ADDRESS_SUBJECTS:
+                return FEMININE_ADJECTIVE_MAP[bare]
+        # Explicit map (verbs, pronouns, common forms) takes precedence,
+        # then the general word-final ـك suffix rule.
+        if bare in self._bare_map:
+            return self._bare_map[bare]
+        split = _split_prefix(bare, self._bare_map)
+        if split:
+            return split[0] + self._bare_map[split[1]]
+        return _feminize_kaf_suffix(token, bare, self._kaf_exceptions)
 
     async def handle_interruption(self) -> None:
         """No buffered state to reset on interruption."""

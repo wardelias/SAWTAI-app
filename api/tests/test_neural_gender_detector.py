@@ -82,17 +82,48 @@ class TestECAPAGenderClassifierStreaming:
 
     def test_low_confidence_near_decision_boundary(self, patch_model):
         # Near-equal logits → softmax ~0.5, which the engine's NOTE_MIN_CONFIDENCE
-        # gate treats as "stay neutral".
+        # gate treats as "stay neutral". Uncertain early estimates are not
+        # accepted, so the decision only lands at FINAL_VOICED_SECONDS.
         patch_model([0.05, 0.0])
         clf = ECAPAGenderClassifier()
-        result = clf.add_audio(synth_voice(165.0, 3.5, 16000), 16000)
+        assert clf.add_audio(synth_voice(165.0, 3.5, 16000), 16000) is None
+        result = clf.add_audio(
+            synth_voice(165.0, ngd.FINAL_VOICED_SECONDS, 16000), 16000
+        )
         assert result is not None
         assert result.confidence < 0.7
+        assert result.voiced_seconds >= ngd.FINAL_VOICED_SECONDS
+
+    def test_confident_early_decision(self, patch_model):
+        # A very confident model answers after the first (short) stage, so the
+        # agent can switch address within the caller's first utterance.
+        patch_model([-4.0, 4.0])
+        first_stage = ngd.DECISION_STAGES[0][0]
+        clf = ECAPAGenderClassifier()
+        result = clf.add_audio(synth_voice(220.0, first_stage + 0.1, 16000), 16000)
+        assert result is not None
+        assert result.gender == "female"
+        assert result.voiced_seconds < ngd.DECISION_STAGES[1][0]
+
+    def test_moderate_confidence_waits_for_later_stage(self, patch_model):
+        # ~0.88 confidence: below the early-stage bar (0.92) but above the
+        # second stage's (0.85), so it's accepted only after ~3 s.
+        patch_model([0.0, 2.0])
+        sr = 16000
+        clf = ECAPAGenderClassifier()
+        early = ngd.DECISION_STAGES[0][0] + 0.1
+        assert clf.add_audio(synth_voice(220.0, early, sr), sr) is None
+        result = clf.add_audio(
+            synth_voice(220.0, ngd.DECISION_STAGES[1][0] - early + 0.1, sr), sr
+        )
+        assert result is not None
+        assert result.gender == "female"
+        assert result.voiced_seconds >= ngd.DECISION_STAGES[1][0]
 
     def test_waits_for_enough_voiced_audio(self, patch_model):
         patch_model([4.0, -4.0])
         clf = ECAPAGenderClassifier()
-        # 1 s of voiced speech is below the 3 s buffer target → no decision yet.
+        # 1 s of voiced speech is below the first stage → no decision yet.
         assert clf.add_audio(synth_voice(110.0, 1.0, 16000), 16000) is None
         assert clf.result is None
 

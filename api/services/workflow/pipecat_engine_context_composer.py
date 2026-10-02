@@ -51,13 +51,19 @@ RULES:
 # ---------------------------------------------------------------------------
 
 CALLER_PROFILE_NOTE_TEMPLATE = """\
-CALLER PROFILE:
-The caller's voice suggests they are most likely {gender}. When speaking a \
-grammatically gendered language (such as Arabic or Hebrew), address the \
-caller using the corresponding {gender} second-person forms (verb \
-conjugations, pronouns, and adjectives). If the caller states or clearly \
-implies a different gender, follow their lead instead of this note. Never \
-mention this inference to the caller."""
+CALLER PROFILE — GENDER: {gender_upper}
+The caller's voice indicates they are {gender}. When speaking a grammatically \
+gendered language (such as Arabic or Hebrew), address the caller ONLY with \
+{gender} second-person forms: pronouns, verb conjugations, imperatives, \
+adjectives and participles. This applies to EVERYTHING you say, including \
+scripted lines, example phrases and fixed wording given in the instructions \
+above: keep their meaning, but change every word addressed to the caller to \
+the {gender} form even if the script is written in another gender, and stop \
+using any gender-neutral or plural address you used before. Words about \
+yourself keep your own grammatical gender — only words addressed to the \
+caller change. If the caller states or clearly implies a different gender, \
+follow their lead instead of this note. Never mention this inference to the \
+caller."""
 
 # Female callers need an extra clause: undiacritized Arabic spells masculine
 # and feminine address identically (e.g. أساعدك), so the TTS voice defaults to
@@ -71,23 +77,75 @@ without help the voice will pronounce it as masculine. For every gendered word \
 addressed to the caller (not just the first one):
 - Add the diacritic (tashkeel) that forces the feminine reading — in \
 particular a kasra under the second-person kaf ـكِ, e.g. write "أساعِدُكِ" \
-(not "أساعدك"), "مَعَكِ", "شُكراً لكِ", "كيف حالُكِ".
+(not "أساعدك"), "مَعَكِ", "شُكراً لكِ", "كيف حالُكِ", and "أنتِ".
 - Prefer feminine verb forms whose letters already differ, so they read \
 correctly even without diacritics: present tense adds ـِين ("تُريدِين", \
 "تَستطيعِين"), the imperative adds ـي ("تفضّلي", "قولي"), and use the \
-feminine pronoun ـكِ / أنتِ."""
+feminine pronoun ـكِ / أنتِ.
+- Adjectives and participles describing the caller take ـة ("هل أنتِ \
+مهتمة؟", "متأكدة", "جاهزة"); past-tense verbs addressed to her end in ـتِ \
+("سجّلتِ", "قلتِ")."""
+
+FEMALE_HEBREW_GUIDANCE = """
+- Hebrew: use את (never אתה), feminine future and imperative forms ending in \
+־י ("תרצי", "תוכלי", "תגידי", "חכי"), feminine participles ("את רוצה", \
+"יכולה", "צריכה", "מעוניינת", "בטוחה"), and feminine suffixes (לָךְ, \
+שֶׁלָּךְ, אוֹתָךְ, אִיתָּךְ, אֵלַיִךְ)."""
+
+MALE_ARABIC_GUIDANCE = """
+- Arabic: use masculine forms ("أنتَ", "تريد", "تفضّل", "هل أنتَ مهتم؟") and \
+never feminine endings (ـكِ, ـين, ـي) when addressing the caller."""
+
+MALE_HEBREW_GUIDANCE = """
+- Hebrew: use אתה, masculine verbs ("תרצה", "תוכל", "תגיד"), masculine \
+participles ("רוצה", "יכול", "צריך", "מעוניין"), and masculine suffixes \
+(לְךָ, שֶׁלְּךָ, אוֹתְךָ)."""
+
+# Before the caller's gender is known the agent would otherwise default to
+# masculine address, which is wrong for every female caller's first turns.
+CALLER_GENDER_PENDING_NOTE = """\
+CALLER PROFILE — GENDER: NOT YET KNOWN
+The caller's gender has not been determined yet. Until this note is replaced, \
+when speaking a grammatically gendered language, avoid gender-marked \
+second-person forms wherever a natural alternative exists — including in \
+scripted lines and fixed wording above (keep their meaning, adjust only the \
+gendered words):
+- Arabic: use the respectful plural address, which suits both men and women \
+("كيف أقدر أساعدكم؟", "تفضلوا", "هل أنتم مهتمون؟", "حضرتكم").
+- Hebrew: use impersonal or infinitive phrasing ("אפשר לשאול...?", \
+"מה מתאים?", "רציתי לבדוק אם זה רלוונטי") instead of אתה/את.
+Do not mention this to the caller."""
 
 
-def build_caller_profile_note(gender: str) -> str:
+def build_caller_profile_note(gender: str, language: Optional[str] = None) -> str:
     """Build the caller-profile system-prompt note for a detected gender.
 
-    For female callers, append explicit Arabic pronunciation guidance so the TTS
-    voice actually speaks feminine forms (see ``FEMALE_PRONUNCIATION_GUIDANCE``).
+    Female callers get explicit Arabic pronunciation guidance so the TTS voice
+    actually speaks feminine forms (see ``FEMALE_PRONUNCIATION_GUIDANCE``) plus
+    the Hebrew feminine forms; male callers get a short reminder of the
+    masculine forms. ``language`` ("arabic" / "hebrew") limits the guidance to
+    that language; anything else includes both.
     """
-    note = CALLER_PROFILE_NOTE_TEMPLATE.format(gender=gender)
+    note = CALLER_PROFILE_NOTE_TEMPLATE.format(
+        gender=gender, gender_upper=gender.upper()
+    )
+    lang = (language or "").strip().lower()
     if gender == "female":
-        note += FEMALE_PRONUNCIATION_GUIDANCE
+        arabic, hebrew = FEMALE_PRONUNCIATION_GUIDANCE, FEMALE_HEBREW_GUIDANCE
+    elif gender == "male":
+        arabic, hebrew = MALE_ARABIC_GUIDANCE, MALE_HEBREW_GUIDANCE
+    else:
+        return note
+    if lang != "hebrew":
+        note += arabic
+    if lang != "arabic":
+        note += hebrew
     return note
+
+
+def build_caller_gender_pending_note() -> str:
+    """Note used while voice gender detection is running or was inconclusive."""
+    return CALLER_GENDER_PENDING_NOTE
 
 
 BEHAVIOR_GUIDELINES_HEADER = "BEHAVIOR GUIDELINES:"

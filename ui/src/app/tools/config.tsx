@@ -66,7 +66,7 @@ export const BEHAVIOR_PRESETS: BehaviorPreset[] = [
         name: "Caller Gender Adaptation",
         description: "Detect the caller's gender from voice and adapt gendered language (Arabic, Hebrew).",
         instructions:
-            "When the caller's gender is known, address them using the matching gendered second-person forms (verb conjugations, pronouns, adjectives) in grammatically gendered languages such as Arabic or Hebrew. If the caller states or implies a different gender, follow their lead. Never mention this inference to the caller.",
+            "When the caller's gender is known, address them using the matching gendered second-person forms (verb conjugations, pronouns, adjectives) in grammatically gendered languages such as Arabic or Hebrew. This includes scripted lines and fixed wording: keep their meaning but adapt every word addressed to the caller to their gender. If the caller states or implies a different gender, follow their lead. Never mention this inference to the caller.",
         special: "voice_gender_detection",
         recommended: true,
     },

@@ -11,6 +11,7 @@ from api.services.gender.voice_gender_detector import (
     estimate_window_f0,
 )
 from api.services.workflow.pipecat_engine_context_composer import (
+    build_caller_gender_pending_note,
     build_caller_profile_note,
     compose_system_prompt_for_node,
 )
@@ -184,7 +185,7 @@ class TestCallerProfileNoteComposition:
             caller_profile_note=note,
         )
         assert "You are a helpful agent." in prompt
-        assert "most likely female" in prompt
+        assert "they are female" in prompt
         assert "Arabic or Hebrew" in prompt
 
     def test_female_note_includes_pronunciation_guidance(self):
@@ -197,7 +198,7 @@ class TestCallerProfileNoteComposition:
 
     def test_male_note_has_no_pronunciation_guidance(self):
         note = build_caller_profile_note("male")
-        assert "most likely male" in note
+        assert "they are male" in note
         assert "tashkeel" not in note
 
     def test_no_note_by_default(self):
@@ -209,3 +210,32 @@ class TestCallerProfileNoteComposition:
             has_recordings=False,
         )
         assert "CALLER PROFILE" not in prompt
+
+
+class TestCallerProfileNoteContent:
+    def test_note_covers_scripted_lines(self):
+        note = build_caller_profile_note("female")
+        assert "scripted lines" in note
+        assert "GENDER: FEMALE" in note
+
+    def test_female_note_includes_hebrew_forms(self):
+        note = build_caller_profile_note("female")
+        assert "תרצי" in note
+
+    def test_language_limits_guidance(self):
+        arabic_only = build_caller_profile_note("female", "arabic")
+        assert "أساعِدُكِ" in arabic_only
+        assert "תרצי" not in arabic_only
+        hebrew_only = build_caller_profile_note("female", "hebrew")
+        assert "תרצי" in hebrew_only
+        assert "tashkeel" not in hebrew_only
+
+    def test_male_note_lists_masculine_forms(self):
+        note = build_caller_profile_note("male", "arabic")
+        assert "GENDER: MALE" in note
+        assert "أنتَ" in note
+
+    def test_pending_note_requests_neutral_address(self):
+        note = build_caller_gender_pending_note()
+        assert "NOT YET KNOWN" in note
+        assert "أساعدكم" in note
