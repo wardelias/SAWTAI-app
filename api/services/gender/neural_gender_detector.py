@@ -34,10 +34,13 @@ import numpy as np
 from loguru import logger
 
 from api.services.gender.voice_gender_detector import (
+    FEMALE_MIN_F0_HZ,
+    MALE_MAX_F0_HZ,
     MAX_TOTAL_SECONDS,
     MIN_RMS,
     WINDOW_SECONDS,
     GenderEstimate,
+    estimate_window_f0,
 )
 
 if TYPE_CHECKING:  # avoid importing torch at module load
@@ -53,6 +56,13 @@ MODEL_SAMPLE_RATE = 16000
 DECISION_STAGES: tuple[tuple[float, float], ...] = ((1.5, 0.92), (3.0, 0.85))
 MIN_VOICED_SECONDS = DECISION_STAGES[0][0]  # earliest possible forward pass
 FINAL_VOICED_SECONDS = 6.0  # accept the model's answer whatever its confidence
+
+# Pitch sanity check. The model can mislabel narrowband phone audio; a clearly
+# male or clearly female median pitch that contradicts it means the label is
+# unreliable, so confidence is capped below the engine's acceptance threshold
+# and the agent stays on neutral address instead of misgendering the caller.
+MIN_PITCH_WINDOWS = 10  # ~0.5 s of pitched speech before pitch can veto
+PITCH_CONFLICT_CONFIDENCE = 0.5
 # F0's two-class label order matches the model head: {0: male, 1: female}.
 
 # Process-wide singleton: one model instance shared across all calls/connections.
@@ -125,6 +135,7 @@ class ECAPAGenderClassifier:
     def __init__(self) -> None:
         self._sample_rate: Optional[int] = None
         self._voiced_chunks: list[np.ndarray] = []  # int16-scale float windows
+        self._voiced_f0s: list[float] = []  # pitch of voiced windows, for the veto
         self._voiced_samples = 0
         self._pending = np.empty(0, dtype=np.float64)
         self._total_samples = 0
@@ -165,6 +176,9 @@ class ECAPAGenderClassifier:
             if rms >= MIN_RMS:
                 self._voiced_chunks.append(window)
                 self._voiced_samples += len(window)
+                f0 = estimate_window_f0(window, sample_rate)
+                if f0 is not None:
+                    self._voiced_f0s.append(f0)
 
         return self._maybe_decide()
 
@@ -215,6 +229,23 @@ class ECAPAGenderClassifier:
 
         return None
 
+    def _reconcile_with_pitch(self, estimate: GenderEstimate) -> GenderEstimate:
+        """Cap confidence when the median pitch clearly contradicts the model."""
+        if len(self._voiced_f0s) < MIN_PITCH_WINDOWS:
+            return estimate
+        median_f0 = float(np.median(self._voiced_f0s))
+        estimate.median_f0_hz = median_f0
+        conflict = (estimate.gender == "female" and median_f0 <= MALE_MAX_F0_HZ) or (
+            estimate.gender == "male" and median_f0 >= FEMALE_MIN_F0_HZ
+        )
+        if conflict:
+            logger.info(
+                f"ECAPA said {estimate.gender} ({estimate.confidence:.2f}) but median "
+                f"pitch is {median_f0:.0f}Hz; treating as uncertain"
+            )
+            estimate.confidence = min(estimate.confidence, PITCH_CONFLICT_CONFIDENCE)
+        return estimate
+
     def _classify(self, voiced_seconds: float) -> GenderEstimate:
         try:
             import torch
@@ -241,11 +272,13 @@ class ECAPAGenderClassifier:
             confidence = float(probs[pred].item())
             gender = model.pred2gender.get(pred, "unknown")
 
-            return GenderEstimate(
-                gender=gender,
-                confidence=confidence,
-                median_f0_hz=0.0,
-                voiced_seconds=voiced_seconds,
+            return self._reconcile_with_pitch(
+                GenderEstimate(
+                    gender=gender,
+                    confidence=confidence,
+                    median_f0_hz=0.0,
+                    voiced_seconds=voiced_seconds,
+                )
             )
         except Exception as e:
             logger.warning(f"ECAPA gender classification failed: {e}")

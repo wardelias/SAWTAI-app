@@ -158,6 +158,27 @@ class TestECAPAGenderClassifierStreaming:
         assert result is not None
         assert result.gender == "female"
 
+    def test_pitch_veto_on_female_label_with_male_pitch(self, patch_model):
+        # Model says female with high confidence, but the voice is clearly
+        # low-pitched: treat as uncertain (engine keeps neutral address).
+        patch_model([-4.0, 4.0])
+        clf = ECAPAGenderClassifier()
+        result = clf.add_audio(
+            synth_voice(110.0, ngd.FINAL_VOICED_SECONDS + 0.5, 16000), 16000
+        )
+        assert result is not None
+        assert result.gender == "female"
+        assert result.confidence <= ngd.PITCH_CONFLICT_CONFIDENCE
+        assert result.median_f0_hz < 150
+
+    def test_pitch_veto_not_applied_when_consistent(self, patch_model):
+        patch_model([4.0, -4.0])
+        clf = ECAPAGenderClassifier()
+        result = clf.add_audio(synth_voice(110.0, 3.5, 16000), 16000)
+        assert result is not None
+        assert result.gender == "male"
+        assert result.confidence > 0.9
+
     def test_inference_failure_yields_unknown(self, monkeypatch):
         # A model that raises during forward must not crash the detector.
         class _Boom:

@@ -23,12 +23,18 @@ of misgendering the caller.
 """
 
 import asyncio
+import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional, Protocol, runtime_checkable
 
 import numpy as np
 from loguru import logger
-from pipecat.frames.frames import Frame, InputAudioRawFrame
+from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
+    Frame,
+    InputAudioRawFrame,
+)
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 # ---------------------------------------------------------------------------
@@ -57,6 +63,13 @@ NOTE_MIN_CONFIDENCE = 0.70  # below this, callers get neutral address
 # applying feminine address than the neutral note threshold. Raise toward 0.90+
 # if a male voice is still occasionally feminized.
 FEMININE_MIN_CONFIDENCE = 0.85
+
+# Caller audio is ignored while the agent is speaking, plus this tail after it
+# stops. Otherwise echo of the agent's own voice (speakerphone, laptop speakers,
+# line echo) is classified as the caller — a female agent voice then makes every
+# caller look female. The tail covers playback still buffered downstream of the
+# transport (telephony jitter buffers) after BotStoppedSpeakingFrame.
+BOT_ECHO_TAIL_SECONDS = 0.6
 
 
 @dataclass
@@ -244,10 +257,14 @@ class F0GenderClassifier:
 class VoiceGenderDetector(FrameProcessor):
     """Pipecat processor that detects caller gender from inbound audio.
 
-    Sits directly after ``transport.input()`` so it only ever sees caller
-    audio. Passes every frame through untouched; once the classifier reaches
-    a decision it fires ``on_gender_detected(estimate)`` exactly once and
-    stops analyzing for the rest of the call.
+    Sits directly after ``transport.input()`` so it only sees inbound audio.
+    Inbound audio can still contain echo of the agent's own voice, so frames
+    are skipped while the agent is speaking (tracked via the bot-speaking
+    frames the output transport pushes upstream) and for
+    ``BOT_ECHO_TAIL_SECONDS`` after. Passes every frame through untouched;
+    once the classifier reaches a decision it fires
+    ``on_gender_detected(estimate)`` exactly once and stops analyzing for the
+    rest of the call.
     """
 
     def __init__(
@@ -263,14 +280,26 @@ class VoiceGenderDetector(FrameProcessor):
         # same ``add_audio(...) -> Optional[GenderEstimate]`` / ``result`` interface.
         self._classifier = classifier or F0GenderClassifier()
         self._done = False
+        self._bot_speaking = False
+        self._ignore_until = 0.0  # monotonic time; echo tail after bot speech
+
+    def _hearing_agent(self) -> bool:
+        return self._bot_speaking or time.monotonic() < self._ignore_until
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
+
+        if isinstance(frame, BotStartedSpeakingFrame):
+            self._bot_speaking = True
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_speaking = False
+            self._ignore_until = time.monotonic() + BOT_ECHO_TAIL_SECONDS
 
         if (
             not self._done
             and direction == FrameDirection.DOWNSTREAM
             and isinstance(frame, InputAudioRawFrame)
+            and not self._hearing_agent()
         ):
             try:
                 # Heavy backends (neural inference) run off the event loop so a
