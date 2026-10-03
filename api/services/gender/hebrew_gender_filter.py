@@ -35,7 +35,6 @@ from collections.abc import Mapping
 from typing import Any, Optional
 
 from loguru import logger
-
 from pipecat.utils.text.base_text_filter import BaseTextFilter
 
 # Hebrew points (niqqud + cantillation), stripped from a token before lookup so

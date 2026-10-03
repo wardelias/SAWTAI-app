@@ -1158,7 +1158,10 @@ class PipecatEngine:
                 f"keeping neutral address."
             )
             return
-        if estimate.gender == "female" and estimate.confidence < FEMININE_MIN_CONFIDENCE:
+        if (
+            estimate.gender == "female"
+            and estimate.confidence < FEMININE_MIN_CONFIDENCE
+        ):
             # Feminine address is aggressive (audible Arabic rewrite); a false
             # positive on a male caller is glaring. Require higher confidence
             # before applying it, otherwise stay neutral.

@@ -115,7 +115,9 @@ class TestLanguageDirective:
         assert "English" in build_language_directive("english")
 
     def test_case_insensitive_and_trimmed(self):
-        assert build_language_directive("  Arabic ") == build_language_directive("arabic")
+        assert build_language_directive("  Arabic ") == build_language_directive(
+            "arabic"
+        )
 
     def test_unknown_or_empty_returns_none(self):
         assert build_language_directive(None) is None

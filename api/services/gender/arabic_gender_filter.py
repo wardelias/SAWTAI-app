@@ -38,7 +38,6 @@ from collections.abc import Mapping
 from typing import Any, Optional
 
 from loguru import logger
-
 from pipecat.utils.text.base_text_filter import BaseTextFilter
 
 # Arabic combining diacritics (tashkeel). Stripped from a token before lookup
@@ -182,14 +181,50 @@ MIN_KAF_SUFFIX_LEN = 4  # below this, a final kaf is almost always a root letter
 # that the *possessed* forms (e.g. اشتراكك "your subscription") end in ـكك and
 # are correctly feminized; only the bare standalone words are listed here.
 ROOT_KAF_EXCEPTIONS: set[str] = {
-    "ملك", "ملوك", "ملاك", "أملاك", "مملوك", "مالك",
-    "سمك", "بنك", "بنوك", "شك", "شكوك",
-    "فلك", "سلك", "أسلاك", "سلوك",
-    "شريك", "ديك", "ديوك", "شباك", "سواك", "مسك", "شوك",
-    "معارك", "جمارك", "مبارك", "محرك", "مدارك",
-    "إدراك", "اشتراك", "استهلاك", "احتكاك", "ارتباك", "انهماك", "إمساك",
+    "ملك",
+    "ملوك",
+    "ملاك",
+    "أملاك",
+    "مملوك",
+    "مالك",
+    "سمك",
+    "بنك",
+    "بنوك",
+    "شك",
+    "شكوك",
+    "فلك",
+    "سلك",
+    "أسلاك",
+    "سلوك",
+    "شريك",
+    "ديك",
+    "ديوك",
+    "شباك",
+    "سواك",
+    "مسك",
+    "شوك",
+    "معارك",
+    "جمارك",
+    "مبارك",
+    "محرك",
+    "مدارك",
+    "إدراك",
+    "اشتراك",
+    "استهلاك",
+    "احتكاك",
+    "ارتباك",
+    "انهماك",
+    "إمساك",
     # Ownership verbs (root ملك) — final kaf is a root letter, not a suffix.
-    "تملك", "أملك", "املك", "يملك", "نملك", "تمتلك", "يمتلك", "نمتلك", "امتلك",
+    "تملك",
+    "أملك",
+    "املك",
+    "يملك",
+    "نملك",
+    "تمتلك",
+    "يمتلك",
+    "نمتلك",
+    "امتلك",
 }
 
 

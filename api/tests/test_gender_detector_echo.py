@@ -9,18 +9,18 @@ import asyncio
 
 import numpy as np
 import pytest
-
-from api.services.gender import voice_gender_detector as vgd
-from api.services.gender.voice_gender_detector import (
-    GenderEstimate,
-    VoiceGenderDetector,
-)
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
     InputAudioRawFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+
+from api.services.gender import voice_gender_detector as vgd
+from api.services.gender.voice_gender_detector import (
+    GenderEstimate,
+    VoiceGenderDetector,
+)
 
 SR = 16000
 
