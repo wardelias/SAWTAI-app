@@ -910,7 +910,7 @@ async def test_text_chat_end_transition_persists_synchronous_variable_extraction
     assert run_payload["gathered_context"]["extracted_variables"] == {
         "customer_age": "45"
     }
-    assert run_payload["gathered_context"]["call_disposition"] == "user_qualified"
+    assert run_payload["gathered_context"]["call_disposition"] == "end_call"
     enqueue.assert_awaited_once_with(
         FunctionNames.PROCESS_WORKFLOW_COMPLETION,
         session["workflow_run_id"],

@@ -63,6 +63,37 @@ class TestNoFalsePositives:
         assert _filter("أنتم", "female") == "أنتم"
 
 
+class TestExpandedCoverage:
+    def test_more_verbs_and_imperatives(self):
+        assert _filter("ماذا ترغب؟", "female") == "ماذا ترغبين؟"
+        assert _filter("انتظر لحظة", "female") == "انتظري لحظة"
+        assert _filter("أخبرني", "female") == "أخبريني"
+
+    def test_conjunction_and_future_prefixes(self):
+        assert _filter("وأنت؟", "female") == "وأنتِ؟"
+        assert _filter("ستحب المنتج", "female") == "ستحبين المنتج"
+
+    def test_future_prefix_never_splits_nouns(self):
+        # "س" + "لك" is سلك (wire), not a future verb.
+        assert _filter("سلك", "female") == "سلك"
+
+    def test_address_terms(self):
+        assert _filter("عزيزي", "female") == "عزيزتي"
+
+    def test_adjective_after_second_person_subject(self):
+        assert _filter("هل أنت مهتم بالعرض؟", "female") == "هل أنتِ مهتمة بالعرض؟"
+        assert _filter("وأنت جاهز", "female") == "وأنتِ جاهزة"
+
+    def test_agent_self_description_untouched(self):
+        # The agent describing itself keeps its own gender.
+        assert _filter("أنا متأكد", "female") == "أنا متأكد"
+        assert _filter("أنا متأكد أنك ستحب", "female") == "أنا متأكد أنكِ ستحبين"
+
+    def test_first_person_verb_untouched(self):
+        # أرسل is also "I send" — must not become the feminine imperative.
+        assert _filter("أرسل لك الرابط", "female") == "أرسل لكِ الرابط"
+
+
 class TestPassthrough:
     def test_male_passthrough(self):
         assert _filter("شكراً لك", "male") == "شكراً لك"

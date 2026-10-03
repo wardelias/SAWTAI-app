@@ -49,6 +49,7 @@ from api.services.workflow import pipecat_engine_callbacks as engine_callbacks
 from api.services.workflow.initial_context import GREETING_OVERRIDE_CONTEXT_KEY
 from api.services.workflow.mcp_tool_session import McpToolSession
 from api.services.workflow.pipecat_engine_context_composer import (
+    build_caller_gender_pending_note,
     build_caller_profile_note,
     compose_functions_for_node,
     compose_system_prompt_for_node,
@@ -193,10 +194,11 @@ class PipecatEngine:
         # resolved per node from node.tool_uuids.
         self._global_behavior_instructions: list[str] = []
 
-        # Deterministic Arabic feminine-address TTS filter. Flipped to the
-        # detected gender once voice gender detection is confident, so a female
-        # caller is pronounced correctly regardless of LLM tashkeel output.
-        self._gender_text_filter = None
+        # Deterministic gendered-address TTS filters (Arabic, Hebrew). Flipped
+        # to the detected gender once voice gender detection is confident, so
+        # the caller is spelled and pronounced correctly regardless of whether
+        # the LLM got every form (or Arabic tashkeel / Hebrew niqqud) right.
+        self._gender_text_filters: list = []
 
         # Background context summarization on node transitions
         self._context_compaction_enabled: bool = context_compaction_enabled
@@ -352,9 +354,7 @@ class PipecatEngine:
 
                     # Queue EndFrame if we just transitioned to EndNode
                     if self._current_node.is_end:
-                        await self.end_call_with_reason(
-                            EndTaskReason.USER_QUALIFIED.value
-                        )
+                        await self.end_call_with_reason(EndTaskReason.END_CALL.value)
 
                 result = {"status": "done"}
 
@@ -578,9 +578,22 @@ class PipecatEngine:
         """Set the agent's spoken language (resolved in run_pipeline)."""
         self._language = language or None
 
-    def set_gender_text_filter(self, text_filter) -> None:
-        """Set the Arabic feminine-address TTS filter (may be None)."""
-        self._gender_text_filter = text_filter
+    def set_gender_text_filters(self, text_filters: list) -> None:
+        """Set the gendered-address TTS filters (``None`` entries are ignored)."""
+        self._gender_text_filters = [f for f in text_filters or [] if f is not None]
+
+    def enable_gender_adaptation(self) -> None:
+        """Mark voice gender detection as active for this call.
+
+        Until a confident result arrives, every node prompt carries a note
+        telling the agent to avoid gender-marked address (instead of silently
+        defaulting to masculine, which is wrong for female callers).
+        """
+        # English address isn't gendered: skip the note for English-only agents.
+        if (self._language or "").strip().lower() == "english":
+            return
+        if self._caller_profile_note is None:
+            self._caller_profile_note = build_caller_gender_pending_note()
 
     async def _resolve_behavior_instructions(self, node: Optional[Node]) -> list[str]:
         """Resolve Behavior instructions for a node: global + node-attached.
@@ -1125,7 +1138,7 @@ class PipecatEngine:
             f"Caller gender detected: {estimate.gender} "
             f"(confidence={estimate.confidence:.2f}, f0={estimate.median_f0_hz:.0f}Hz)"
         )
-        self._call_context_vars["caller_gender"] = estimate.gender
+        self._call_context_vars["caller_gender_detected"] = estimate.gender
         self._call_context_vars["caller_gender_confidence"] = round(
             estimate.confidence, 2
         )
@@ -1133,34 +1146,46 @@ class PipecatEngine:
         if estimate.gender not in ("male", "female"):
             return
         if estimate.confidence < NOTE_MIN_CONFIDENCE:
-            # Ambiguous voice: leave the prompt untouched (and the Arabic filter
-            # off) so the agent keeps neutral address instead of risking
-            # misgendering the caller. Logged so this is diagnosable rather than
-            # a silent no-op.
+            # Ambiguous voice: keep the "gender not yet known" note (neutral
+            # address) and the TTS filters off, instead of risking misgendering
+            # the caller. Logged so this is diagnosable rather than a silent
+            # no-op.
             logger.info(
                 f"Caller gender '{estimate.gender}' below confidence threshold "
                 f"({estimate.confidence:.2f} < {NOTE_MIN_CONFIDENCE}); "
-                f"keeping neutral address (no note, no Arabic fix-up)."
+                f"keeping neutral address."
             )
             return
-        if estimate.gender == "female" and estimate.confidence < FEMININE_MIN_CONFIDENCE:
+        if (
+            estimate.gender == "female"
+            and estimate.confidence < FEMININE_MIN_CONFIDENCE
+        ):
             # Feminine address is aggressive (audible Arabic rewrite); a false
             # positive on a male caller is glaring. Require higher confidence
             # before applying it, otherwise stay neutral.
             logger.info(
                 f"Female detected but below feminine threshold "
                 f"({estimate.confidence:.2f} < {FEMININE_MIN_CONFIDENCE}); "
-                f"keeping neutral address (no feminine note or Arabic fix-up)."
+                f"keeping neutral address."
             )
             return
 
-        self._caller_profile_note = build_caller_profile_note(estimate.gender)
+        # Only an accepted result is exposed as {{caller_gender}}, so prompt
+        # templates never disagree with the caller profile note.
+        self._call_context_vars["caller_gender"] = estimate.gender
+        self._caller_profile_note = build_caller_profile_note(
+            estimate.gender, self._language
+        )
+        logger.info(
+            f"Applying {estimate.gender} caller address "
+            f"(prompt note + {len(self._gender_text_filters)} TTS filter(s))"
+        )
 
-        # Activate the deterministic Arabic feminine-address fix-up so TTS
-        # pronounces a female caller correctly even if the LLM omits tashkeel.
-        if self._gender_text_filter is not None:
+        # Activate the deterministic Arabic / Hebrew fix-ups so TTS spells and
+        # pronounces the caller's gender correctly even if the LLM slips.
+        for text_filter in self._gender_text_filters:
             try:
-                self._gender_text_filter.set_gender(estimate.gender)
+                text_filter.set_gender(estimate.gender)
             except Exception as e:
                 logger.warning(f"Failed to set gender text filter: {e}")
 

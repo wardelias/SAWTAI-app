@@ -10,9 +10,13 @@ callback, ``{{caller_gender}}`` var, prompt note injection) work unchanged.
 How it differs from F0:
 
 - F0 decides incrementally from running pitch statistics. The neural model needs
-  a buffered chunk, so we accumulate *voiced* audio (RMS-gated 50 ms windows) until
-  we have ~3 s, then run a single forward pass, softmax the two logits, and report
-  the argmax class with the max-probability as confidence. One-shot, like F0.
+  a buffered chunk, so we accumulate *voiced* audio (RMS-gated 50 ms windows) and
+  classify in stages (see ``DECISION_STAGES``): an early forward pass on ~1.5 s is
+  accepted only when the model is very confident, otherwise we keep listening and
+  re-classify on more audio, accepting whatever the model says at
+  ``FINAL_VOICED_SECONDS``. Each pass softmaxes the two logits and reports the
+  argmax class with the max-probability as confidence. One-shot, like F0: once a
+  result is accepted it never changes.
 - ``median_f0_hz`` is 0.0 here (not applicable to this backend).
 - The model loads lazily, process-wide, on the first decision (not at import), so
   importing this module never pulls torch weights. A load/inference failure yields
@@ -30,10 +34,13 @@ import numpy as np
 from loguru import logger
 
 from api.services.gender.voice_gender_detector import (
+    FEMALE_MIN_F0_HZ,
+    MALE_MAX_F0_HZ,
     MAX_TOTAL_SECONDS,
     MIN_RMS,
     WINDOW_SECONDS,
     GenderEstimate,
+    estimate_window_f0,
 )
 
 if TYPE_CHECKING:  # avoid importing torch at module load
@@ -42,7 +49,20 @@ if TYPE_CHECKING:  # avoid importing torch at module load
 HF_MODEL_ID = "JaesungHuh/voice-gender-classifier"
 MODEL_SAMPLE_RATE = 16000
 
-MIN_VOICED_SECONDS = 3.0  # voiced speech to buffer before a forward pass
+# Staged decisions: (voiced seconds buffered, min confidence to accept then).
+# Deciding early matters — every agent reply spoken before detection uses the
+# default (masculine) forms — but a short buffer is less reliable, so the early
+# stages only accept very confident classifications.
+DECISION_STAGES: tuple[tuple[float, float], ...] = ((1.5, 0.92), (3.0, 0.85))
+MIN_VOICED_SECONDS = DECISION_STAGES[0][0]  # earliest possible forward pass
+FINAL_VOICED_SECONDS = 6.0  # accept the model's answer whatever its confidence
+
+# Pitch sanity check. The model can mislabel narrowband phone audio; a clearly
+# male or clearly female median pitch that contradicts it means the label is
+# unreliable, so confidence is capped below the engine's acceptance threshold
+# and the agent stays on neutral address instead of misgendering the caller.
+MIN_PITCH_WINDOWS = 10  # ~0.5 s of pitched speech before pitch can veto
+PITCH_CONFLICT_CONFIDENCE = 0.5
 # F0's two-class label order matches the model head: {0: male, 1: female}.
 
 # Process-wide singleton: one model instance shared across all calls/connections.
@@ -115,10 +135,12 @@ class ECAPAGenderClassifier:
     def __init__(self) -> None:
         self._sample_rate: Optional[int] = None
         self._voiced_chunks: list[np.ndarray] = []  # int16-scale float windows
+        self._voiced_f0s: list[float] = []  # pitch of voiced windows, for the veto
         self._voiced_samples = 0
         self._pending = np.empty(0, dtype=np.float64)
         self._total_samples = 0
         self._result: Optional[GenderEstimate] = None
+        self._next_stage = 0  # index into DECISION_STAGES
 
     @property
     def result(self) -> Optional[GenderEstimate]:
@@ -154,6 +176,9 @@ class ECAPAGenderClassifier:
             if rms >= MIN_RMS:
                 self._voiced_chunks.append(window)
                 self._voiced_samples += len(window)
+                f0 = estimate_window_f0(window, sample_rate)
+                if f0 is not None:
+                    self._voiced_f0s.append(f0)
 
         return self._maybe_decide()
 
@@ -162,9 +187,31 @@ class ECAPAGenderClassifier:
         voiced_seconds = self._voiced_samples / sr
         total_seconds = self._total_samples / sr
 
-        if voiced_seconds >= MIN_VOICED_SECONDS:
+        if voiced_seconds >= FINAL_VOICED_SECONDS:
             self._result = self._classify(voiced_seconds)
             return self._result
+
+        # Run one forward pass for the latest stage crossed (several can be
+        # crossed by a single large chunk; earlier ones would be redundant).
+        stage_threshold: Optional[float] = None
+        while (
+            self._next_stage < len(DECISION_STAGES)
+            and voiced_seconds >= DECISION_STAGES[self._next_stage][0]
+        ):
+            stage_threshold = DECISION_STAGES[self._next_stage][1]
+            self._next_stage += 1
+        if stage_threshold is not None:
+            estimate = self._classify(voiced_seconds)
+            # "unknown" means inference failed: accept it so the detector
+            # disables instead of retrying a broken model every stage.
+            if estimate.gender == "unknown" or estimate.confidence >= stage_threshold:
+                self._result = estimate
+                return self._result
+            logger.debug(
+                f"ECAPA early estimate {estimate.gender} "
+                f"({estimate.confidence:.2f} < {stage_threshold}) after "
+                f"{voiced_seconds:.1f}s voiced; waiting for more audio"
+            )
 
         if total_seconds >= MAX_TOTAL_SECONDS:
             if voiced_seconds > 0.5:
@@ -181,6 +228,23 @@ class ECAPAGenderClassifier:
             return self._result
 
         return None
+
+    def _reconcile_with_pitch(self, estimate: GenderEstimate) -> GenderEstimate:
+        """Cap confidence when the median pitch clearly contradicts the model."""
+        if len(self._voiced_f0s) < MIN_PITCH_WINDOWS:
+            return estimate
+        median_f0 = float(np.median(self._voiced_f0s))
+        estimate.median_f0_hz = median_f0
+        conflict = (estimate.gender == "female" and median_f0 <= MALE_MAX_F0_HZ) or (
+            estimate.gender == "male" and median_f0 >= FEMALE_MIN_F0_HZ
+        )
+        if conflict:
+            logger.info(
+                f"ECAPA said {estimate.gender} ({estimate.confidence:.2f}) but median "
+                f"pitch is {median_f0:.0f}Hz; treating as uncertain"
+            )
+            estimate.confidence = min(estimate.confidence, PITCH_CONFLICT_CONFIDENCE)
+        return estimate
 
     def _classify(self, voiced_seconds: float) -> GenderEstimate:
         try:
@@ -208,11 +272,13 @@ class ECAPAGenderClassifier:
             confidence = float(probs[pred].item())
             gender = model.pred2gender.get(pred, "unknown")
 
-            return GenderEstimate(
-                gender=gender,
-                confidence=confidence,
-                median_f0_hz=0.0,
-                voiced_seconds=voiced_seconds,
+            return self._reconcile_with_pitch(
+                GenderEstimate(
+                    gender=gender,
+                    confidence=confidence,
+                    median_f0_hz=0.0,
+                    voiced_seconds=voiced_seconds,
+                )
             )
         except Exception as e:
             logger.warning(f"ECAPA gender classification failed: {e}")

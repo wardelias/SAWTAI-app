@@ -19,6 +19,7 @@ from api.schemas.workflow_configurations import (
 from api.services.call_concurrency import call_concurrency
 from api.services.configuration.registry import ServiceProviders
 from api.services.gender.arabic_gender_filter import ArabicFeminineTextFilter
+from api.services.gender.hebrew_gender_filter import HebrewGenderTextFilter
 from api.services.gender.voice_gender_detector import (
     VoiceGenderDetector,
     make_gender_classifier,
@@ -682,8 +683,8 @@ async def _run_pipeline_impl(
         stt = None
         tts = None
         # Realtime services emit audio directly (no TTS text seam), so the
-        # Arabic feminine-address fix-up does not apply.
-        arabic_feminine_filter = None
+        # gendered-address TTS fix-ups do not apply; only the prompt note does.
+        gender_text_filters = []
         # Realtime services don't implement run_inference, so create a
         # separate text LLM for variable extraction and other out-of-band
         # inference calls.
@@ -698,16 +699,17 @@ async def _run_pipeline_impl(
             keyterms=keyterms,
             correlation_id=mps_correlation_id,
         )
-        # Deterministic Arabic feminine-address fix-up: rewrites masculine
-        # second-person forms to feminine before TTS so a female caller is
-        # pronounced correctly even if the LLM omits tashkeel. The engine flips
-        # it on once voice gender detection is confidently female.
-        arabic_feminine_filter = ArabicFeminineTextFilter()
+        # Deterministic gendered-address fix-ups applied before TTS, so the
+        # caller is spelled and pronounced in their gender even if the LLM keeps
+        # a scripted masculine form or omits Arabic tashkeel / Hebrew niqqud.
+        # Each only touches its own script; the engine flips them on once voice
+        # gender detection is confident.
+        gender_text_filters = [ArabicFeminineTextFilter(), HebrewGenderTextFilter()]
         tts = create_tts_service(
             user_config,
             audio_config,
             correlation_id=mps_correlation_id,
-            extra_text_filters=[arabic_feminine_filter],
+            extra_text_filters=gender_text_filters,
         )
         llm = create_llm_service(user_config, correlation_id=mps_correlation_id)
         inference_llm = None
@@ -875,8 +877,8 @@ async def _run_pipeline_impl(
         context_compaction_enabled=context_compaction_enabled,
     )
 
-    # Let the engine flip the Arabic feminine filter on once gender is detected.
-    engine.set_gender_text_filter(arabic_feminine_filter)
+    # Let the engine flip the gendered-address filters on once gender is detected.
+    engine.set_gender_text_filters(gender_text_filters)
 
     # Create pipeline components
     audio_buffer, context = create_pipeline_components(audio_config)
@@ -1102,6 +1104,9 @@ async def _run_pipeline_impl(
     if gender_detection_enabled:
         # Seed the template var so {{caller_gender}} renders before detection.
         merged_call_context_vars.setdefault("caller_gender", "unknown")
+        # Until detection is confident, prompts ask for gender-neutral address
+        # instead of letting the agent default to masculine.
+        engine.enable_gender_adaptation()
         # Backend selector: "ecapa" (default, neural) or "f0" (pitch-based).
         # Per-workflow config wins; otherwise fall back to the global env var.
         gender_backend = gender_config.get(
