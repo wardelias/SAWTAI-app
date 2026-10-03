@@ -78,7 +78,8 @@ def test_engaged_falls_back_to_nodes_visited():
 def test_resulting_lead_status_maps_hints():
     assert outcome_mod._resulting_lead_status({"call_disposition": "meeting_booked"}) == "converted"
     assert outcome_mod._resulting_lead_status({"call_disposition": "qualified"}) == "qualified"
-    assert outcome_mod._resulting_lead_status({"call_disposition": "interested"}) == "responded"
+    assert outcome_mod._resulting_lead_status({"call_disposition": "interested"}) == "qualified"
+    assert outcome_mod._resulting_lead_status({"call_disposition": "callback"}) == "responded"
 
 
 @pytest.mark.asyncio

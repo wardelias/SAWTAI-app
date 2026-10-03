@@ -89,7 +89,7 @@ jobs:
 
       - name: Run pytest
         working-directory: api
-        run: pytest tests/ -xvs
+        run: pytest tests/ -vs
 
   notify-slack-failure:
     needs: pytest
