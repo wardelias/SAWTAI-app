@@ -69,7 +69,8 @@ class TestECAPAGenderClassifierStreaming:
         assert result.gender == "male"
         assert 0.0 <= result.confidence <= 1.0
         assert result.confidence > 0.9
-        assert result.median_f0_hz == 0.0  # not applicable to this backend
+        # Median pitch is measured for the pitch sanity check.
+        assert abs(result.median_f0_hz - 110.0) < 5.0
         assert result.voiced_seconds >= ngd.MIN_VOICED_SECONDS
 
     def test_classifies_female_from_logits(self, patch_model):
