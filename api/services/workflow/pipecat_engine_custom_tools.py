@@ -663,14 +663,14 @@ class CustomToolManager:
                 if played:
                     # End the call after the message (not immediately)
                     await self._engine.end_call_with_reason(
-                        EndTaskReason.END_CALL_TOOL_REASON.value,
+                        EndTaskReason.END_CALL.value,
                         abort_immediately=False,
                     )
                 else:
                     # No message - end call immediately
                     logger.info("Ending call immediately (no goodbye message)")
                     await self._engine.end_call_with_reason(
-                        EndTaskReason.END_CALL_TOOL_REASON.value, abort_immediately=True
+                        EndTaskReason.END_CALL.value, abort_immediately=True
                     )
 
             except Exception as e:
@@ -888,7 +888,7 @@ class CustomToolManager:
                             # conference before Dograh tears down the local leg.
                             await asyncio.sleep(_TRANSFER_POST_HANDOFF_DELAY_SECS)
                             await self._engine.end_call_with_reason(
-                                EndTaskReason.END_CALL_TOOL_REASON.value,
+                                EndTaskReason.END_CALL.value,
                                 abort_immediately=True,
                             )
                         else:

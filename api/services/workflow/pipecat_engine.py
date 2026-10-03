@@ -354,9 +354,7 @@ class PipecatEngine:
 
                     # Queue EndFrame if we just transitioned to EndNode
                     if self._current_node.is_end:
-                        await self.end_call_with_reason(
-                            EndTaskReason.USER_QUALIFIED.value
-                        )
+                        await self.end_call_with_reason(EndTaskReason.END_CALL.value)
 
                 result = {"status": "done"}
 
