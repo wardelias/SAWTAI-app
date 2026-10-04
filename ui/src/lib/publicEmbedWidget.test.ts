@@ -18,6 +18,18 @@ type WidgetWindow = Window & {
     };
 };
 
+// The widget carries no copy of its own; the config endpoint always sends the
+// resolved labels (defaults from api/schemas/widget_texts.py).
+const chatWidgetTexts = {
+    endChatText: 'End chat',
+    conversationEndedText: 'Conversation ended.',
+    startNewChatText: 'Start new chat',
+    chatRetryText: 'Retry',
+    chatInputPlaceholder: 'Type a message…',
+    sendMessageLabel: 'Send message',
+    closeChatLabel: 'Close chat',
+};
+
 async function flushMicrotasks() {
     for (let i = 0; i < 5; i += 1) {
         await Promise.resolve();
@@ -38,6 +50,7 @@ function createFetchMock(autoStart: boolean) {
                         embedMode: 'inline',
                         containerId: 'sawt-inline-container',
                     },
+                    texts: chatWidgetTexts,
                     auto_start: autoStart,
                 }),
             } as Response;
@@ -235,6 +248,7 @@ describe('public embed widget chat lifecycle', () => {
                     embedMode: 'inline',
                     containerId: 'sawt-inline-container',
                 },
+                texts: chatWidgetTexts,
                 auto_start: false,
             }),
         } as Response);
