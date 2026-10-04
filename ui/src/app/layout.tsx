@@ -3,6 +3,7 @@ import "./globals.css";
 import { GoogleTagManager } from "@next/third-parties/google";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { headers } from "next/headers";
 import { Suspense } from "react";
 
 import ChatwootWidget from "@/components/ChatwootWidget";
@@ -18,6 +19,7 @@ import { OnboardingProvider } from "@/context/OnboardingContext";
 import { OrgConfigProvider } from "@/context/OrgConfigContext";
 import { TelephonyConfigWarningsProvider } from "@/context/TelephonyConfigWarningsContext";
 import { AuthProvider } from "@/lib/auth";
+import { LANDING_REQUEST_HEADER, SITE_URL } from "@/lib/site";
 
 
 const geistSans = Geist({
@@ -31,17 +33,23 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: "SawtAI",
   description: "Open Source Voice Assistant Workflow Builder",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children
 }: {
   children: React.ReactNode
 }) {
   const gtmId = process.env.NEXT_PUBLIC_GTM_ID?.trim();
   const metaPixelId = process.env.NEXT_PUBLIC_META_PIXEL_ID?.trim();
+  // Full-page loads of the public landing page skip the app providers: the
+  // auth provider renders only a spinner until a client-side fetch resolves,
+  // which would leave the landing page with no server-rendered HTML. Its
+  // links into the app are plain <a> tags, so the app always boots with them.
+  const isLandingPage = (await headers()).get(LANDING_REQUEST_HEADER) === "1";
 
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
@@ -69,31 +77,40 @@ export default function RootLayout({
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        // Light page behind the (light) landing page while it streams in.
+        style={isLandingPage ? { backgroundColor: "#faf8ff" } : undefined}
         suppressHydrationWarning>
         {gtmId ? <GoogleTagManager gtmId={gtmId} /> : null}
         {metaPixelId ? <MetaPixel pixelId={metaPixelId} /> : null}
-        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
+        {isLandingPage ? (
           <SentryErrorBoundary>
-            <AuthProvider>
-              <AppConfigProvider>
-                <Suspense fallback={<SpinLoader />}>
-                  <OrgConfigProvider>
-                    <TelephonyConfigWarningsProvider>
-                      <OnboardingProvider>
-                        <PostHogIdentify />
-                        <AppLayout>
-                          {children}
-                        </AppLayout>
-                        <Toaster />
-                        <ChatwootWidget />
-                      </OnboardingProvider>
-                    </TelephonyConfigWarningsProvider>
-                  </OrgConfigProvider>
-                </Suspense>
-              </AppConfigProvider>
-            </AuthProvider>
+            {children}
+            <ChatwootWidget />
           </SentryErrorBoundary>
-        </ThemeProvider>
+        ) : (
+          <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
+            <SentryErrorBoundary>
+              <AuthProvider>
+                <AppConfigProvider>
+                  <Suspense fallback={<SpinLoader />}>
+                    <OrgConfigProvider>
+                      <TelephonyConfigWarningsProvider>
+                        <OnboardingProvider>
+                          <PostHogIdentify />
+                          <AppLayout>
+                            {children}
+                          </AppLayout>
+                          <Toaster />
+                          <ChatwootWidget />
+                        </OnboardingProvider>
+                      </TelephonyConfigWarningsProvider>
+                    </OrgConfigProvider>
+                  </Suspense>
+                </AppConfigProvider>
+              </AuthProvider>
+            </SentryErrorBoundary>
+          </ThemeProvider>
+        )}
       </body>
     </html>
   );

@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 
 import { getServerBackendUrl } from '@/lib/apiClient';
+import { LANDING_REQUEST_HEADER } from '@/lib/site';
 
 const OSS_TOKEN_COOKIE = 'dograh_auth_token';
 
@@ -10,6 +11,10 @@ const OSS_TOKEN_COOKIE = 'dograh_auth_token';
 // which must be fetchable without a session cookie so third-party sites can
 // embed it — otherwise the middleware 307-redirects the asset to /auth/login.
 const PUBLIC_PATHS = ['/auth/login', '/auth/signup', '/embed'];
+
+// SEO metadata routes for the public landing page; crawlers must reach these
+// without a session. The OG image URL may carry a generated suffix.
+const PUBLIC_METADATA_ROUTE = /^\/(robots\.txt|sitemap\.xml|opengraph-image)/;
 
 let cachedAuthProvider: string | null = null;
 
@@ -43,6 +48,16 @@ async function fetchAuthProvider(): Promise<string> {
 }
 
 export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  // `/` is the public landing page: always reachable, and flagged so the root
+  // layout renders it server-side outside the app's auth providers.
+  if (pathname === '/') {
+    const headers = new Headers(request.headers);
+    headers.set(LANDING_REQUEST_HEADER, '1');
+    return NextResponse.next({ request: { headers } });
+  }
+
   const authProvider = await fetchAuthProvider();
 
   // Only handle OSS mode
@@ -51,17 +66,14 @@ export async function middleware(request: NextRequest) {
   }
 
   const token = request.cookies.get(OSS_TOKEN_COOKIE)?.value;
-  const { pathname } = request.nextUrl;
 
   // Allow public paths without auth. Match on a path-segment boundary (exact
   // match or a `/`-delimited subpath) rather than a bare prefix, so a public
   // entry like `/embed` exempts `/embed` and `/embed/...` but NOT sibling
   // routes such as `/embed-admin` — a bare startsWith would let those bypass
   // authentication.
-  // `/` is the public landing page; it's exempt as an exact match only, since
-  // every path is a subpath of `/`.
   if (
-    pathname === '/' ||
+    PUBLIC_METADATA_ROUTE.test(pathname) ||
     PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))
   ) {
     return NextResponse.next();
