@@ -40,7 +40,9 @@ export function LandingShell({ children }: { children: ReactNode }) {
           observer.unobserve(entry.target);
         }
       },
-      { threshold: 0.1, rootMargin: "0px 0px -50px 0px" },
+      // Start as soon as the top edge clears the bottom ~6% of the screen, so
+      // blocks fade in as they arrive rather than after a stretch of blank space.
+      { threshold: 0, rootMargin: "0px 0px -6% 0px" },
     );
     root.querySelectorAll<HTMLElement>(`.${CSS.escape(styles.fadeUp)}`).forEach((el) => {
       if (el.getBoundingClientRect().top < window.innerHeight) el.dataset.shown = "";

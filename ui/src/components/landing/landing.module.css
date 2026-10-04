@@ -49,6 +49,14 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+.honeypot {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
 .srOnly {
   position: absolute;
   width: 1px;
@@ -228,61 +236,72 @@
 
 /* ---------- Motion ---------- */
 
-@keyframes revealUp {
+/*
+ * Reveal = a soft fade plus a short glide up, on separate curves so nothing
+ * "pops": opacity eases in gently while the movement decelerates into place.
+ */
+@keyframes revealFade {
   from {
     opacity: 0;
-    transform: translateY(28px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
-/* Hero: plays on load with no JS, so the headline paints immediately. */
-.heroIn {
-  animation: revealUp 0.8s var(--ease-out-expo) backwards;
-}
-.heroIn1 {
-  animation-delay: 80ms;
-}
-.heroIn2 {
-  animation-delay: 0.16s;
-}
-.heroIn3 {
-  animation-delay: 0.24s;
+@keyframes revealGlide {
+  from {
+    transform: translate3d(0, 14px, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
 }
 
 /*
- * Scroll reveal. Server-rendered content is fully visible; LandingShell adds
+ * Hero: plays on load with no JS, so the headline paints immediately.
+ * Scroll reveal: server-rendered content is fully visible; LandingShell adds
  * data-reveal once hydrated, which hides below-the-fold blocks until they
  * scroll into view (data-visible) — on-screen ones get data-shown instead.
  */
+.heroIn,
+.landing[data-reveal] .fadeUp[data-visible] {
+  animation:
+    revealFade 1s cubic-bezier(0.33, 0, 0.2, 1) var(--reveal-delay, 0s) backwards,
+    revealGlide 1.2s cubic-bezier(0.22, 1, 0.36, 1) var(--reveal-delay, 0s) backwards;
+}
+
 .landing[data-reveal] .fadeUp:not([data-visible], [data-shown]) {
   opacity: 0;
 }
 
-.landing[data-reveal] .fadeUp[data-visible] {
-  animation: revealUp 0.8s var(--ease-out-expo) var(--reveal-delay, 0s) backwards;
+.heroIn1 {
+  --reveal-delay: 0.1s;
+}
+.heroIn2 {
+  --reveal-delay: 0.2s;
+}
+.heroIn3 {
+  --reveal-delay: 0.3s;
 }
 
 .stagger1 {
-  --reveal-delay: 80ms;
+  --reveal-delay: 60ms;
 }
 .stagger2 {
-  --reveal-delay: 0.16s;
+  --reveal-delay: 0.12s;
 }
 .stagger3 {
-  --reveal-delay: 0.24s;
+  --reveal-delay: 0.18s;
 }
 .stagger4 {
-  --reveal-delay: 0.32s;
+  --reveal-delay: 0.24s;
 }
 .stagger5 {
-  --reveal-delay: 0.4s;
+  --reveal-delay: 0.3s;
 }
 .stagger6 {
-  --reveal-delay: 0.48s;
+  --reveal-delay: 0.36s;
 }
 
 /* ---------- Ambient background ---------- */

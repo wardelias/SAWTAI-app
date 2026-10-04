@@ -5,15 +5,15 @@ import { type ChangeEvent, type FormEvent, useEffect, useState } from "react";
 
 import { trackMetaLead } from "@/lib/metaPixel";
 
-import { DEMO_BOOKING_WEBHOOK_URL } from "./content";
 import styles from "./landing.module.css";
 
 type BookingStatus = "idle" | "submitting" | "success" | "error";
 
-const EMPTY_BOOKING = { name: "", email: "", phone: "", company: "" };
+// `website` is a honeypot: hidden from people, filled in by bots, rejected server-side.
+const EMPTY_BOOKING = { name: "", email: "", phone: "", company: "", website: "" };
 
 const FIELDS: {
-  name: keyof typeof EMPTY_BOOKING;
+  name: Exclude<keyof typeof EMPTY_BOOKING, "website">;
   type: string;
   label: string;
   autoComplete: string;
@@ -50,7 +50,7 @@ export function DemoBookingModal({ onClose }: { onClose: () => void }) {
     event.preventDefault();
     setStatus("submitting");
     try {
-      const response = await fetch(DEMO_BOOKING_WEBHOOK_URL, {
+      const response = await fetch("/api/demo-request", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
@@ -108,6 +108,16 @@ export function DemoBookingModal({ onClose }: { onClose: () => void }) {
                 />
               </div>
             ))}
+            <input
+              type="text"
+              name="website"
+              tabIndex={-1}
+              autoComplete="off"
+              aria-hidden
+              value={form.website}
+              onChange={update}
+              className={styles.honeypot}
+            />
             {status === "error" && (
               <div role="alert" className={styles.formError}>
                 Something went wrong sending your request. Please try again.

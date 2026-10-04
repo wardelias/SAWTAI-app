@@ -30,10 +30,6 @@ export const WHATSAPP_URL = "https://wa.me/972544799652";
 export const DEMO_AI_PHONE_E164 = "+97233823299";
 export const DEMO_AI_PHONE_DISPLAY = "+972-3-382-3299";
 
-/** CRM webhook that receives "Book a demo" form submissions. */
-export const DEMO_BOOKING_WEBHOOK_URL =
-  "https://services.leadconnectorhq.com/hooks/5mx08gT5SXJptjzoBMQ9/webhook-trigger/36aa89fe-2406-45f1-8418-c7fa4c1203c5";
-
 export const NAV_LINKS = [
   { href: "#features", label: "Features" },
   { href: "#use-cases", label: "Use cases" },
