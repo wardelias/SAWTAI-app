@@ -11,13 +11,14 @@ import { useRouter } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
-import { createWorkflowDraftApiV1WorkflowWorkflowIdCreateDraftPost, getWorkflowVersionsApiV1WorkflowWorkflowIdVersionsGet, listDocumentsApiV1KnowledgeBaseDocumentsGet, listRecordingsApiV1WorkflowRecordingsGet, listToolsApiV1ToolsGet } from '@/client';
+import { createWorkflowDraftApiV1WorkflowWorkflowIdCreateDraftPost, getWorkflowApiV1WorkflowFetchWorkflowIdGet, getWorkflowVersionsApiV1WorkflowWorkflowIdVersionsGet, listDocumentsApiV1KnowledgeBaseDocumentsGet, listRecordingsApiV1WorkflowRecordingsGet, listToolsApiV1ToolsGet } from '@/client';
 import type { DocumentResponseSchema, RecordingResponseSchema, ToolResponse, WorkflowVersionResponse } from '@/client/types.gen';
+import { AgentCopilotChat, useCopilotStatus, type WorkflowChange } from '@/components/agent-copilot/AgentCopilotChat';
 import { useNodeSpecs } from "@/components/flow/renderer";
 import { FlowEdge, FlowNode, NodeType } from "@/components/flow/types";
 import { HireExpertNudge } from "@/components/lead-forms/HireExpertNudge";
 import { Button } from '@/components/ui/button';
-import { Sheet, SheetContent } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useOnboarding } from '@/context/OnboardingContext';
 import { detailFromError } from '@/lib/apiError';
@@ -34,6 +35,7 @@ import { WorkflowTesterPanel } from './components/WorkflowTesterPanel';
 import { WorkflowVersionDiffDialog } from './components/WorkflowVersionDiffDialog';
 import { WorkflowProvider } from "./contexts/WorkflowContext";
 import { useWorkflowState } from "./hooks/useWorkflowState";
+import { useWorkflowStore } from './stores/workflowStore';
 import { layoutNodes } from './utils/layoutNodes';
 
 const edgeTypes = {
@@ -61,6 +63,8 @@ interface RenderWorkflowProps {
     initialWorkflowConfigurations?: WorkflowConfigurations;
     initialVersionNumber?: number | null;
     initialVersionStatus?: string | null;
+    /** Open the AI assistant on load, resuming this conversation. */
+    initialCopilotConversationId?: string | null;
     user: { id: string; email?: string };
 }
 
@@ -75,6 +79,7 @@ function RenderWorkflow({
     initialWorkflowConfigurations,
     initialVersionNumber,
     initialVersionStatus,
+    initialCopilotConversationId = null,
     user,
 }: RenderWorkflowProps) {
     const router = useRouter();
@@ -84,6 +89,9 @@ function RenderWorkflow({
     const [isVersionPanelOpen, setIsVersionPanelOpen] = useState(false);
     const [isTesterRailOpen, setIsTesterRailOpen] = useState(true);
     const [isTesterSheetOpen, setIsTesterSheetOpen] = useState(false);
+    const [isCopilotOpen, setIsCopilotOpen] = useState(Boolean(initialCopilotConversationId));
+    const copilotEnabled = useCopilotStatus()?.enabled ?? false;
+    const setWorkflowName = useWorkflowStore((state) => state.setWorkflowName);
     const [isDesktopViewport, setIsDesktopViewport] = useState(false);
     const [versions, setVersions] = useState<WorkflowVersionResponse[]>([]);
     const [versionsLoading, setVersionsLoading] = useState(false);
@@ -394,6 +402,7 @@ function RenderWorkflow({
 
     const handleOpenTester = useCallback(() => {
         if (window.innerWidth >= 1280) {
+            setIsCopilotOpen(false);
             setIsTesterRailOpen(true);
             return;
         }
@@ -540,6 +549,46 @@ function RenderWorkflow({
         await saveWorkflowConfigurations(workflowConfigurations, newName);
     }, [saveWorkflowConfigurations, workflowConfigurations]);
 
+    // The assistant saves drafts server-side; pull the new draft onto the canvas.
+    const handleCopilotWorkflowChanged = useCallback(async (change: WorkflowChange) => {
+        if (change.workflowId !== workflowId) return;
+        const response = await getWorkflowApiV1WorkflowFetchWorkflowIdGet({
+            path: { workflow_id: workflowId },
+        });
+        if (response.error || !response.data) {
+            toast.error(detailFromError(response.error, "Couldn't load the assistant's changes. Refresh the page."));
+            return;
+        }
+        const workflow = response.data;
+        setNodes(workflow.workflow_definition.nodes as FlowNode[]);
+        setEdges(workflow.workflow_definition.edges as FlowEdge[]);
+        setWorkflowName(workflow.name);
+        setIsDirty(false);
+        if (workflow.version_number != null) setCurrentVersionNumber(workflow.version_number);
+        if (workflow.version_status) setCurrentVersionStatus(workflow.version_status);
+        // Re-selects the new draft as the active version, remounting the canvas.
+        fetchVersions(true);
+    }, [workflowId, setNodes, setEdges, setWorkflowName, setIsDirty, fetchVersions]);
+
+    // The assistant edits the saved draft, so unsaved canvas edits would be
+    // overwritten when its changes load.
+    const copilotBlockedReason = isViewingHistoricalVersion
+        ? 'Return to the draft to edit this agent with the assistant.'
+        : isDirty
+            ? 'Save your changes first so the assistant works on the latest version.'
+            : null;
+
+    const copilotChat = (
+        <AgentCopilotChat
+            workflowId={workflowId}
+            agentName={workflowName}
+            initialConversationId={initialCopilotConversationId}
+            blockedReason={copilotBlockedReason}
+            onWorkflowChanged={handleCopilotWorkflowChanged}
+            onClose={() => setIsCopilotOpen(false)}
+        />
+    );
+
     const updateTool = useCallback(
         (toolUuid: string, updater: (tool: ToolResponse) => ToolResponse) => {
             setTools((prev) =>
@@ -584,6 +633,8 @@ function RenderWorkflow({
                     user={user}
                     onPhoneCallClick={() => setIsPhoneCallDialogOpen(true)}
                     onTestAgentClick={handleOpenTester}
+                    onAssistantClick={copilotEnabled ? () => setIsCopilotOpen((open) => !open) : undefined}
+                    isAssistantOpen={isCopilotOpen}
                     onHistoryClick={handleOpenVersionPanel}
                     activeVersionLabel={activeVersionLabel}
                     isViewingHistoricalVersion={isViewingHistoricalVersion}
@@ -747,7 +798,13 @@ function RenderWorkflow({
                             </div>
                         </div>
 
-                        {isTesterRailOpen && (
+                        {copilotEnabled && isDesktopViewport && (
+                            <aside className={`h-full w-[420px] shrink-0 border-l border-border bg-background ${isCopilotOpen ? '' : 'hidden'}`}>
+                                {copilotChat}
+                            </aside>
+                        )}
+
+                        {isTesterRailOpen && !(isCopilotOpen && isDesktopViewport) && (
                             <aside className="hidden h-full w-[400px] shrink-0 border-l border-border xl:block">
                                 <WorkflowTesterPanel
                                     workflowId={workflowId}
@@ -762,6 +819,15 @@ function RenderWorkflow({
                             </aside>
                         )}
                     </div>
+
+                    {copilotEnabled && !isDesktopViewport && (
+                        <Sheet open={isCopilotOpen} onOpenChange={setIsCopilotOpen}>
+                            <SheetContent side="right" className="w-full max-w-none p-0 sm:max-w-md [&>button]:hidden">
+                                <SheetTitle className="sr-only">AI assistant</SheetTitle>
+                                {copilotChat}
+                            </SheetContent>
+                        </Sheet>
+                    )}
 
                     <Sheet open={isTesterSheetOpen} onOpenChange={setIsTesterSheetOpen}>
                         <SheetContent side="right" className="w-full max-w-none p-0 sm:max-w-xl xl:hidden">

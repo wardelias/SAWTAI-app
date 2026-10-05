@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactFlowInstance } from "@xyflow/react";
-import { AlertCircle, ArrowLeft, Bot, Clipboard, Copy, Download, Eye, History, LoaderCircle, Menu, MoreVertical, Pencil, Phone, Rocket } from "lucide-react";
+import { AlertCircle, ArrowLeft, Bot, Clipboard, Copy, Download, Eye, History, LoaderCircle, Menu, MoreVertical, Pencil, Phone, Rocket, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -39,6 +39,9 @@ interface WorkflowEditorHeaderProps {
     user: { id: string; email?: string };
     onPhoneCallClick: () => void;
     onTestAgentClick: () => void;
+    /** Shown only when the AI assistant is configured on this deployment. */
+    onAssistantClick?: () => void;
+    isAssistantOpen?: boolean;
     onHistoryClick: () => void;
     activeVersionLabel?: string;
     isViewingHistoricalVersion: boolean;
@@ -56,6 +59,8 @@ export const WorkflowEditorHeader = ({
     saveWorkflow,
     onPhoneCallClick,
     onTestAgentClick,
+    onAssistantClick,
+    isAssistantOpen = false,
     onHistoryClick,
     activeVersionLabel,
     isViewingHistoricalVersion,
@@ -416,6 +421,18 @@ export const WorkflowEditorHeader = ({
                     >
                         <Phone className="w-4 h-4" />
                         Phone Call
+                    </Button>
+                )}
+
+                {onAssistantClick && (
+                    <Button
+                        variant="outline"
+                        className={`flex items-center gap-2 border-violet-500/50 text-white hover:bg-violet-500/15 ${isAssistantOpen ? 'bg-violet-500/20' : 'bg-gradient-to-r from-violet-500/10 to-fuchsia-500/10'}`}
+                        onClick={onAssistantClick}
+                        aria-pressed={isAssistantOpen}
+                    >
+                        <Sparkles className="w-4 h-4 text-violet-300" />
+                        AI Assistant
                     </Button>
                 )}
 

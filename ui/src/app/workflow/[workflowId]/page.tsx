@@ -75,6 +75,7 @@ export default function WorkflowDetailPage() {
 
     const stableUser = useMemo(() => user, [user]);
     const openTesterOnLoad = searchParams.get('onboarding') === 'web_call';
+    const copilotConversationId = searchParams.get('copilot');
 
     if (loading) {
         return (
@@ -100,6 +101,7 @@ export default function WorkflowDetailPage() {
                 workflowUuid={workflow.workflow_uuid ?? undefined}
                 initialTotalRuns={workflow.total_runs ?? 0}
                 openTesterOnLoad={openTesterOnLoad}
+                initialCopilotConversationId={copilotConversationId}
                 initialFlow={{
                     nodes: workflow.workflow_definition.nodes as FlowNode[],
                     edges: workflow.workflow_definition.edges as FlowEdge[],

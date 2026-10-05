@@ -5,6 +5,7 @@ from fastapi import APIRouter, Header, HTTPException, status
 from loguru import logger
 from pydantic import BaseModel
 
+from api.routes.agent_copilot import router as agent_copilot_router
 from api.routes.agent_stream import router as agent_stream_router
 from api.routes.auth import router as auth_router
 from api.routes.campaign import router as campaign_router
@@ -65,6 +66,7 @@ router.include_router(workflow_embed_router)
 router.include_router(knowledge_base_router)
 router.include_router(workflow_recording_router)
 router.include_router(folder_router)
+router.include_router(agent_copilot_router)
 router.include_router(meeting_router)
 router.include_router(leads_router)
 router.include_router(sequences_router)
