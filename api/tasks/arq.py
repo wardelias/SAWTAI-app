@@ -57,8 +57,10 @@ from api.tasks.text_chat_inactivity import (
     sweep_inactive_text_chat_sessions,
 )
 from api.tasks.webhook_delivery import deliver_webhook, sweep_webhook_deliveries
-from api.tasks.workflow_completion import process_workflow_completion
-
+from api.tasks.workflow_completion import (
+    process_lead_call_outcome,
+    process_workflow_completion,
+)
 
 # Sweep active Meta connections on a whole-minute cadence derived from the
 # configured interval (rounded to whole minutes; arq cron granularity).
@@ -74,6 +76,7 @@ class WorkerSettings:
         process_knowledge_base_document,
         poll_meta_leads,
         process_due_enrollments,
+        process_lead_call_outcome,
         deliver_webhook,
         complete_inactive_text_chat_session,
     ]
@@ -110,6 +113,9 @@ class WorkerSettings:
     ]
     redis_settings = REDIS_SETTINGS
     max_jobs = 10
+    # Refresh the worker's health-check key every minute so the API can tell
+    # whether a worker is running (see services/background_status.py).
+    health_check_interval = 60
 
 
 LOG_CONFIG = {

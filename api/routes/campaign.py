@@ -425,7 +425,9 @@ async def create_campaign(
         raise HTTPException(status_code=400, detail=str(e)) from e
     except OutboundConfigurationNotFoundError as e:
         raise HTTPException(
-            status_code=400, detail="telephony_configuration_not_found"
+            status_code=400,
+            detail="No telephony configuration found. Set up a phone number "
+            "under Telephony before creating a campaign.",
         ) from e
 
     if request.max_concurrency is not None:
@@ -552,8 +554,9 @@ async def start_campaign(
     )
     if not configs:
         raise HTTPException(
-            status_code=401,
-            detail="You must configure telephony first by going to APP_URL/configure-telephony",
+            status_code=400,
+            detail="Set up a phone number first: go to Telephony and add a "
+            "telephony configuration, then start the campaign.",
         )
 
     # Verify campaign exists and belongs to organization
@@ -888,8 +891,9 @@ async def resume_campaign(
     )
     if not configs:
         raise HTTPException(
-            status_code=401,
-            detail="You must configure telephony first by going to APP_URL/configure-telephony",
+            status_code=400,
+            detail="Set up a phone number first: go to Telephony and add a "
+            "telephony configuration, then start the campaign.",
         )
 
     # Verify campaign exists and belongs to organization

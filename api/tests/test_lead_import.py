@@ -14,7 +14,6 @@ import pytest
 from api.services.leads import import_service
 from api.services.leads.import_service import import_leads_from_csv
 
-
 # ---------------------------------------------------------------------------
 # Unit tests: import parsing / mapping / in-file dedup / invalid / suppression
 # (no database — storage fetch and bulk upsert are mocked)
@@ -258,13 +257,9 @@ async def test_leads_are_org_scoped(db_session):
     org_a = await _make_org(db_session)
     org_b = await _make_org(db_session)
 
-    await db_session.create_lead(
-        organization_id=org_a, phone_number="+14155550100"
-    )
+    await db_session.create_lead(organization_id=org_a, phone_number="+14155550100")
     # Same number in a different org is allowed (dedup is per-org).
-    await db_session.create_lead(
-        organization_id=org_b, phone_number="+14155550100"
-    )
+    await db_session.create_lead(organization_id=org_b, phone_number="+14155550100")
 
     assert await db_session.count_leads(org_a) == 1
     assert await db_session.count_leads(org_b) == 1

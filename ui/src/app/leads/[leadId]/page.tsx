@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowLeft, Mail, MessageSquare, Phone } from 'lucide-react';
+import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -10,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { detailFromError } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
+import { describeLeadActivity, leadActivityCallHref } from '@/lib/leadActivity';
 import {
     getLead,
     getLeadActivities,
@@ -163,18 +165,28 @@ export default function LeadDetailPage() {
                                             <Icon className="h-4 w-4 text-muted-foreground" />
                                         </div>
                                         <div className="flex-1">
-                                            <div className="flex items-center gap-2">
-                                                <span className="font-medium">{a.type.replace(/_/g, ' ')}</span>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <span className="font-medium">{describeLeadActivity(a)}</span>
                                                 <Badge variant="outline">{a.channel}</Badge>
-                                                <Badge variant="secondary">{a.direction}</Badge>
                                             </div>
                                             <p className="text-xs text-muted-foreground">
                                                 {formatDateTime(a.created_at)}
+                                                {leadActivityCallHref(a) && (
+                                                    <>
+                                                        {' · '}
+                                                        <Link href={leadActivityCallHref(a)!} className="underline">
+                                                            View call
+                                                        </Link>
+                                                    </>
+                                                )}
                                             </p>
                                             {a.payload && Object.keys(a.payload).length > 0 && (
-                                                <pre className="mt-1 text-xs bg-muted rounded p-2 overflow-x-auto">
-                                                    {JSON.stringify(a.payload, null, 2)}
-                                                </pre>
+                                                <details className="mt-1 text-xs">
+                                                    <summary className="cursor-pointer text-muted-foreground">Details</summary>
+                                                    <pre className="mt-1 bg-muted rounded p-2 overflow-x-auto">
+                                                        {JSON.stringify(a.payload, null, 2)}
+                                                    </pre>
+                                                </details>
                                             )}
                                         </div>
                                     </div>

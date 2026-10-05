@@ -34,7 +34,10 @@ async def test_get_callable_leads_excludes_dnc_and_suppressed(db_session):
     org_id, _ = await _make_org(db_session)
     await db_session.create_lead(organization_id=org_id, phone_number="+14155550100")
     await db_session.create_lead(
-        organization_id=org_id, phone_number="+14155550101", dnc=True, status="suppressed"
+        organization_id=org_id,
+        phone_number="+14155550101",
+        dnc=True,
+        status="suppressed",
     )
     await db_session.create_lead(
         organization_id=org_id, phone_number="+14155550102", status="contacted"
@@ -82,15 +85,24 @@ async def test_sync_source_data_queues_callable_leads(db_session):
         name="agent", workflow_definition={}, user_id=user_id, organization_id=org_id
     )
     await db_session.create_lead(
-        organization_id=org_id, phone_number="+14155550100", first_name="Ada",
+        organization_id=org_id,
+        phone_number="+14155550100",
+        first_name="Ada",
         attributes={"last_product": "Gold"},
     )
     await db_session.create_lead(
-        organization_id=org_id, phone_number="+14155550101", dnc=True, status="suppressed"
+        organization_id=org_id,
+        phone_number="+14155550101",
+        dnc=True,
+        status="suppressed",
     )
     campaign = await db_session.create_campaign(
-        name="reactivate", workflow_id=workflow.id, source_type="leads",
-        source_id="all", user_id=user_id, organization_id=org_id,
+        name="reactivate",
+        workflow_id=workflow.id,
+        source_type="leads",
+        source_id="all",
+        user_id=user_id,
+        organization_id=org_id,
     )
 
     service = get_sync_service("leads")

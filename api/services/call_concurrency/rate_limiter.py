@@ -431,7 +431,10 @@ class RateLimiter:
     ) -> bool:
         """
         Initialize the from_number pool for an organization + telephony config.
-        Uses ZADD NX so it won't overwrite numbers that are already in use.
+        Uses ZADD NX so it won't overwrite numbers that are already in use, and
+        drops numbers that are no longer configured so a removed caller ID is
+        never handed out again (an in-flight call on it still finishes; its
+        release is then a no-op).
 
         Pools are scoped per (organization_id, telephony_configuration_id) so
         that orgs with multiple telephony configurations do not leak caller IDs
@@ -447,6 +450,13 @@ class RateLimiter:
             # ZADD NX: only add members that don't already exist (preserves in-use scores)
             members = {number: 0 for number in from_numbers}
             await redis_client.zadd(key, members, nx=True)
+            stale = set(await redis_client.zrange(key, 0, -1)) - set(from_numbers)
+            if stale:
+                await redis_client.zrem(key, *stale)
+                logger.info(
+                    f"Removed {len(stale)} caller ID(s) no longer configured from "
+                    f"pool {key}"
+                )
             await redis_client.expire(key, 3600)  # 1 hour TTL
             return True
         except Exception as e:

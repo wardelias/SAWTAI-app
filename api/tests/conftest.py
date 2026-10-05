@@ -570,3 +570,32 @@ def three_node_workflow_no_variable_extraction() -> WorkflowGraph:
         ],
     )
     return WorkflowGraph(dto)
+
+
+@pytest.fixture
+async def prod_db(db_connection):
+    """DBClient whose every call opens its own session with production
+    defaults (expire_on_commit=True), inside an outer transaction that is
+    rolled back after the test.
+
+    The shared ``db_session`` fixture reuses one session with
+    expire_on_commit=False, which hides code that touches ORM state after a
+    commit — in production that lazy-loads outside the async context and
+    raises MissingGreenlet.
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.db import db_client
+
+    trans = await db_connection.begin()
+    original = db_client.async_session
+    db_client.async_session = async_sessionmaker(
+        bind=db_connection,
+        expire_on_commit=True,
+        join_transaction_mode="create_savepoint",
+    )
+    try:
+        yield db_client
+    finally:
+        db_client.async_session = original
+        await trans.rollback()

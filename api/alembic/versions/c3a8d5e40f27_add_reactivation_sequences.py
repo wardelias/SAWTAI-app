@@ -95,9 +95,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["organization_id"], ["organizations.id"], ondelete="CASCADE"
         ),
-        sa.ForeignKeyConstraint(
-            ["workflow_id"], ["workflows.id"], ondelete="SET NULL"
-        ),
+        sa.ForeignKeyConstraint(["workflow_id"], ["workflows.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
             "sequence_id", "step_order", name="uq_sequence_steps_order"

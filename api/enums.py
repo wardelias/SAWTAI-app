@@ -159,6 +159,9 @@ class OrganizationConfigurationKey(Enum):
     ORGANIZATION_BOOTSTRAP = (
         "ORGANIZATION_BOOTSTRAP"  # Single-winner lease for post-signup provisioning
     )
+    AGENT_COPILOT_SETTINGS = (
+        "AGENT_COPILOT_SETTINGS"  # Org-level AI assistant key, model, and limits
+    )
 
 
 class UserConfigurationKey(Enum):

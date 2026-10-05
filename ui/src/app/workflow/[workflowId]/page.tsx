@@ -10,6 +10,7 @@ import type { WorkflowResponse } from '@/client/types.gen';
 import { FlowEdge, FlowNode } from '@/components/flow/types';
 import SpinLoader from '@/components/SpinLoader';
 import { PostHogEvent } from '@/constants/posthog-events';
+import { fetchCallInsights, insightFixPrompt } from '@/lib/agentCopilot';
 import { detailFromError } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
 import logger from '@/lib/logger';
@@ -23,7 +24,14 @@ export default function WorkflowDetailPage() {
     const [workflow, setWorkflow] = useState<WorkflowResponse | undefined>(undefined);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const { user, redirectToLogin, loading: authLoading } = useAuth();
+    const { user, redirectToLogin, loading: authLoading, getAccessToken } = useAuth();
+    // "Fix with AI" on the Overview's Call Insights links here with
+    // ?insight=<reportId>-<issueIndex>. The issue is read from the server's
+    // stored report for this organization, never from URL text.
+    const insightParam = searchParams.get('insight');
+    const insightMatch = insightParam?.match(/^([0-9a-f]{12})-(\d{1,2})$/) ?? null;
+    const [insightPrompt, setInsightPrompt] = useState<string | null>(null);
+    const [insightLoading, setInsightLoading] = useState(Boolean(insightMatch));
 
     // Redirect if not authenticated
     useEffect(() => {
@@ -73,13 +81,40 @@ export default function WorkflowDetailPage() {
         }
     }, [params.workflowId, user]);
 
+    useEffect(() => {
+        if (!user || !insightMatch) return;
+        const [, reportId, index] = insightMatch;
+        (async () => {
+            try {
+                const report = await fetchCallInsights(await getAccessToken());
+                const issue = report?.id === reportId ? report.issues[Number(index)] : undefined;
+                if (issue) setInsightPrompt(insightFixPrompt(issue));
+            } catch (err) {
+                logger.error(`Error loading call insight: ${err}`);
+            } finally {
+                setInsightLoading(false);
+            }
+        })();
+        // Only the param values matter; the match array is recreated each render.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user, insightParam, getAccessToken]);
+
     const stableUser = useMemo(() => user, [user]);
     const openTesterOnLoad = searchParams.get('onboarding') === 'web_call';
     const panelParam = searchParams.get('panel');
     const initialPanel: WorkflowEditorPanel | null =
         panelParam === 'assistant' || panelParam === 'test' ? panelParam : null;
+    const copilotConversationId = searchParams.get('copilot');
+    // "Ask AI about this call" links here with the call's id. Only a numeric
+    // id is accepted; the request itself is written here, never taken from
+    // the URL, so a crafted link can't make the assistant act on its words.
+    const reviewCallId = searchParams.get('reviewCall');
+    const reviewCallPrompt = reviewCallId && /^\d+$/.test(reviewCallId)
+        ? `Review call #${reviewCallId}: what happened, what went wrong or well, and what should change in this agent to handle calls like it better?`
+        : null;
+    const copilotPrompt = reviewCallPrompt ?? insightPrompt;
 
-    if (loading) {
+    if (loading || insightLoading) {
         return (
             <WorkflowLayout>
                 <SpinLoader />
@@ -104,6 +139,8 @@ export default function WorkflowDetailPage() {
                 initialTotalRuns={workflow.total_runs ?? 0}
                 openTesterOnLoad={openTesterOnLoad}
                 initialPanel={initialPanel}
+                initialCopilotConversationId={copilotConversationId}
+                initialCopilotPrompt={copilotPrompt}
                 initialFlow={{
                     nodes: workflow.workflow_definition.nodes as FlowNode[],
                     edges: workflow.workflow_definition.edges as FlowEdge[],

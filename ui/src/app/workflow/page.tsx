@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 
 import { getWorkflowsApiV1WorkflowFetchGet, listFoldersApiV1FolderGet } from '@/client/sdk.gen';
 import type { FolderResponse, WorkflowListResponse } from '@/client/types.gen';
+import { AgentAssistantButton } from '@/components/agent-copilot/AgentAssistantButton';
 import { Card, CardContent } from '@/components/ui/card';
 import { AIBuilderHero } from '@/components/workflow/AIBuilderHero';
 import { CreateWorkflowButton } from "@/components/workflow/CreateWorkflowButton";
@@ -120,6 +121,7 @@ async function PageContent() {
                         <UploadWorkflowButton />
                         <CreateFolderButton />
                         <CreateWorkflowButton />
+                        <AgentAssistantButton />
                     </div>
                 </div>
                 <AIBuilderHero className="mb-6" />

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Header, HTTPException, status
 from loguru import logger
 from pydantic import BaseModel
 
+from api.routes.agent_copilot import router as agent_copilot_router
 from api.routes.agent_stream import router as agent_stream_router
 from api.routes.auth import router as auth_router
 from api.routes.campaign import router as campaign_router
@@ -67,6 +68,7 @@ router.include_router(workflow_embed_router)
 router.include_router(knowledge_base_router)
 router.include_router(workflow_recording_router)
 router.include_router(folder_router)
+router.include_router(agent_copilot_router)
 router.include_router(meeting_router)
 router.include_router(leads_router)
 router.include_router(sequences_router)
@@ -97,6 +99,20 @@ class HealthResponse(BaseModel):
     # be baked into the browser bundle at build time. Both are public values.
     stack_project_id: str | None = None
     stack_publishable_client_key: str | None = None
+
+
+class BackgroundStatusResponse(BaseModel):
+    worker: bool
+    campaign_orchestrator: bool
+
+
+@router.get("/health/background", response_model=BackgroundStatusResponse)
+async def background_health() -> BackgroundStatusResponse:
+    """Whether the background worker and campaign orchestrator are running.
+    Campaigns and sequences don't progress without them."""
+    from api.services.background_status import get_background_status
+
+    return BackgroundStatusResponse(**await get_background_status())
 
 
 @router.get("/health", response_model=HealthResponse)

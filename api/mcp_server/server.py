@@ -2,6 +2,7 @@ from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from api.mcp_server.instructions import DOGRAH_MCP_INSTRUCTIONS
+from api.mcp_server.tools.call_review import get_call, get_call_stats, list_calls
 from api.mcp_server.tools.catalog import (
     list_credentials,
     list_documents,
@@ -53,3 +54,14 @@ _DOCS_TOOL_ANNOTATIONS = ToolAnnotations(
 
 for _tool in (list_docs, read_doc, search_docs):
     mcp.tool(_tool, annotations=_DOCS_TOOL_ANNOTATIONS)
+
+# Call review reads call history only; nothing here changes an agent.
+_CALL_REVIEW_TOOL_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=True,
+    idempotentHint=True,
+    destructiveHint=False,
+    openWorldHint=False,
+)
+
+for _tool in (get_call_stats, list_calls, get_call):
+    mcp.tool(_tool, annotations=_CALL_REVIEW_TOOL_ANNOTATIONS)

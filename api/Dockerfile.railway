@@ -96,5 +96,6 @@ COPY --from=ts-deps --chown=dograh:dograh /ts_validator/node_modules ./api/mcp_s
 
 USER dograh
 
-# PORT injected by Railway; startCommand in railway.json runs migrations then uvicorn
+# PORT injected by Railway; startCommand in railway.json (api/railway_start.py)
+# runs migrations, then uvicorn + the ARQ worker + the campaign orchestrator
 EXPOSE 8000

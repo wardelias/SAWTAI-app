@@ -1,32 +1,15 @@
 "use client";
 
-import { Plus, Repeat, Trash2 } from 'lucide-react';
+import { Pause, Play, Plus, Repeat } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import BackgroundServicesBanner from '@/components/BackgroundServicesBanner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { MobileList, MobileListIcon, MobileListItem } from '@/components/ui/mobile-list';
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from '@/components/ui/select';
 import {
     Table,
     TableBody,
@@ -38,26 +21,15 @@ import {
 import { detailFromError } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
 import {
-    createSequence,
     listSequences,
     listWorkflowSummaries,
     type Sequence,
+    updateSequence,
     type WorkflowSummary,
 } from '@/lib/sequencesApi';
 
-interface StepDraft {
-    channel: string;
-    delayMinutes: number;
-    workflowId: string; // select value as string
-    stopOnResponse: boolean;
-}
-
-const emptyStep = (): StepDraft => ({
-    channel: 'voice',
-    delayMinutes: 0,
-    workflowId: '',
-    stopOnResponse: true,
-});
+import SequenceEditorDialog from './SequenceEditorDialog';
+import { formatHour, summarizeSteps } from './sequenceFormat';
 
 export default function SequencesPage() {
     const { user, getAccessToken, redirectToLogin, loading: authLoading } = useAuth();
@@ -66,22 +38,15 @@ export default function SequencesPage() {
     const [sequences, setSequences] = useState<Sequence[]>([]);
     const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const hasFetched = useRef(false);
-
     const [createOpen, setCreateOpen] = useState(false);
-    const [name, setName] = useState('');
-    const [quietStart, setQuietStart] = useState('');
-    const [quietEnd, setQuietEnd] = useState('');
-    const [timezone, setTimezone] = useState('');
-    const [steps, setSteps] = useState<StepDraft[]>([emptyStep()]);
-    const [saving, setSaving] = useState(false);
+    const [toggling, setToggling] = useState<number | null>(null);
+    const hasFetched = useRef(false);
 
     useEffect(() => {
         if (!authLoading && !user) redirectToLogin();
     }, [authLoading, user, redirectToLogin]);
 
     const fetchAll = async () => {
-        setIsLoading(true);
         try {
             const token = await getAccessToken();
             const [seqRes, wfRes] = await Promise.all([
@@ -106,103 +71,109 @@ export default function SequencesPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [authLoading, user]);
 
-    const updateStep = (i: number, patch: Partial<StepDraft>) => {
-        setSteps((prev) => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
-    };
-
-    const handleCreate = async () => {
-        if (!name.trim()) {
-            toast.error('Give the sequence a name');
-            return;
-        }
-        for (const [i, s] of steps.entries()) {
-            if (s.channel === 'voice' && !s.workflowId) {
-                toast.error(`Step ${i + 1}: pick a voice agent`);
-                return;
-            }
-        }
-        setSaving(true);
+    const toggleStatus = async (seq: Sequence) => {
+        const status = seq.status === 'active' ? 'paused' : 'active';
+        setToggling(seq.id);
         try {
             const token = await getAccessToken();
-            const res = await createSequence(token, {
-                name,
-                status: 'active',
-                quiet_hours_start: quietStart === '' ? null : Number(quietStart),
-                quiet_hours_end: quietEnd === '' ? null : Number(quietEnd),
-                default_timezone: timezone || null,
-                steps: steps.map((s) => ({
-                    channel: s.channel,
-                    delay_seconds: Math.round(s.delayMinutes * 60),
-                    workflow_id: s.channel === 'voice' ? Number(s.workflowId) : null,
-                    stop_on_response: s.stopOnResponse,
-                })),
-            });
-            if (res.error) {
-                toast.error(detailFromError(res.error, 'Failed to create sequence'));
+            const res = await updateSequence(token, seq.id, { status });
+            if (res.error || !res.data) {
+                toast.error(detailFromError(res.error, 'Could not update the sequence'));
                 return;
             }
-            toast.success('Sequence created');
-            setCreateOpen(false);
-            setName('');
-            setQuietStart('');
-            setQuietEnd('');
-            setTimezone('');
-            setSteps([emptyStep()]);
-            await fetchAll();
+            setSequences((prev) => prev.map((s) => (s.id === seq.id ? res.data! : s)));
+            toast.success(status === 'active' ? 'Sequence resumed' : 'Sequence paused');
         } finally {
-            setSaving(false);
+            setToggling(null);
         }
     };
 
     return (
         <div className="container mx-auto p-6 space-y-6 max-md:space-y-5 max-md:px-4 max-md:py-5">
-            <div className="flex justify-between items-center max-md:flex-col max-md:items-stretch max-md:gap-4">
+            <div className="flex flex-wrap justify-between items-start gap-4 max-md:flex-col max-md:flex-nowrap max-md:items-stretch">
                 <div>
-                    <h1 className="text-3xl font-bold mb-2 max-md:text-2xl">Reactivation Sequences</h1>
-                    <p className="max-md:text-sm max-md:text-muted-foreground">Multi-step wake-up cadences that stop when a lead responds</p>
+                    <h1 className="text-3xl font-bold mb-2 max-md:text-2xl">Sequences</h1>
+                    <p className="text-muted-foreground max-w-2xl max-md:text-sm">
+                        Automatic follow-up for each lead: call (or text) them on a schedule you set,
+                        and stop as soon as they talk to your agent. Use a campaign instead to call a
+                        whole list once.
+                    </p>
                 </div>
                 <Button onClick={() => setCreateOpen(true)}>
                     <Plus className="h-4 w-4 mr-2" />
-                    New Sequence
+                    New sequence
                 </Button>
             </div>
 
-            <Card>
-                <CardHeader>
-                    <CardTitle>All Sequences</CardTitle>
-                    <CardDescription>Enroll leads from a sequence&apos;s page</CardDescription>
-                </CardHeader>
-                <CardContent>
-                    {isLoading ? (
-                        <div className="animate-pulse space-y-3">
-                            {[...Array(4)].map((_, i) => (
-                                <div key={i} className="h-12 bg-muted rounded"></div>
-                            ))}
+            <BackgroundServicesBanner />
+
+            {isLoading ? (
+                <div className="animate-pulse space-y-3">
+                    {[...Array(4)].map((_, i) => (
+                        <div key={i} className="h-12 bg-muted rounded"></div>
+                    ))}
+                </div>
+            ) : sequences.length === 0 ? (
+                <Card>
+                    <CardContent className="py-12">
+                        <div className="mx-auto max-w-xl text-center space-y-4">
+                            <Repeat className="mx-auto h-10 w-10 text-muted-foreground" />
+                            <h2 className="text-xl font-semibold">Create your first sequence</h2>
+                            <ol className="text-left text-sm text-muted-foreground space-y-2 list-decimal list-inside">
+                                <li>Set the steps, e.g. call now, call again in 2 days, then text after 5 days.</li>
+                                <li>Add leads from your Leads list (DNC and opted-out leads are skipped).</li>
+                                <li>Each lead moves through the steps on its own and leaves the sequence
+                                    the moment they talk to your agent.</li>
+                            </ol>
+                            <Button onClick={() => setCreateOpen(true)}>
+                                <Plus className="h-4 w-4 mr-2" />
+                                New sequence
+                            </Button>
                         </div>
-                    ) : sequences.length > 0 ? (
-                        <>
+                    </CardContent>
+                </Card>
+            ) : (
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Your sequences</CardTitle>
+                        <CardDescription>Open a sequence to add leads and follow their progress</CardDescription>
+                    </CardHeader>
+                    <CardContent>
                         <MobileList>
-                            {sequences.map((seq) => (
-                                <MobileListItem
-                                    key={seq.id}
-                                    href={`/sequences/${seq.id}`}
-                                    leading={<MobileListIcon><Repeat /></MobileListIcon>}
-                                    title={seq.name}
-                                    subtitle={[
-                                        `${seq.steps.length} ${seq.steps.length === 1 ? 'step' : 'steps'}`,
-                                        seq.quiet_hours_start != null && seq.quiet_hours_end != null
-                                            ? `Quiet ${seq.quiet_hours_start}:00 – ${seq.quiet_hours_end}:00`
-                                            : null,
-                                    ]
-                                        .filter(Boolean)
-                                        .join(' · ')}
-                                    trailing={
-                                        <Badge variant={seq.status === 'active' ? 'default' : 'secondary'}>
-                                            {seq.status}
-                                        </Badge>
-                                    }
-                                />
-                            ))}
+                            {sequences.map((seq) => {
+                                const c = seq.enrollment_counts ?? {};
+                                return (
+                                    <MobileListItem
+                                        key={seq.id}
+                                        href={`/sequences/${seq.id}`}
+                                        leading={<MobileListIcon><Repeat /></MobileListIcon>}
+                                        title={seq.name}
+                                        subtitle={summarizeSteps(seq)}
+                                        meta={
+                                            <>
+                                                <Badge variant={seq.status === 'active' ? 'default' : 'secondary'}>
+                                                    {seq.status === 'active' ? 'Running' : seq.status === 'paused' ? 'Paused' : seq.status}
+                                                </Badge>
+                                                <span className="text-muted-foreground tabular-nums">
+                                                    {c.active ?? 0} in progress · {c.responded ?? 0} responded
+                                                </span>
+                                            </>
+                                        }
+                                        action={
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                disabled={toggling === seq.id}
+                                                onClick={() => toggleStatus(seq)}
+                                                aria-label={seq.status === 'active' ? `Pause ${seq.name}` : `Resume ${seq.name}`}
+                                                className="text-muted-foreground"
+                                            >
+                                                {seq.status === 'active' ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                                            </Button>
+                                        }
+                                    />
+                                );
+                            })}
                         </MobileList>
                         <div className="overflow-x-auto max-md:hidden">
                             <Table>
@@ -211,166 +182,85 @@ export default function SequencesPage() {
                                         <TableHead>Name</TableHead>
                                         <TableHead>Status</TableHead>
                                         <TableHead>Steps</TableHead>
+                                        <TableHead className="text-right">In progress</TableHead>
+                                        <TableHead className="text-right">Responded</TableHead>
+                                        <TableHead className="text-right">Finished</TableHead>
                                         <TableHead>Quiet hours</TableHead>
-                                        <TableHead className="text-right">Action</TableHead>
+                                        <TableHead className="text-right">Actions</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {sequences.map((seq) => (
-                                        <TableRow
-                                            key={seq.id}
-                                            className="cursor-pointer hover:bg-muted/50"
-                                            onClick={() => router.push(`/sequences/${seq.id}`)}
-                                        >
-                                            <TableCell className="font-medium">{seq.name}</TableCell>
-                                            <TableCell>
-                                                <Badge variant={seq.status === 'active' ? 'default' : 'secondary'}>
-                                                    {seq.status}
-                                                </Badge>
-                                            </TableCell>
-                                            <TableCell>{seq.steps.length}</TableCell>
-                                            <TableCell>
-                                                {seq.quiet_hours_start != null && seq.quiet_hours_end != null
-                                                    ? `${seq.quiet_hours_start}:00 – ${seq.quiet_hours_end}:00`
-                                                    : '—'}
-                                            </TableCell>
-                                            <TableCell className="text-right">
-                                                <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        router.push(`/sequences/${seq.id}`);
-                                                    }}
-                                                >
-                                                    Open
-                                                </Button>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
+                                    {sequences.map((seq) => {
+                                        const c = seq.enrollment_counts ?? {};
+                                        return (
+                                            <TableRow
+                                                key={seq.id}
+                                                className="cursor-pointer hover:bg-muted/50"
+                                                onClick={() => router.push(`/sequences/${seq.id}`)}
+                                            >
+                                                <TableCell className="font-medium">{seq.name}</TableCell>
+                                                <TableCell>
+                                                    <Badge variant={seq.status === 'active' ? 'default' : 'secondary'}>
+                                                        {seq.status === 'active' ? 'Running' : seq.status === 'paused' ? 'Paused' : seq.status}
+                                                    </Badge>
+                                                </TableCell>
+                                                <TableCell className="text-sm text-muted-foreground">
+                                                    {summarizeSteps(seq)}
+                                                </TableCell>
+                                                <TableCell className="text-right">{c.active ?? 0}</TableCell>
+                                                <TableCell className="text-right">{c.responded ?? 0}</TableCell>
+                                                <TableCell className="text-right">{c.completed ?? 0}</TableCell>
+                                                <TableCell className="text-sm">
+                                                    {seq.quiet_hours_start != null && seq.quiet_hours_end != null
+                                                        ? `${formatHour(seq.quiet_hours_start)}–${formatHour(seq.quiet_hours_end)}`
+                                                        : '—'}
+                                                </TableCell>
+                                                <TableCell className="text-right">
+                                                    <div className="flex justify-end gap-2">
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            disabled={toggling === seq.id}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                toggleStatus(seq);
+                                                            }}
+                                                        >
+                                                            {seq.status === 'active' ? (
+                                                                <><Pause className="h-4 w-4 mr-1" />Pause</>
+                                                            ) : (
+                                                                <><Play className="h-4 w-4 mr-1" />Resume</>
+                                                            )}
+                                                        </Button>
+                                                        <Button
+                                                            size="sm"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                router.push(`/sequences/${seq.id}`);
+                                                            }}
+                                                        >
+                                                            Open
+                                                        </Button>
+                                                    </div>
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    })}
                                 </TableBody>
                             </Table>
                         </div>
-                        </>
-                    ) : (
-                        <div className="text-center py-12 text-muted-foreground">
-                            No sequences yet. Create one to start reactivating leads.
-                        </div>
-                    )}
-                </CardContent>
-            </Card>
+                    </CardContent>
+                </Card>
+            )}
 
-            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-                <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-                    <DialogHeader>
-                        <DialogTitle>New reactivation sequence</DialogTitle>
-                        <DialogDescription>
-                            Steps fire in order. Each delay is measured from the previous step
-                            (step 1 fires at enrollment). The cadence stops automatically when a
-                            lead engages on a call.
-                        </DialogDescription>
-                    </DialogHeader>
-
-                    <div className="space-y-4">
-                        <div>
-                            <Label htmlFor="seq-name">Name</Label>
-                            <Input id="seq-name" value={name} onChange={(e) => setName(e.target.value)} />
-                        </div>
-
-                        <div className="grid grid-cols-3 gap-2">
-                            <div>
-                                <Label htmlFor="qs">Quiet from (hour)</Label>
-                                <Input id="qs" type="number" min={0} max={23} value={quietStart}
-                                    onChange={(e) => setQuietStart(e.target.value)} placeholder="21" />
-                            </div>
-                            <div>
-                                <Label htmlFor="qe">Quiet until (hour)</Label>
-                                <Input id="qe" type="number" min={0} max={23} value={quietEnd}
-                                    onChange={(e) => setQuietEnd(e.target.value)} placeholder="9" />
-                            </div>
-                            <div>
-                                <Label htmlFor="tz">Default timezone</Label>
-                                <Input id="tz" value={timezone} onChange={(e) => setTimezone(e.target.value)}
-                                    placeholder="America/New_York" />
-                            </div>
-                        </div>
-
-                        <div className="space-y-3">
-                            <Label>Steps</Label>
-                            {steps.map((step, i) => (
-                                <div key={i} className="border rounded p-3 space-y-2">
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-sm font-medium">Step {i + 1}</span>
-                                        {steps.length > 1 && (
-                                            <Button variant="ghost" size="sm"
-                                                onClick={() => setSteps((p) => p.filter((_, idx) => idx !== i))}>
-                                                <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                        )}
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <div>
-                                            <Label className="text-xs">Channel</Label>
-                                            <Select value={step.channel}
-                                                onValueChange={(v) => updateStep(i, { channel: v })}>
-                                                <SelectTrigger><SelectValue /></SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="voice">Voice call</SelectItem>
-                                                    <SelectItem value="sms">SMS (coming soon)</SelectItem>
-                                                    <SelectItem value="email">Email (coming soon)</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                        <div>
-                                            <Label className="text-xs">
-                                                {i === 0 ? 'Delay after enrollment (min)' : 'Delay after previous (min)'}
-                                            </Label>
-                                            <Input type="number" min={0} value={step.delayMinutes}
-                                                onChange={(e) => updateStep(i, { delayMinutes: Number(e.target.value) })} />
-                                        </div>
-                                    </div>
-                                    {step.channel === 'voice' && (
-                                        <div>
-                                            <Label className="text-xs">Voice agent</Label>
-                                            <Select value={step.workflowId}
-                                                onValueChange={(v) => updateStep(i, { workflowId: v })}>
-                                                <SelectTrigger>
-                                                    <SelectValue placeholder="Select a voice agent" />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    {workflows.map((w) => (
-                                                        <SelectItem key={w.id} value={String(w.id)}>
-                                                            {w.name}
-                                                        </SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                    )}
-                                    <div className="flex items-center gap-2">
-                                        <Checkbox id={`stop-${i}`} checked={step.stopOnResponse}
-                                            onCheckedChange={(v) => updateStep(i, { stopOnResponse: Boolean(v) })} />
-                                        <Label htmlFor={`stop-${i}`} className="text-xs">
-                                            Stop the cadence if the lead engages on this step
-                                        </Label>
-                                    </div>
-                                </div>
-                            ))}
-                            <Button variant="outline" size="sm" onClick={() => setSteps((p) => [...p, emptyStep()])}>
-                                <Plus className="h-4 w-4 mr-2" />
-                                Add step
-                            </Button>
-                        </div>
-                    </div>
-
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-                        <Button onClick={handleCreate} disabled={saving}>
-                            {saving ? 'Creating…' : 'Create sequence'}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+            <SequenceEditorDialog
+                open={createOpen}
+                onOpenChange={setCreateOpen}
+                sequence={null}
+                workflows={workflows}
+                getAccessToken={getAccessToken}
+                onSaved={(seq) => router.push(`/sequences/${seq.id}`)}
+            />
         </div>
     );
 }

@@ -1616,9 +1616,7 @@ class LeadModel(Base):
     external_id = Column(String, nullable=True)  # id in an external CRM
 
     # Compliance / consent — foundational for recycled-lead outreach.
-    dnc = Column(
-        Boolean, nullable=False, default=False, server_default=text("false")
-    )
+    dnc = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     consent_sms = Column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
@@ -1647,9 +1645,7 @@ class LeadModel(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "organization_id", "phone_number", name="uq_leads_org_phone"
-        ),
+        UniqueConstraint("organization_id", "phone_number", name="uq_leads_org_phone"),
         Index("ix_leads_organization_id", "organization_id"),
         Index("ix_leads_org_status", "organization_id", "status"),
         Index(
@@ -1717,7 +1713,7 @@ class ReactivationSequenceModel(Base):
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     name = Column(String, nullable=False)
     status = Column(
-        Enum("draft", "active", "archived", name="sequence_status"),
+        Enum("draft", "active", "paused", "archived", name="sequence_status"),
         nullable=False,
         default="draft",
         server_default=text("'draft'::sequence_status"),
@@ -1770,9 +1766,7 @@ class SequenceStepModel(Base):
 
     # Stored as VARCHAR so new channels can be added without a migration.
     channel = Column(String(32), nullable=False)  # voice | sms | email
-    delay_seconds = Column(
-        Integer, nullable=False, default=0, server_default=text("0")
-    )
+    delay_seconds = Column(Integer, nullable=False, default=0, server_default=text("0"))
 
     # Voice steps reference an existing AI-agent workflow. SMS/email steps
     # (later phases) reference a message template instead.
@@ -1780,6 +1774,8 @@ class SequenceStepModel(Base):
         Integer, ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True
     )
     message_template_id = Column(Integer, nullable=True)
+    # Body for SMS steps; supports {{first_name}}-style lead variables.
+    message_text = Column(Text, nullable=True)
 
     stop_on_response = Column(
         Boolean, nullable=False, default=True, server_default=text("true")
@@ -1788,9 +1784,7 @@ class SequenceStepModel(Base):
     sequence = relationship("ReactivationSequenceModel", back_populates="steps")
 
     __table_args__ = (
-        UniqueConstraint(
-            "sequence_id", "step_order", name="uq_sequence_steps_order"
-        ),
+        UniqueConstraint("sequence_id", "step_order", name="uq_sequence_steps_order"),
         Index("ix_sequence_steps_sequence_id", "sequence_id"),
     )
 
@@ -1814,9 +1808,7 @@ class LeadSequenceEnrollmentModel(Base):
     )
 
     # 0-based index of the NEXT step to execute.
-    current_step = Column(
-        Integer, nullable=False, default=0, server_default=text("0")
-    )
+    current_step = Column(Integer, nullable=False, default=0, server_default=text("0"))
     state = Column(
         Enum(
             "active",
@@ -1833,6 +1825,19 @@ class LeadSequenceEnrollmentModel(Base):
     next_step_at = Column(DateTime(timezone=True), nullable=True)
     stop_reason = Column(String, nullable=True)
 
+    # Set while a voice step's call is in flight: the next step is scheduled
+    # from when this run completes (``next_step_at`` holds a fallback timeout).
+    waiting_on_run_id = Column(
+        Integer, ForeignKey("workflow_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    last_workflow_run_id = Column(
+        Integer, ForeignKey("workflow_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    last_error = Column(String, nullable=True)
+    last_step_at = Column(DateTime(timezone=True), nullable=True)
+    # Failed attempts at executing the current step (reset when it advances).
+    step_attempts = Column(Integer, nullable=False, default=0, server_default=text("0"))
+
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at = Column(
         DateTime(timezone=True),
@@ -1844,9 +1849,7 @@ class LeadSequenceEnrollmentModel(Base):
     sequence = relationship("ReactivationSequenceModel")
 
     __table_args__ = (
-        UniqueConstraint(
-            "sequence_id", "lead_id", name="uq_enrollment_sequence_lead"
-        ),
+        UniqueConstraint("sequence_id", "lead_id", name="uq_enrollment_sequence_lead"),
         Index("ix_enrollments_org_id", "organization_id"),
         # Hot path: the orchestrator polls active enrollments that are due.
         Index(

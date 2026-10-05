@@ -41,6 +41,11 @@ interface WorkflowEditorHeaderProps {
     user: { id: string; email?: string };
     onPhoneCallClick: () => void;
     onTestAgentClick: () => void;
+    /** Opens the AI assistant (also listed in the "More options" menu). */
+    onAssistantClick: () => void;
+    /** Show the header button; only when the chat assistant is configured on this deployment. */
+    showAssistantButton?: boolean;
+    isAssistantOpen?: boolean;
     onHistoryClick: () => void;
     activeVersionLabel?: string;
     isViewingHistoricalVersion: boolean;
@@ -48,7 +53,6 @@ interface WorkflowEditorHeaderProps {
     hasDraft: boolean;
     onPublished: () => void;
     renameWorkflow: (newName: string) => Promise<void>;
-    onAssistantClick: () => void;
 }
 
 export const WorkflowEditorHeader = ({
@@ -59,6 +63,9 @@ export const WorkflowEditorHeader = ({
     saveWorkflow,
     onPhoneCallClick,
     onTestAgentClick,
+    onAssistantClick,
+    showAssistantButton = false,
+    isAssistantOpen = false,
     onHistoryClick,
     activeVersionLabel,
     isViewingHistoricalVersion,
@@ -68,7 +75,6 @@ export const WorkflowEditorHeader = ({
     workflowId,
     workflowUuid,
     renameWorkflow,
-    onAssistantClick,
 }: WorkflowEditorHeaderProps) => {
     const router = useRouter();
     const { toggleSidebar } = useSidebar();
@@ -426,6 +432,18 @@ export const WorkflowEditorHeader = ({
                     >
                         <Phone className="w-4 h-4" />
                         Phone Call
+                    </Button>
+                )}
+
+                {showAssistantButton && (
+                    <Button
+                        variant="outline"
+                        className={`flex items-center gap-2 border-violet-500/50 text-white hover:bg-violet-500/15 max-md:hidden ${isAssistantOpen ? 'bg-violet-500/20' : 'bg-gradient-to-r from-violet-500/10 to-fuchsia-500/10'}`}
+                        onClick={onAssistantClick}
+                        aria-pressed={isAssistantOpen}
+                    >
+                        <Sparkles className="w-4 h-4 text-violet-300" />
+                        AI Assistant
                     </Button>
                 )}
 

@@ -162,6 +162,13 @@ services:
       MINIO_BUCKET: "voice-audio"
       MINIO_SECURE: "false"
 
+      # AI Assistant (chat that builds and edits agents). Optional platform-wide
+      # key; organizations can instead add their own in Settings → AI Assistant.
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      AGENT_COPILOT_MODEL: "${AGENT_COPILOT_MODEL:-claude-opus-5-5}"
+      AGENT_COPILOT_EFFORT: "${AGENT_COPILOT_EFFORT:-medium}"
+      AGENT_COPILOT_DAILY_MESSAGE_LIMIT: "${AGENT_COPILOT_DAILY_MESSAGE_LIMIT:-200}"
+
       # IMPORTANT: pinned to 1. The image launches FASTAPI_WORKERS as
       # independent uvicorn processes on consecutive ports (8000, 8001, ...)
       # expecting the bundled nginx to least_conn-balance long-lived

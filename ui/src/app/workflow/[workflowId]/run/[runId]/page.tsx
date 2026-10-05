@@ -11,6 +11,7 @@ import {
     Loader2,
     Pause,
     Play,
+    Sparkles,
     UserRound,
     Video,
 } from 'lucide-react';
@@ -25,6 +26,7 @@ import {
     getWorkflowApiV1WorkflowFetchWorkflowIdGet,
     getWorkflowRunApiV1WorkflowWorkflowIdRunsRunIdGet,
 } from '@/client/sdk.gen';
+import { useCopilotStatus } from '@/components/agent-copilot/AgentCopilotChat';
 import { MediaPreviewButton, MediaPreviewDialog } from '@/components/MediaPreviewDialog';
 import { OnboardingTooltip } from '@/components/onboarding/OnboardingTooltip';
 import { Button } from '@/components/ui/button';
@@ -611,6 +613,7 @@ function ContextDisplay({ title, context }: { title: string; context: Record<str
 
 export default function WorkflowRunPage() {
     const params = useParams();
+    const copilotEnabled = useCopilotStatus()?.enabled ?? false;
     const [isLoading, setIsLoading] = useState(true);
     const auth = useAuth();
     const organizationTimezone = useOrganizationTimezone();
@@ -762,7 +765,15 @@ export default function WorkflowRunPage() {
                                     </p>
                                 )}
                             </div>
-                            <div className="flex shrink-0 items-center gap-2">
+                            <div className="flex shrink-0 items-center gap-2 max-md:flex-col max-md:items-stretch">
+                                {copilotEnabled && (
+                                    <Link href={`/workflow/${params.workflowId}?reviewCall=${runId}`} className="max-md:w-full">
+                                        <Button className="gap-2 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white shadow-sm hover:opacity-90 max-md:w-full">
+                                            <Sparkles className="h-4 w-4" />
+                                            Ask AI about this call
+                                        </Button>
+                                    </Link>
+                                )}
                                 <Link href={`/workflow/${params.workflowId}`} className="max-md:w-full">
                                     <Button
                                         ref={customizeButtonRef}

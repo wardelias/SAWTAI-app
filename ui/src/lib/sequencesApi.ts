@@ -5,13 +5,22 @@
  * client after `npm run generate-client`.
  */
 
+import { client } from '@/client/client.gen';
+import { getServerBackendUrl, resolveBrowserBackendUrl } from '@/lib/apiClient';
+
+export type SequenceChannel = 'voice' | 'sms';
+export type SequenceStatus = 'draft' | 'active' | 'paused' | 'archived';
+export type EnrollmentState = 'active' | 'completed' | 'stopped' | 'converted';
+
 export interface SequenceStep {
     id?: number;
     step_order?: number;
     channel: string;
     delay_seconds: number;
     workflow_id: number | null;
-    message_template_id: number | null;
+    workflow_name?: string | null;
+    message_template_id?: number | null;
+    message_text?: string | null;
     stop_on_response: boolean;
 }
 
@@ -19,11 +28,12 @@ export interface Sequence {
     id: number;
     organization_id: number;
     name: string;
-    status: string;
+    status: SequenceStatus;
     quiet_hours_start: number | null;
     quiet_hours_end: number | null;
     default_timezone: string | null;
     steps: SequenceStep[];
+    enrollment_counts: Partial<Record<EnrollmentState | 'responded' | 'total', number>>;
     created_at: string | null;
     updated_at: string | null;
 }
@@ -37,10 +47,17 @@ export interface Enrollment {
     id: number;
     sequence_id: number;
     lead_id: number;
+    lead_name: string | null;
+    lead_phone: string | null;
+    lead_status: string | null;
     current_step: number;
-    state: string;
+    state: EnrollmentState;
     next_step_at: string | null;
     stop_reason: string | null;
+    waiting_on_call: boolean;
+    last_workflow_run_id: number | null;
+    last_error: string | null;
+    last_step_at: string | null;
     created_at: string | null;
 }
 
@@ -49,19 +66,21 @@ export interface EnrollmentListResponse {
     total: number;
 }
 
-export interface CreateSequenceBody {
+export interface SequenceStepBody {
+    channel: SequenceChannel;
+    delay_seconds: number;
+    workflow_id?: number | null;
+    message_text?: string | null;
+    stop_on_response: boolean;
+}
+
+export interface SequenceBody {
     name: string;
-    steps: Array<{
-        channel: string;
-        delay_seconds: number;
-        workflow_id?: number | null;
-        message_template_id?: number | null;
-        stop_on_response: boolean;
-    }>;
-    quiet_hours_start?: number | null;
-    quiet_hours_end?: number | null;
-    default_timezone?: string | null;
-    status?: string;
+    steps: SequenceStepBody[];
+    quiet_hours_start: number | null;
+    quiet_hours_end: number | null;
+    default_timezone: string | null;
+    status?: SequenceStatus;
 }
 
 export interface WorkflowSummary {
@@ -69,18 +88,25 @@ export interface WorkflowSummary {
     name: string;
 }
 
+export interface BackgroundStatus {
+    worker: boolean;
+    campaign_orchestrator: boolean;
+}
+
 export type ApiResult<T> = { data?: T; error?: unknown };
 
 function backendBaseUrl(): string {
     if (typeof window === 'undefined') {
-        return process.env.BACKEND_URL || 'http://api:8000';
+        return getServerBackendUrl();
     }
-    return process.env.NEXT_PUBLIC_BACKEND_URL || window.location.origin;
+    // Same resolution as the generated API client (NEXT_PUBLIC_BACKEND_URL →
+    // backend-reported endpoint → same origin).
+    return client.getConfig().baseUrl || resolveBrowserBackendUrl();
 }
 
 async function request<T>(
     path: string,
-    token: string,
+    token: string | null,
     init: RequestInit = {},
 ): Promise<ApiResult<T>> {
     try {
@@ -88,7 +114,7 @@ async function request<T>(
             ...init,
             headers: {
                 'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 ...(init.headers || {}),
             },
         });
@@ -110,10 +136,7 @@ export function getSequence(token: string, id: number): Promise<ApiResult<Sequen
     return request<Sequence>(`/sequences/${id}`, token);
 }
 
-export function createSequence(
-    token: string,
-    body: CreateSequenceBody,
-): Promise<ApiResult<Sequence>> {
+export function createSequence(token: string, body: SequenceBody): Promise<ApiResult<Sequence>> {
     return request<Sequence>('/sequences', token, {
         method: 'POST',
         body: JSON.stringify(body),
@@ -123,7 +146,7 @@ export function createSequence(
 export function updateSequence(
     token: string,
     id: number,
-    body: Partial<CreateSequenceBody>,
+    body: Partial<SequenceBody>,
 ): Promise<ApiResult<Sequence>> {
     return request<Sequence>(`/sequences/${id}`, token, {
         method: 'PATCH',
@@ -131,29 +154,55 @@ export function updateSequence(
     });
 }
 
+export function deleteSequence(token: string, id: number): Promise<ApiResult<null>> {
+    return request<null>(`/sequences/${id}`, token, { method: 'DELETE' });
+}
+
 export function enrollLeads(
     token: string,
     sequenceId: number,
-    leadIds: number[],
+    target: { leadIds?: number[]; leadStatus?: string },
 ): Promise<ApiResult<{ enrolled: number; skipped: number }>> {
     return request(`/sequences/${sequenceId}/enroll`, token, {
         method: 'POST',
-        body: JSON.stringify({ lead_ids: leadIds }),
+        body: JSON.stringify({
+            lead_ids: target.leadIds ?? null,
+            lead_status: target.leadStatus ?? null,
+        }),
     });
 }
 
 export function listEnrollments(
     token: string,
     sequenceId: number,
+    params: { state?: EnrollmentState; limit?: number; offset?: number } = {},
 ): Promise<ApiResult<EnrollmentListResponse>> {
+    const q = new URLSearchParams();
+    if (params.state) q.set('state', params.state);
+    if (params.limit != null) q.set('limit', String(params.limit));
+    if (params.offset != null) q.set('offset', String(params.offset));
+    const qs = q.toString();
     return request<EnrollmentListResponse>(
-        `/sequences/${sequenceId}/enrollments`,
+        `/sequences/${sequenceId}/enrollments${qs ? `?${qs}` : ''}`,
         token,
     );
 }
 
-export function listWorkflowSummaries(
+export function stopEnrollments(
     token: string,
-): Promise<ApiResult<WorkflowSummary[]>> {
-    return request<WorkflowSummary[]>('/workflow/fetch?status=active', token);
+    sequenceId: number,
+    enrollmentIds?: number[],
+): Promise<ApiResult<{ stopped: number }>> {
+    return request(`/sequences/${sequenceId}/enrollments/stop`, token, {
+        method: 'POST',
+        body: JSON.stringify({ enrollment_ids: enrollmentIds ?? null }),
+    });
+}
+
+export function listWorkflowSummaries(token: string): Promise<ApiResult<WorkflowSummary[]>> {
+    return request<WorkflowSummary[]>('/workflow/summary?status=active', token);
+}
+
+export function getBackgroundStatus(): Promise<ApiResult<BackgroundStatus>> {
+    return request<BackgroundStatus>('/health/background', null);
 }

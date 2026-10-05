@@ -16,6 +16,7 @@ import {
     startCampaignApiV1CampaignCampaignIdStartPost,
 } from '@/client/sdk.gen';
 import type { CampaignResponse } from '@/client/types.gen';
+import BackgroundServicesBanner from '@/components/BackgroundServicesBanner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
@@ -69,10 +70,11 @@ export default function CampaignDetailPage() {
     const [redialOnBusy, setRedialOnBusy] = useState(true);
     const [isRedialing, setIsRedialing] = useState(false);
 
-    // Fetch campaign details
-    const fetchCampaign = useCallback(async () => {
+    // Fetch campaign details. ``silent`` refreshes skip the loading skeleton
+    // and error toasts (used by the live-progress poll).
+    const fetchCampaign = useCallback(async (silent = false) => {
         if (!user) return;
-        setIsLoadingCampaign(true);
+        if (!silent) setIsLoadingCampaign(true);
         try {
             const accessToken = await getAccessToken();
             const response = await getCampaignApiV1CampaignCampaignIdGet({
@@ -89,9 +91,9 @@ export default function CampaignDetailPage() {
             }
         } catch (error) {
             console.error('Failed to fetch campaign:', error);
-            toast.error('Failed to load campaign details');
+            if (!silent) toast.error('Failed to load campaign details');
         } finally {
-            setIsLoadingCampaign(false);
+            if (!silent) setIsLoadingCampaign(false);
         }
     }, [user, getAccessToken, campaignId]);
 
@@ -99,6 +101,14 @@ export default function CampaignDetailPage() {
     useEffect(() => {
         fetchCampaign();
     }, [fetchCampaign]);
+
+    // Live progress: poll while the campaign is syncing or dialing.
+    const campaignState = campaign?.state;
+    useEffect(() => {
+        if (campaignState !== 'syncing' && campaignState !== 'running') return;
+        const timer = setInterval(() => fetchCampaign(true), 5000);
+        return () => clearInterval(timer);
+    }, [campaignState, fetchCampaign]);
 
     // Handle back navigation
     const handleBack = () => {
@@ -485,6 +495,7 @@ export default function CampaignDetailPage() {
 
     return (
         <div className="container mx-auto p-6 space-y-6 max-md:px-4 max-md:py-5">
+            <BackgroundServicesBanner needsOrchestrator />
             <div>
                 <Button
                     variant="ghost"
