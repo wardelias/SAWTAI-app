@@ -5,6 +5,15 @@ Claude tool-use loop, so edits made in chat are saved as drafts exactly as
 an external MCP client's would be.
 """
 
+from api.services.agent_copilot.builder_questions import (
+    MAX_QUESTIONS as BUILDER_MAX_QUESTIONS,
+)
+from api.services.agent_copilot.builder_questions import (
+    BuilderAnswer,
+    BuilderError,
+    BuilderLimitError,
+    next_builder_step,
+)
 from api.services.agent_copilot.history import (
     acquire_insights_lock,
     acquire_turn_lock,
@@ -35,6 +44,11 @@ from api.services.agent_copilot.settings import (
 from api.services.agent_copilot.transcript import build_transcript
 
 __all__ = [
+    "BUILDER_MAX_QUESTIONS",
+    "BuilderAnswer",
+    "BuilderError",
+    "BuilderLimitError",
+    "next_builder_step",
     "EFFORT_LEVELS",
     "InsightsError",
     "InsightsLimitError",

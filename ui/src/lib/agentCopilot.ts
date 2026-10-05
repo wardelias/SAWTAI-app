@@ -241,3 +241,61 @@ export function insightFixPrompt(issue: CallInsightIssue): string {
         .filter((line, i, all) => line !== '' || (all[i - 1] ?? '') !== '')
         .join('\n');
 }
+
+// ─── Agent builder interview (Create Voice Agent) ─────────────────────────
+
+export interface BuilderOption {
+    label: string;
+    hint: string;
+}
+
+export interface BuilderQuestion {
+    section: string;
+    question: string;
+    helper: string;
+    kind: 'single' | 'multi' | 'text';
+    options: BuilderOption[];
+    allow_custom: boolean;
+    placeholder: string;
+}
+
+export interface BuilderStep {
+    done: boolean;
+    /** The next question; null once the interview is done. */
+    question: BuilderQuestion | null;
+    /** Estimated questions left after this one. */
+    remaining: number;
+    /** The agent brief, once done. */
+    brief: string;
+}
+
+export interface BuilderAnswer {
+    question: string;
+    /** Empty when the question was skipped. */
+    answer: string;
+}
+
+/** Most AI-written questions in one interview (matches the server's cap). */
+export const BUILDER_MAX_QUESTIONS = 10;
+
+/** Ask the AI for the next interview question, or (when done) the agent brief. */
+export async function fetchNextBuilderQuestion(
+    token: string,
+    body: {
+        call_type: 'inbound' | 'outbound';
+        use_case: string;
+        description: string;
+        answers: BuilderAnswer[];
+        finish?: boolean;
+    },
+    signal?: AbortSignal,
+): Promise<BuilderStep> {
+    const res = await fetch(`${apiBaseUrl()}/builder/next-question`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+        signal,
+    });
+    if (!res.ok) throw new Error(await errorDetail(res));
+    return (await res.json()) as BuilderStep;
+}

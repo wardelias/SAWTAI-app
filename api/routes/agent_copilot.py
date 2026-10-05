@@ -15,12 +15,15 @@ key, model, effort, daily limit, and on/off switch.
 
 `GET/POST /agent-copilot/insights` return / regenerate the AI analysis of
 the organization's last 10 calls shown on the Overview page.
+
+`POST /agent-copilot/builder/next-question` writes the next question of the
+"Create Voice Agent" interview from the answers so far, or the final brief.
 """
 
 import asyncio
 import json
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -31,8 +34,12 @@ from api.constants import ANTHROPIC_API_KEY
 from api.db import db_client
 from api.db.models import UserModel
 from api.services.agent_copilot import (
+    BUILDER_MAX_QUESTIONS,
     EFFORT_LEVELS,
     SUPPORTED_MODELS,
+    BuilderAnswer,
+    BuilderError,
+    BuilderLimitError,
     InsightsError,
     InsightsLimitError,
     InvalidApiKeyError,
@@ -45,6 +52,7 @@ from api.services.agent_copilot import (
     load_insights_report,
     load_messages,
     load_stored_settings,
+    next_builder_step,
     release_insights_lock,
     release_turn_lock,
     resolve_settings,
@@ -150,6 +158,48 @@ def _sse(event: dict[str, Any]) -> str:
 class CallInsightsResponse(BaseModel):
     # None until the organization runs its first analysis.
     report: dict[str, Any] | None
+
+
+class BuilderAnswerItem(BaseModel):
+    question: str = Field(..., min_length=1, max_length=500)
+    # Empty when the user skipped the question.
+    answer: str = Field("", max_length=4000)
+
+
+class BuilderQuestionRequest(BaseModel):
+    call_type: Literal["inbound", "outbound"]
+    use_case: str = Field(..., min_length=1, max_length=200)
+    description: str = Field("", max_length=4000)
+    answers: list[BuilderAnswerItem] = Field(
+        default_factory=list, max_length=BUILDER_MAX_QUESTIONS
+    )
+    # Skip the remaining questions and write the brief now.
+    finish: bool = False
+
+
+class BuilderOption(BaseModel):
+    label: str
+    hint: str
+
+
+class BuilderQuestion(BaseModel):
+    section: str
+    question: str
+    helper: str
+    kind: Literal["single", "multi", "text"]
+    options: list[BuilderOption]
+    allow_custom: bool
+    placeholder: str
+
+
+class BuilderStepResponse(BaseModel):
+    done: bool
+    # The next question; None once the interview is done.
+    question: BuilderQuestion | None
+    # Estimated questions left after this one.
+    remaining: int
+    # The agent brief; set once the interview is done.
+    brief: str
 
 
 def _require_org(user: UserModel) -> int:
@@ -288,6 +338,56 @@ async def run_call_insights(
         await release_insights_lock(org_id)
     await save_insights_report(org_id, report)
     return CallInsightsResponse(report=report)
+
+
+@router.post("/builder/next-question")
+async def next_builder_question(
+    request: BuilderQuestionRequest,
+    user: UserModel = Depends(get_user),
+) -> BuilderStepResponse:
+    """Write the next question of the agent-builder interview, or finish.
+
+    Each request counts as one message against the daily AI Assistant limit.
+    """
+    org_id = _require_org(user)
+    settings = await _require_available_settings(org_id)
+    try:
+        step = await next_builder_step(
+            org_id,
+            settings,
+            call_type=request.call_type,
+            use_case=request.use_case,
+            description=request.description,
+            answers=[BuilderAnswer(a.question, a.answer) for a in request.answers],
+            finish=request.finish,
+        )
+    except BuilderLimitError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+    except BuilderError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:  # noqa: BLE001 — readable error with a log reference
+        ref = uuid.uuid4().hex[:8]
+        logger.exception(f"builder question failed [ref {ref}]: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"The assistant hit an unexpected error (ref {ref}). Please try again.",
+        )
+    return BuilderStepResponse(
+        done=step.done,
+        question=None
+        if step.done
+        else BuilderQuestion(
+            section=step.section,
+            question=step.question,
+            helper=step.helper,
+            kind=step.kind,
+            options=[BuilderOption(**o) for o in step.options],
+            allow_custom=step.allow_custom,
+            placeholder=step.placeholder,
+        ),
+        remaining=step.remaining,
+        brief=step.brief,
+    )
 
 
 @router.get("/conversations/{conversation_id}")

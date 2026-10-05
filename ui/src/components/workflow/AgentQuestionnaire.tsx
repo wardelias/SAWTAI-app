@@ -1,8 +1,9 @@
 'use client';
 
-import { ArrowLeft, ArrowRight, Check, PenLine, Plus, RotateCcw, Sparkles, Wand2 } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight, PenLine, RotateCcw, Sparkles, Wand2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { useCopilotStatus } from '@/components/agent-copilot/AgentCopilotChat';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -14,7 +15,6 @@ import type { AgentCallType } from './agentIdeas';
 import {
     AUDIENCE_OPTIONS,
     buildAgentBrief,
-    type ChoiceOption,
     COLLECT_OPTIONS,
     DIRECTION_OPTIONS,
     findGoal,
@@ -30,6 +30,8 @@ import {
     TONE_OPTIONS,
     VOICE_OPTIONS,
 } from './agentQuestionnaire';
+import { AIInterview } from './AIInterview';
+import { AddCustomChip, Chip, ChipGroup, Field, OptionCard, toggle } from './questionnaireControls';
 
 export interface AgentQuestionnaireResult {
     callType: AgentCallType;
@@ -121,138 +123,8 @@ const STEPS: StepDef[] = [
 ];
 
 const QUESTION_STEPS = STEPS.length - 1;
-
-function toggle(list: string[], value: string): string[] {
-    return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
-}
-
-/* ---------- answer controls ---------- */
-
-function OptionCard({
-    option,
-    selected,
-    onSelect,
-    compact,
-}: {
-    option: ChoiceOption;
-    selected: boolean;
-    onSelect: () => void;
-    compact?: boolean;
-}) {
-    const Icon = option.icon;
-    return (
-        <button
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            onClick={onSelect}
-            className={cn(
-                'group flex w-full items-center gap-3 rounded-xl border text-left transition-all',
-                compact ? 'p-3' : 'p-3.5',
-                selected
-                    ? 'border-ai bg-ai/[0.07] ring-1 ring-ai'
-                    : 'border-border/70 bg-card hover:border-ai/50 hover:bg-accent/40 active:bg-accent',
-            )}
-        >
-            {Icon && (
-                <span
-                    className={cn(
-                        'flex size-10 shrink-0 items-center justify-center rounded-lg transition-colors',
-                        selected ? 'bg-ai text-ai-foreground' : 'bg-muted text-muted-foreground group-hover:text-ai',
-                    )}
-                >
-                    <Icon className="size-5" />
-                </span>
-            )}
-            <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium">{option.label}</span>
-                {option.hint && <span className="mt-0.5 block text-xs text-muted-foreground">{option.hint}</span>}
-            </span>
-            <span
-                className={cn(
-                    'flex size-5 shrink-0 items-center justify-center rounded-full border transition-colors',
-                    selected ? 'border-ai bg-ai text-ai-foreground' : 'border-border',
-                )}
-                aria-hidden
-            >
-                {selected && <Check className="size-3" strokeWidth={3} />}
-            </span>
-        </button>
-    );
-}
-
-function Chip({ label, selected, onToggle }: { label: string; selected: boolean; onToggle: () => void }) {
-    return (
-        <button
-            type="button"
-            aria-pressed={selected}
-            onClick={onToggle}
-            className={cn(
-                'inline-flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-sm transition-all',
-                selected
-                    ? 'border-ai bg-ai text-ai-foreground shadow-sm'
-                    : 'border-border/70 bg-card hover:border-ai/50 active:bg-accent',
-            )}
-        >
-            {selected && <Check className="size-3.5" strokeWidth={3} />}
-            {label}
-        </button>
-    );
-}
-
-function ChipGroup({ options, selected, onToggle }: { options: string[]; selected: string[]; onToggle: (v: string) => void }) {
-    return (
-        <div className="flex flex-wrap gap-2">
-            {options.map((o) => (
-                <Chip key={o} label={o} selected={selected.includes(o)} onToggle={() => onToggle(o)} />
-            ))}
-        </div>
-    );
-}
-
-function Field({ label, hint, htmlFor, children }: { label: string; hint?: string; htmlFor?: string; children: ReactNode }) {
-    return (
-        <div className="space-y-2">
-            <div className="flex items-baseline justify-between gap-2">
-                <Label htmlFor={htmlFor} className="text-sm font-medium">
-                    {label}
-                </Label>
-                {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
-            </div>
-            {children}
-        </div>
-    );
-}
-
-function AddCustomChip({ onAdd, placeholder }: { onAdd: (value: string) => void; placeholder: string }) {
-    const [value, setValue] = useState('');
-    const add = () => {
-        const v = value.trim();
-        if (!v) return;
-        onAdd(v);
-        setValue('');
-    };
-    return (
-        <div className="flex gap-2">
-            <Input
-                value={value}
-                placeholder={placeholder}
-                onChange={(e) => setValue(e.target.value)}
-                onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        add();
-                    }
-                }}
-            />
-            <Button type="button" variant="outline" onClick={add} disabled={!value.trim()} className="shrink-0">
-                <Plus className="size-4" />
-                Add
-            </Button>
-        </div>
-    );
-}
+/** The AI interview takes over after the call direction and the job. */
+const AI_START_STEP = 2;
 
 /* ---------- questionnaire ---------- */
 
@@ -269,6 +141,19 @@ export function AgentQuestionnaire({ initialAnswers, onSubmit, isSubmitting, err
     const [briefEdited, setBriefEdited] = useState(false);
     const advanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const topRef = useRef<HTMLDivElement>(null);
+
+    // After the call direction and the job, the AI Assistant writes each next
+    // question from the answers so far, when it's set up for this organization.
+    const copilot = useCopilotStatus();
+    const [preferAI, setPreferAI] = useState(true);
+    const aiActive = preferAI && Boolean(copilot?.enabled && copilot.configured);
+    const aiPending = preferAI && copilot === null;
+    const showAI = (aiActive || aiPending) && stepIndex >= AI_START_STEP;
+    // Keep the interview (and its answers) while the user steps back to the first questions.
+    const [aiStarted, setAiStarted] = useState(false);
+    useEffect(() => {
+        if (aiActive && stepIndex >= AI_START_STEP) setAiStarted(true);
+    }, [aiActive, stepIndex]);
 
     const step = STEPS[stepIndex];
     const isReview = step.id === 'review';
@@ -315,6 +200,7 @@ export function AgentQuestionnaire({ initialAnswers, onSubmit, isSubmitting, err
     };
 
     const writeMyself = () => {
+        setPreferAI(false);
         if (!answers.callType) update({ callType: 'inbound' });
         if (!resolveUseCase(answers)) update({ goal: OTHER_GOAL, goalOther: 'Custom agent' });
         setBriefEdited(true);
@@ -333,14 +219,52 @@ export function AgentQuestionnaire({ initialAnswers, onSubmit, isSubmitting, err
     const progress = Math.min(stepIndex, QUESTION_STEPS) / QUESTION_STEPS;
     const goals = goalsFor(answers.callType);
 
+    const aiInterview = aiActive && (aiStarted || showAI) && answers.callType && (
+        <div className={showAI ? undefined : 'hidden'}>
+            <AIInterview
+                // A different job starts a new interview.
+                key={`${answers.callType}|${resolveUseCase(answers)}`}
+                callType={answers.callType}
+                useCase={resolveUseCase(answers)}
+                description={answers.goalDetails}
+                questionOffset={AI_START_STEP}
+                onBack={() => goTo(AI_START_STEP - 1)}
+                onUseStandard={() => setPreferAI(false)}
+                onSubmit={onSubmit}
+                isSubmitting={isSubmitting}
+                submitError={error}
+            />
+        </div>
+    );
+
+    if (showAI) {
+        return (
+            <>
+                {aiInterview}
+                {aiPending && (
+                    <div role="status" className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
+                        <Sparkles className="size-4 animate-pulse text-ai" />
+                        Getting your questions ready…
+                    </div>
+                )}
+            </>
+        );
+    }
+
     return (
+        <>
+        {aiInterview}
         <div ref={topRef} className="scroll-mt-20" onKeyDown={onKeyDown}>
             {/* Progress */}
             <div className="mb-6 max-md:mb-5">
                 <div className="mb-2.5 flex items-center justify-between text-xs font-medium">
                     <span className="inline-flex items-center gap-1.5 text-ai">
                         <Sparkles className="size-3.5" />
-                        {isReview ? 'Ready to build' : `Question ${stepIndex + 1} of ${QUESTION_STEPS}`}
+                        {isReview
+                            ? 'Ready to build'
+                            : aiActive || aiPending
+                              ? `Question ${stepIndex + 1}`
+                              : `Question ${stepIndex + 1} of ${QUESTION_STEPS}`}
                     </span>
                     {!isReview && (
                         <button
@@ -353,6 +277,14 @@ export function AgentQuestionnaire({ initialAnswers, onSubmit, isSubmitting, err
                         </button>
                     )}
                 </div>
+                {aiActive || aiPending ? (
+                    <div className="h-1 overflow-hidden rounded-full bg-muted" aria-hidden>
+                        <div
+                            className="h-full rounded-full bg-ai transition-[width] duration-500"
+                            style={{ width: `${Math.max(4, (stepIndex / QUESTION_STEPS) * 100)}%` }}
+                        />
+                    </div>
+                ) : (
                 <div className="flex gap-1" aria-hidden>
                     {Array.from({ length: QUESTION_STEPS }).map((_, i) => (
                         <span
@@ -364,6 +296,7 @@ export function AgentQuestionnaire({ initialAnswers, onSubmit, isSubmitting, err
                         />
                     ))}
                 </div>
+                )}
                 <span className="sr-only" role="progressbar" aria-valuenow={Math.round(progress * 100)} aria-valuemin={0} aria-valuemax={100} />
             </div>
 
@@ -708,6 +641,7 @@ export function AgentQuestionnaire({ initialAnswers, onSubmit, isSubmitting, err
                 )}
             </div>
         </div>
+        </>
     );
 }
 
