@@ -53,6 +53,25 @@ export async function fetchCopilotStatus(token: string): Promise<CopilotStatus> 
     return (await res.json()) as CopilotStatus;
 }
 
+/** A stored conversation as the chat displays it (see ChatMessage). */
+export interface CopilotConversation {
+    conversation_id: string;
+    messages: unknown[];
+}
+
+/** Load a conversation's transcript; null when it no longer exists. */
+export async function fetchCopilotConversation(
+    token: string,
+    conversationId: string,
+): Promise<CopilotConversation | null> {
+    const res = await fetch(`${apiBaseUrl()}/conversations/${encodeURIComponent(conversationId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(await errorDetail(res));
+    return (await res.json()) as CopilotConversation;
+}
+
 /** Split an SSE buffer into complete `data:` payloads plus the unparsed rest. */
 export function parseSseChunk(buffer: string): { events: CopilotEvent[]; rest: string } {
     const frames = buffer.split('\n\n');

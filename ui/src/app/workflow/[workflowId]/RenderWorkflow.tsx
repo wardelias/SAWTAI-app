@@ -6,7 +6,7 @@ import {
     Panel,
     ReactFlow,
 } from "@xyflow/react";
-import { BrushCleaning, Maximize2, Minus, Plus, Settings, Sparkles } from 'lucide-react';
+import { BrushCleaning, Maximize2, Minus, Plus, Settings } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -581,6 +581,7 @@ function RenderWorkflow({
     const copilotChat = (
         <AgentCopilotChat
             workflowId={workflowId}
+            agentName={workflowName}
             initialConversationId={initialCopilotConversationId}
             blockedReason={copilotBlockedReason}
             onWorkflowChanged={handleCopilotWorkflowChanged}
@@ -632,6 +633,8 @@ function RenderWorkflow({
                     user={user}
                     onPhoneCallClick={() => setIsPhoneCallDialogOpen(true)}
                     onTestAgentClick={handleOpenTester}
+                    onAssistantClick={copilotEnabled ? () => setIsCopilotOpen((open) => !open) : undefined}
+                    isAssistantOpen={isCopilotOpen}
                     onHistoryClick={handleOpenVersionPanel}
                     activeVersionLabel={activeVersionLabel}
                     isViewingHistoricalVersion={isViewingHistoricalVersion}
@@ -683,24 +686,6 @@ function RenderWorkflow({
                                     <Panel position="top-right">
                                         <TooltipProvider>
                                             <div className="flex flex-col gap-2">
-                                                {copilotEnabled ? (
-                                                    <Tooltip>
-                                                        <TooltipTrigger asChild>
-                                                            <Button
-                                                                variant="outline"
-                                                                size="icon"
-                                                                onClick={() => setIsCopilotOpen((open) => !open)}
-                                                                className="bg-white shadow-sm hover:shadow-md"
-                                                                aria-label="AI assistant"
-                                                            >
-                                                                <Sparkles className="h-4 w-4 text-primary" />
-                                                            </Button>
-                                                        </TooltipTrigger>
-                                                        <TooltipContent side="left">
-                                                            <p>AI assistant</p>
-                                                        </TooltipContent>
-                                                    </Tooltip>
-                                                ) : null}
                                                 <Tooltip>
                                                     <TooltipTrigger asChild>
                                                         <Button
@@ -814,7 +799,7 @@ function RenderWorkflow({
                         </div>
 
                         {copilotEnabled && isDesktopViewport && (
-                            <aside className={`h-full w-[400px] shrink-0 border-l border-border bg-background ${isCopilotOpen ? '' : 'hidden'}`}>
+                            <aside className={`h-full w-[420px] shrink-0 border-l border-border bg-background ${isCopilotOpen ? '' : 'hidden'}`}>
                                 {copilotChat}
                             </aside>
                         )}

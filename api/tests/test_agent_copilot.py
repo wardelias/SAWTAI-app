@@ -8,6 +8,7 @@ dict.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import uuid
@@ -32,6 +33,7 @@ from api.mcp_server.auth import acting_as, authenticate_mcp_request
 from api.routes.agent_copilot import router
 from api.services.agent_copilot import runner
 from api.services.agent_copilot.tools import build_tool_definitions, run_tool
+from api.services.agent_copilot.transcript import build_transcript
 from api.services.auth.depends import get_user
 
 # ─── Fakes ────────────────────────────────────────────────────────────────
@@ -496,6 +498,10 @@ def test_chat_streams_events_and_releases_lock():
             "api.routes.agent_copilot.acquire_turn_lock", AsyncMock(return_value=True)
         ),
         patch("api.routes.agent_copilot.release_turn_lock", release),
+        patch(
+            "api.routes.agent_copilot.consume_daily_message",
+            AsyncMock(return_value=True),
+        ),
         patch("api.routes.agent_copilot.run_turn", fake_turn),
         patch(
             "api.routes.agent_copilot.db_client.get_workflow",
@@ -580,3 +586,171 @@ async def test_history_round_trip_is_scoped_per_user_and_locked():
         await history.release_turn_lock(11, 7, conversation_id)
         client = await history._client()
         await client.delete(history._key(11, 7, conversation_id))
+
+
+def test_chat_returns_429_when_daily_limit_reached():
+    release = AsyncMock()
+    with (
+        patch("api.routes.agent_copilot.is_enabled", return_value=True),
+        patch(
+            "api.routes.agent_copilot.acquire_turn_lock", AsyncMock(return_value=True)
+        ),
+        patch("api.routes.agent_copilot.release_turn_lock", release),
+        patch(
+            "api.routes.agent_copilot.consume_daily_message",
+            AsyncMock(return_value=False),
+        ),
+    ):
+        response = TestClient(_app()).post(
+            "/agent-copilot/chat", json={"message": "hi"}
+        )
+    assert response.status_code == 429
+    release.assert_awaited_once()
+
+
+def test_chat_sends_keepalives_while_the_model_works():
+    async def slow_turn(**kwargs):
+        await asyncio.sleep(0.2)
+        yield {"type": "done"}
+
+    with (
+        patch("api.routes.agent_copilot.is_enabled", return_value=True),
+        patch(
+            "api.routes.agent_copilot.acquire_turn_lock", AsyncMock(return_value=True)
+        ),
+        patch("api.routes.agent_copilot.release_turn_lock", AsyncMock()),
+        patch(
+            "api.routes.agent_copilot.consume_daily_message",
+            AsyncMock(return_value=True),
+        ),
+        patch("api.routes.agent_copilot.run_turn", slow_turn),
+        patch("api.routes.agent_copilot._KEEPALIVE_SECONDS", 0.05),
+    ):
+        response = TestClient(_app()).post(
+            "/agent-copilot/chat", json={"message": "hi"}
+        )
+    assert ": keepalive" in response.text
+    assert _sse_events(response.text)[-1] == {"type": "done"}
+
+
+def test_conversation_endpoint_returns_transcript_or_404():
+    stored = [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+    load = AsyncMock(side_effect=[stored, []])
+    conversation_id = "6f1c2a52-8a0e-4c3e-9d3a-1f2b3c4d5e6f"
+    with patch("api.routes.agent_copilot.load_messages", load):
+        client = TestClient(_app())
+        found = client.get(f"/agent-copilot/conversations/{conversation_id}")
+        missing = client.get(f"/agent-copilot/conversations/{conversation_id}")
+        malformed = client.get("/agent-copilot/conversations/not-a-uuid")
+
+    assert found.json() == {
+        "conversation_id": conversation_id,
+        "messages": [{"role": "user", "text": "hi"}],
+    }
+    load.assert_any_await(11, 7, conversation_id)
+    assert missing.status_code == 404
+    assert malformed.status_code == 404
+
+
+def test_build_transcript_mirrors_the_live_stream():
+    history = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "<editor_context>agent #5</editor_context>"},
+                {"type": "text", "text": "Make it friendlier"},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "Reading it.", "signature": "s"},
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "get_workflow_code",
+                    "input": {},
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "{}"}],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "t2", "name": "save_workflow", "input": {}},
+                {"type": "tool_use", "id": "t3", "name": "save_workflow", "input": {}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "t2",
+                    "content": json.dumps(
+                        {"saved": False, "error_code": "parse_error"}
+                    ),
+                },
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "t3",
+                    "content": json.dumps(
+                        {"saved": True, "workflow_id": 5, "name": "Sales"}
+                    ),
+                },
+            ],
+        },
+        {"role": "assistant", "content": [{"type": "text", "text": "Done."}]},
+    ]
+
+    assert build_transcript(history) == [
+        {"role": "user", "text": "Make it friendlier"},
+        {
+            "role": "assistant",
+            "parts": [
+                {"kind": "progress", "text": "Reading it."},
+                {
+                    "kind": "tool",
+                    "id": "t1",
+                    "name": "get_workflow_code",
+                    "status": "ok",
+                },
+                {
+                    "kind": "tool",
+                    "id": "t2",
+                    "name": "save_workflow",
+                    "status": "error",
+                },
+                {
+                    "kind": "tool",
+                    "id": "t3",
+                    "name": "save_workflow",
+                    "status": "ok",
+                    "workflowId": 5,
+                    "workflowName": "Sales",
+                },
+                {"kind": "text", "text": "Done."},
+            ],
+        },
+    ]
+
+
+async def test_daily_message_limit_counts_per_organization():
+    from api.services.agent_copilot import history
+
+    org_id = 900000 + uuid.uuid4().int % 1000
+    try:
+        assert await history.consume_daily_message(org_id, 2) is True
+        assert await history.consume_daily_message(org_id, 2) is True
+        assert await history.consume_daily_message(org_id, 2) is False
+        assert await history.consume_daily_message(org_id + 1, 2) is True
+        assert await history.consume_daily_message(org_id, 0) is True
+    finally:
+        client = await history._client()
+        for key in await client.keys(f"agent_copilot:quota:{org_id}*"):
+            await client.delete(key)
+        for key in await client.keys(f"agent_copilot:quota:{org_id + 1}*"):
+            await client.delete(key)

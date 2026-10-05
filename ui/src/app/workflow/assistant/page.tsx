@@ -21,15 +21,17 @@ export default function AgentAssistantPage() {
     }
 
     return (
-        <div className="container mx-auto max-w-2xl px-4 py-8">
-            <div className="mb-4">
-                <h1 className="mb-1 text-2xl font-bold">Build an agent with AI</h1>
+        <div className="container mx-auto max-w-3xl px-4 py-8">
+            <div className="mb-5">
+                <h1 className="mb-1 bg-gradient-to-r from-violet-400 to-fuchsia-400 bg-clip-text text-3xl font-bold text-transparent">
+                    Build an agent with AI
+                </h1>
                 <p className="text-muted-foreground">
                     Describe what your voice agent should do. The assistant asks a few questions, then builds it.
                 </p>
             </div>
             {enabled ? (
-                <div className="h-[calc(100vh-12rem)] min-h-[480px] overflow-hidden rounded-xl border bg-background">
+                <div className="h-[calc(100vh-13rem)] min-h-[520px] overflow-hidden rounded-2xl border border-border/70 bg-background shadow-xl shadow-violet-500/5">
                     <AgentCopilotChat />
                 </div>
             ) : (

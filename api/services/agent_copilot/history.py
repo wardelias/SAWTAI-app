@@ -11,6 +11,7 @@ expire after a day of inactivity.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -20,7 +21,8 @@ from api.constants import REDIS_URL
 _TTL_SECONDS = 24 * 60 * 60
 # Upper bound on one reply (tool loop included); the lock self-expires if a
 # worker dies mid-turn so the conversation never stays stuck.
-_LOCK_TTL_SECONDS = 10 * 60
+_LOCK_TTL_SECONDS = 15 * 60
+_QUOTA_TTL_SECONDS = 2 * 24 * 60 * 60
 
 _redis: aioredis.Redis | None = None
 
@@ -69,3 +71,21 @@ async def release_turn_lock(
 ) -> None:
     key = _key(organization_id, user_id, conversation_id) + ":lock"
     await (await _client()).delete(key)
+
+
+async def consume_daily_message(organization_id: int, limit: int) -> bool:
+    """Count one message against the organization's daily (UTC) allowance.
+
+    Returns False once the allowance is used up. ``limit <= 0`` means
+    unlimited. The assistant runs on the platform's Anthropic key, so this
+    caps what any one tenant can spend per day.
+    """
+    if limit <= 0:
+        return True
+    day = datetime.now(UTC).strftime("%Y-%m-%d")
+    key = f"agent_copilot:quota:{organization_id}:{day}"
+    client = await _client()
+    used = await client.incr(key)
+    if used == 1:
+        await client.expire(key, _QUOTA_TTL_SECONDS)
+    return used <= limit

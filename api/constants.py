@@ -87,6 +87,11 @@ DOGRAH_DEVOPS_SECRET = os.getenv("DOGRAH_DEVOPS_SECRET") or None
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY") or None
 AGENT_COPILOT_MODEL = os.getenv("AGENT_COPILOT_MODEL", "claude-opus-5-5")
 AGENT_COPILOT_EFFORT = os.getenv("AGENT_COPILOT_EFFORT", "medium")
+# Messages per organization per UTC day (0 = unlimited). Each message can
+# run several model calls, so this is the main spend control.
+AGENT_COPILOT_DAILY_MESSAGE_LIMIT = int(
+    os.getenv("AGENT_COPILOT_DAILY_MESSAGE_LIMIT", "200")
+)
 
 # Storage Configuration
 ENABLE_AWS_S3 = os.getenv("ENABLE_AWS_S3", "false").lower() == "true"

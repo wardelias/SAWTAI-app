@@ -49,6 +49,15 @@ _MAX_TOKENS = 64000
 _MAX_STEPS = 40
 _MAX_JSON_RETRIES = 2
 
+# The request shape (adaptive thinking with display "updates", fallbacks
+# "default") is accepted by these models; others may reject it.
+SUPPORTED_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5")
+if AGENT_COPILOT_MODEL not in SUPPORTED_MODELS:
+    logger.warning(
+        f"AGENT_COPILOT_MODEL={AGENT_COPILOT_MODEL!r} is not one of "
+        f"{SUPPORTED_MODELS}; the agent copilot may fail."
+    )
+
 _client: anthropic.AsyncAnthropic | None = None
 
 
