@@ -109,9 +109,7 @@ class LeadClient(BaseDBClient):
         total = len(values)
         return {"inserted": inserted, "skipped": total - inserted, "total": total}
 
-    async def get_lead(
-        self, lead_id: int, organization_id: int
-    ) -> Optional[LeadModel]:
+    async def get_lead(self, lead_id: int, organization_id: int) -> Optional[LeadModel]:
         async with self.async_session() as session:
             query = select(LeadModel).where(
                 LeadModel.id == lead_id,
@@ -154,9 +152,7 @@ class LeadClient(BaseDBClient):
                     | LeadModel.last_name.ilike(like)
                 )
             query = (
-                query.order_by(LeadModel.created_at.desc())
-                .limit(limit)
-                .offset(offset)
+                query.order_by(LeadModel.created_at.desc()).limit(limit).offset(offset)
             )
             result = await session.execute(query)
             return list(result.scalars().all())
@@ -256,6 +252,28 @@ class LeadClient(BaseDBClient):
                 raise e
             await session.refresh(activity)
             return activity
+
+    async def lead_activity_exists(
+        self,
+        lead_id: int,
+        organization_id: int,
+        workflow_run_id: int,
+        activity_type: str,
+    ) -> bool:
+        """Whether a timeline entry of ``activity_type`` was already recorded
+        for this lead and run (keeps post-call handling idempotent)."""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(LeadActivityModel.id)
+                .where(
+                    LeadActivityModel.lead_id == lead_id,
+                    LeadActivityModel.organization_id == organization_id,
+                    LeadActivityModel.workflow_run_id == workflow_run_id,
+                    LeadActivityModel.type == activity_type,
+                )
+                .limit(1)
+            )
+            return result.scalar_one_or_none() is not None
 
     async def list_lead_activities(
         self, lead_id: int, organization_id: int

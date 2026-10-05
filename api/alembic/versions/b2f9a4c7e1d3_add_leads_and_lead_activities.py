@@ -52,9 +52,7 @@ def upgrade() -> None:
         sa.Column("lead_score", sa.Integer(), nullable=True),
         sa.Column("source", sa.String(), nullable=True),
         sa.Column("external_id", sa.String(), nullable=True),
-        sa.Column(
-            "dnc", sa.Boolean(), nullable=False, server_default=sa.text("false")
-        ),
+        sa.Column("dnc", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column(
             "consent_sms",
             sa.Boolean(),

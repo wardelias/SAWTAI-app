@@ -114,6 +114,48 @@ class TestRateLimiterFromNumberPoolIsolation:
         reason="Requires Redis (set REDIS_URL via .env.test)",
     )
     @pytest.mark.asyncio
+    async def test_reinitialize_drops_numbers_no_longer_configured(
+        self, isolated_rate_limiter
+    ):
+        rl = isolated_rate_limiter
+        org_id = _unique_id()
+        config = _unique_id()
+
+        await rl.initialize_from_number_pool(
+            org_id, ["+15551110001", "+15551110002"], telephony_configuration_id=config
+        )
+        in_flight = await rl.acquire_from_number(
+            org_id, telephony_configuration_id=config
+        )
+        assert in_flight is not None
+
+        # Both numbers are removed from the configuration and a new one added.
+        await rl.initialize_from_number_pool(
+            org_id, ["+15551110003"], telephony_configuration_id=config
+        )
+
+        seen = set()
+        for _ in range(5):
+            n = await rl.acquire_from_number(org_id, telephony_configuration_id=config)
+            if n is None:
+                break
+            seen.add(n)
+            await rl.release_from_number(org_id, n, telephony_configuration_id=config)
+        assert seen == {"+15551110003"}
+
+        # Releasing the removed in-flight number doesn't resurrect it.
+        assert (
+            await rl.release_from_number(
+                org_id, in_flight, telephony_configuration_id=config
+            )
+            is False
+        )
+
+    @pytest.mark.skipif(
+        "REDIS_URL" not in os.environ,
+        reason="Requires Redis (set REDIS_URL via .env.test)",
+    )
+    @pytest.mark.asyncio
     async def test_release_returns_number_to_owning_config_pool(
         self, isolated_rate_limiter
     ):

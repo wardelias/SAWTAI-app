@@ -94,9 +94,7 @@ class LeadsSyncService(CampaignSourceSyncService):
 
         if queued_runs:
             await db_client.bulk_create_queued_runs(queued_runs)
-            logger.info(
-                f"Queued {len(queued_runs)} leads for campaign {campaign_id}"
-            )
+            logger.info(f"Queued {len(queued_runs)} leads for campaign {campaign_id}")
 
         await db_client.update_campaign(
             campaign_id=campaign_id,

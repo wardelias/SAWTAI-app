@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { getCampaignsApiV1CampaignGet } from '@/client/sdk.gen';
 import type { CampaignsResponse } from '@/client/types.gen';
+import BackgroundServicesBanner from '@/components/BackgroundServicesBanner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -97,13 +98,19 @@ export default function CampaignsPage() {
             <div className="flex justify-between items-center">
                 <div>
                     <h1 className="text-3xl font-bold mb-2">Campaigns</h1>
-                    <p>Manage your bulk workflow execution campaigns</p>
+                    <p className="text-muted-foreground max-w-2xl">
+                        Call a whole list once with one voice agent (CSV upload or your Leads),
+                        with automatic redials for busy / no-answer. For multi-step follow-up
+                        over days, use Sequences.
+                    </p>
                 </div>
                     <Button onClick={handleCreateCampaign}>
                         <Plus className="h-4 w-4 mr-2" />
                         Create Campaign
                     </Button>
                 </div>
+
+                <BackgroundServicesBanner needsOrchestrator />
 
                 <Card>
                     <CardHeader>

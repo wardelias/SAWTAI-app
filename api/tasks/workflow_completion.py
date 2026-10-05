@@ -7,6 +7,18 @@ from api.services.workflow_run_billing import (
 from api.tasks.run_integrations import run_integrations_post_workflow_run
 
 
+async def process_lead_call_outcome(_ctx, workflow_run_id: int) -> None:
+    """Record a lead call's outcome and advance its sequence (see
+    ``api.services.leads.sequence_outcome``). Also enqueued directly for calls
+    that never connected, which skip ``process_workflow_completion``."""
+    try:
+        from api.services.leads.sequence_outcome import handle_lead_call_completion
+
+        await handle_lead_call_completion(workflow_run_id)
+    except Exception as e:
+        logger.error(f"Error handling lead outcome for workflow {workflow_run_id}: {e}")
+
+
 async def process_workflow_completion(
     _ctx,
     workflow_run_id: int,
@@ -40,18 +52,10 @@ async def process_workflow_completion(
             f"Error reporting platform usage for workflow {workflow_run_id}: {e}"
         )
 
-    # Step 5: Reactivation-sequence outcome. No-op unless this run belongs to a
-    # sequence enrollment; otherwise records the call outcome on the lead and
-    # stops the cadence when the lead engaged (stop-on-response).
-    try:
-        from api.services.leads.sequence_outcome import (
-            handle_sequence_call_completion,
-        )
-
-        await handle_sequence_call_completion(workflow_run_id)
-    except Exception as e:
-        logger.error(
-            f"Error handling sequence outcome for workflow {workflow_run_id}: {e}"
-        )
+    # Step 5: Lead outcome. No-op unless this run called a lead (a sequence
+    # step or a leads-database campaign); otherwise records the outcome on the
+    # lead, stops the cadence when the lead engaged (stop-on-response) or
+    # schedules the next sequence step.
+    await process_lead_call_outcome(_ctx, workflow_run_id)
 
     logger.info(f"Completed workflow completion processing for run {workflow_run_id}")

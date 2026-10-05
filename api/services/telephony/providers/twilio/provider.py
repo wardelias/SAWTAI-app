@@ -158,6 +158,29 @@ class TwilioProvider(TelephonyProvider):
                     raw_response=response_data,
                 )
 
+    async def send_sms(
+        self, to_number: str, body: str, from_number: Optional[str] = None
+    ) -> str:
+        """Send an SMS through Twilio's Messages API. Returns the message SID."""
+        if not self.validate_config():
+            raise ValueError("Twilio provider not properly configured")
+
+        data = {
+            "To": to_dial_address(to_number),
+            "From": self.select_from_number(from_number),
+            "Body": body,
+        }
+        async with aiohttp.ClientSession() as session:
+            auth = aiohttp.BasicAuth(self.account_sid, self.auth_token)
+            async with session.post(
+                f"{self.base_url}/Messages.json", data=data, auth=auth
+            ) as response:
+                response_data = await response.json(content_type=None)
+                if response.status != 201:
+                    message = (response_data or {}).get("message") or response.status
+                    raise ValueError(f"Twilio rejected the SMS: {message}")
+                return response_data["sid"]
+
     async def get_call_status(self, call_id: str) -> Dict[str, Any]:
         """
         Get the current status of a Twilio call.
