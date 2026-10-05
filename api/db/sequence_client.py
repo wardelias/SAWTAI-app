@@ -55,11 +55,14 @@ class SequenceClient(BaseDBClient):
             )
             session.add(sequence)
             await session.flush()  # assign sequence.id
+            # Read the id before commit: commit expires the instance, and touching
+            # an expired attribute triggers a sync refresh (MissingGreenlet).
+            sequence_id = sequence.id
 
             for order, step in enumerate(steps):
                 session.add(
                     SequenceStepModel(
-                        sequence_id=sequence.id,
+                        sequence_id=sequence_id,
                         organization_id=organization_id,
                         step_order=order,
                         channel=step["channel"],
@@ -79,7 +82,7 @@ class SequenceClient(BaseDBClient):
             result = await session.execute(
                 select(ReactivationSequenceModel)
                 .options(selectinload(ReactivationSequenceModel.steps))
-                .where(ReactivationSequenceModel.id == sequence.id)
+                .where(ReactivationSequenceModel.id == sequence_id)
             )
             return result.scalar_one()
 
