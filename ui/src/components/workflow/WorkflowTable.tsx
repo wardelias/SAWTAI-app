@@ -186,7 +186,7 @@ export function WorkflowTable({
                                         <Bot className="h-5 w-5 text-muted-foreground" />
                                     </span>
                                     <span className="min-w-0">
-                                        <span className="block truncate font-medium">{workflow.name}</span>
+                                        <span className="line-clamp-2 break-words font-medium leading-snug">{workflow.name}</span>
                                         <span className="block text-xs text-muted-foreground">
                                             #{workflow.id} · {workflow.total_runs || 0} {(workflow.total_runs || 0) === 1 ? 'call' : 'calls'} · {formatDate(workflow.created_at, organizationTimezone)}
                                         </span>
