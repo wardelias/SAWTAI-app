@@ -12,20 +12,26 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner';
 
 import { createWorkflowDraftApiV1WorkflowWorkflowIdCreateDraftPost, getWorkflowVersionsApiV1WorkflowWorkflowIdVersionsGet, listDocumentsApiV1KnowledgeBaseDocumentsGet, listRecordingsApiV1WorkflowRecordingsGet, listToolsApiV1ToolsGet } from '@/client';
-import type { DocumentResponseSchema, RecordingResponseSchema, ToolResponse, WorkflowVersionResponse } from '@/client/types.gen';
+import type { AgentAssistantSuggestion, DocumentResponseSchema, RecordingResponseSchema, ToolResponse, WorkflowVersionResponse } from '@/client/types.gen';
 import { useNodeSpecs } from "@/components/flow/renderer";
 import { FlowEdge, FlowNode, NodeType } from "@/components/flow/types";
 import { HireExpertNudge } from "@/components/lead-forms/HireExpertNudge";
 import { Button } from '@/components/ui/button';
-import { Sheet, SheetContent } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useOnboarding } from '@/context/OnboardingContext';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { detailFromError } from '@/lib/apiError';
+import { cn } from '@/lib/utils';
 import { WorkflowConfigurations } from '@/types/workflow-configurations';
 
 import AddNodePanel from "../../../components/flow/AddNodePanel";
 import CustomEdge from "../../../components/flow/edges/CustomEdge";
 import { GenericNode } from "../../../components/flow/nodes/GenericNode";
+import { AgentAssistantPanel } from './components/agent-assistant/AgentAssistantPanel';
+import { useAgentAssistantChat } from './components/agent-assistant/useAgentAssistantChat';
+import { AgentStepsSheet } from './components/mobile/AgentStepsSheet';
+import { MobileEditorDock } from './components/mobile/MobileEditorDock';
 import { PhoneCallDialog } from './components/PhoneCallDialog';
 import { VersionHistoryPanel } from './components/VersionHistoryPanel';
 import type { WorkflowRuntimeNodeTransition } from './components/workflow-tester/types';
@@ -34,6 +40,7 @@ import { WorkflowTesterPanel } from './components/WorkflowTesterPanel';
 import { WorkflowVersionDiffDialog } from './components/WorkflowVersionDiffDialog';
 import { WorkflowProvider } from "./contexts/WorkflowContext";
 import { useWorkflowState } from "./hooks/useWorkflowState";
+import { useWorkflowStore } from "./stores/workflowStore";
 import { layoutNodes } from './utils/layoutNodes';
 
 const edgeTypes = {
@@ -42,12 +49,16 @@ const edgeTypes = {
 
 const VERSIONS_PAGE_SIZE = 10;
 
+/** Panel to open on load, from the `?panel=` deep link (agent list / AI hub). */
+export type WorkflowEditorPanel = 'assistant' | 'test';
+
 interface RenderWorkflowProps {
     initialWorkflowName: string;
     workflowId: number;
     workflowUuid?: string;
     initialTotalRuns?: number | null;
     openTesterOnLoad?: boolean;
+    initialPanel?: WorkflowEditorPanel | null;
     initialFlow?: {
         nodes: FlowNode[];
         edges: FlowEdge[];
@@ -70,6 +81,7 @@ function RenderWorkflow({
     workflowUuid,
     initialTotalRuns,
     openTesterOnLoad = false,
+    initialPanel = null,
     initialFlow,
     initialTemplateContextVariables,
     initialWorkflowConfigurations,
@@ -104,6 +116,14 @@ function RenderWorkflow({
     const [tools, setTools] = useState<ToolResponse[] | undefined>(undefined);
     const [recordings, setRecordings] = useState<RecordingResponseSchema[]>([]);
     const [activeRuntimeNodeId, setActiveRuntimeNodeId] = useState<string | null>(null);
+    const isMobile = useIsMobile();
+    const [isAssistantOpen, setIsAssistantOpen] = useState(false);
+    const [assistantFocusNodeId, setAssistantFocusNodeId] = useState<string | null>(null);
+    const [assistantDraft, setAssistantDraft] = useState<string | undefined>(undefined);
+    const [isStepsOpen, setIsStepsOpen] = useState(false);
+    const assistantChat = useAgentAssistantChat(workflowId);
+    const requestNodeEdit = useWorkflowStore((state) => state.requestNodeEdit);
+    const hasOpenedInitialPanel = useRef(false);
 
     const {
         rfInstance,
@@ -400,6 +420,23 @@ function RenderWorkflow({
         setIsTesterSheetOpen(true);
     }, []);
 
+    const openAssistant = useCallback((focusNodeId: string | null = null, draft?: string) => {
+        setAssistantFocusNodeId(focusNodeId);
+        setAssistantDraft(draft);
+        setIsAssistantOpen(true);
+    }, []);
+
+    // Deep links from the agent list / AI hub: /workflow/<id>?panel=assistant|test
+    useEffect(() => {
+        if (hasOpenedInitialPanel.current || !initialPanel) return;
+        hasOpenedInitialPanel.current = true;
+        if (initialPanel === 'assistant') {
+            openAssistant();
+        } else if (initialPanel === 'test') {
+            handleOpenTester();
+        }
+    }, [initialPanel, openAssistant, handleOpenTester]);
+
     const shouldShowWebCallOnboarding = useMemo(() => {
         return (initialTotalRuns ?? 0) === 0 && !hasCompletedAction('web_call_started');
     }, [hasCompletedAction, initialTotalRuns]);
@@ -551,6 +588,46 @@ function RenderWorkflow({
         [],
     );
 
+    // ── AI assistant ───────────────────────────────────────────────────
+    const getAssistantWorkflowDefinition = useCallback(() => {
+        const { nodes: currentNodes, edges: currentEdges } = useWorkflowStore.getState();
+        return { nodes: currentNodes, edges: currentEdges } as Record<string, unknown>;
+    }, []);
+
+    const selectedNodeId = useMemo(
+        () => nodes.find((node) => node.selected)?.id ?? null,
+        [nodes],
+    );
+
+    const applyAssistantSuggestion = useCallback((suggestion: AgentAssistantSuggestion) => {
+        if (isViewingHistoricalVersion) {
+            toast.error("Go back to the draft to apply changes");
+            return false;
+        }
+        const store = useWorkflowStore.getState();
+        const node = store.nodes.find((candidate) => candidate.id === suggestion.node_id);
+        if (!node) {
+            toast.error("That step no longer exists in this agent");
+            return false;
+        }
+        store.updateNode(node.id, { data: { ...node.data, prompt: suggestion.prompt } });
+        toast.success(`Updated "${suggestion.node_name}". Save to keep the change.`);
+        return true;
+    }, [isViewingHistoricalVersion]);
+
+    const handleEditStep = useCallback((node: FlowNode) => {
+        setIsStepsOpen(false);
+        void rfInstance.current?.fitView({ nodes: [{ id: node.id }], duration: 300, maxZoom: 1 });
+        // Let the steps sheet finish closing before the node dialog takes focus.
+        setTimeout(() => requestNodeEdit(node.id), 250);
+    }, [requestNodeEdit, rfInstance]);
+
+    const handleAskAIAboutStep = useCallback((node: FlowNode) => {
+        setIsStepsOpen(false);
+        const name = node.data.name || 'this';
+        setTimeout(() => openAssistant(node.id, `Improve the "${name}" step: `), 250);
+    }, [openAssistant]);
+
     // Memoize the context value to prevent unnecessary re-renders
     const workflowContextValue = useMemo(() => ({
         saveWorkflow: guardedSaveWorkflow,
@@ -570,7 +647,7 @@ function RenderWorkflow({
 
     return (
         <WorkflowProvider value={workflowContextValue}>
-            <div className="flex flex-col h-screen min-w-fit">
+            <div className="flex flex-col h-screen min-w-fit max-md:h-[100dvh] max-md:min-w-0">
                 <HireExpertNudge workflowId={workflowId} />
                 {/* New Workflow Editor Header */}
                 <WorkflowEditorHeader
@@ -591,6 +668,7 @@ function RenderWorkflow({
                     hasDraft={hasDraft}
                     onPublished={handlePublished}
                     renameWorkflow={renameWorkflow}
+                    onAssistantClick={() => openAssistant(selectedNodeId)}
                 />
 
                 {/* Workflow Canvas */}
@@ -634,7 +712,8 @@ function RenderWorkflow({
                                 {!isViewingHistoricalVersion && (
                                     <Panel position="top-right">
                                         <TooltipProvider>
-                                            <div className="flex flex-col gap-2">
+                                            {/* Phones use MobileEditorDock instead. */}
+                                            <div className="flex flex-col gap-2 max-md:hidden">
                                                 <Tooltip>
                                                     <TooltipTrigger asChild>
                                                         <Button
@@ -670,10 +749,22 @@ function RenderWorkflow({
                                         </TooltipProvider>
                                     </Panel>
                                 )}
+
+                                <Panel position="top-right" className="md:hidden">
+                                    <Button
+                                        variant="outline"
+                                        size="icon"
+                                        onClick={() => rfInstance.current?.fitView({ padding: 0.2, duration: 250 })}
+                                        aria-label="Fit view"
+                                        className="h-10 w-10 rounded-xl bg-background/90 shadow-sm backdrop-blur"
+                                    >
+                                        <Maximize2 className="h-4 w-4" />
+                                    </Button>
+                                </Panel>
                             </ReactFlow>
 
                             {/* Bottom-left controls - horizontal layout with custom buttons */}
-                            <div className="absolute bottom-12 left-8 z-10 flex gap-2">
+                            <div className="absolute bottom-12 left-8 z-10 flex gap-2 max-md:hidden">
                                 <TooltipProvider>
                                     <Tooltip>
                                         <TooltipTrigger asChild>
@@ -764,7 +855,16 @@ function RenderWorkflow({
                     </div>
 
                     <Sheet open={isTesterSheetOpen} onOpenChange={setIsTesterSheetOpen}>
-                        <SheetContent side="right" className="w-full max-w-none p-0 sm:max-w-xl xl:hidden">
+                        <SheetContent
+                            side={isMobile ? "bottom" : "right"}
+                            className={cn(
+                                "p-0 xl:hidden",
+                                isMobile
+                                    // Phones: tall bottom sheet; the panel brings its own close button.
+                                    ? "h-[92dvh] gap-0 overflow-hidden [&>button:last-child]:hidden"
+                                    : "w-full max-w-none sm:max-w-xl",
+                            )}
+                        >
                             <WorkflowTesterPanel
                                 workflowId={workflowId}
                                 initialContextVariables={templateContextVariables}
@@ -772,11 +872,57 @@ function RenderWorkflow({
                                 disabledReason={testerDisabledReason}
                                 showWebCallOnboarding={shouldShowWebCallOnboarding}
                                 isVisible={isTesterSheetOpen}
+                                onClose={isMobile ? () => setIsTesterSheetOpen(false) : undefined}
                                 onRuntimeNodeTransition={handleRuntimeNodeTransition}
                             />
                         </SheetContent>
                     </Sheet>
+
+                    <Sheet open={isAssistantOpen} onOpenChange={setIsAssistantOpen}>
+                        <SheetContent
+                            side={isMobile ? "bottom" : "right"}
+                            aria-describedby={undefined}
+                            // The composer focuses itself when there's a draft; otherwise don't pop the keyboard.
+                            onOpenAutoFocus={(event) => event.preventDefault()}
+                            className={cn(
+                                "gap-0 overflow-hidden p-0 [&>button:last-child]:hidden",
+                                isMobile ? "h-[92dvh]" : "w-full sm:max-w-md",
+                            )}
+                        >
+                            <SheetTitle className="sr-only">AI Assistant</SheetTitle>
+                            <AgentAssistantPanel
+                                agentName={workflowName}
+                                chat={assistantChat}
+                                getWorkflowDefinition={getAssistantWorkflowDefinition}
+                                nodes={nodes}
+                                focusNodeId={assistantFocusNodeId ?? selectedNodeId}
+                                readOnly={isViewingHistoricalVersion}
+                                onApplySuggestion={applyAssistantSuggestion}
+                                onClose={() => setIsAssistantOpen(false)}
+                                draft={assistantDraft}
+                                onDraftConsumed={() => setAssistantDraft(undefined)}
+                            />
+                        </SheetContent>
+                    </Sheet>
                 </div>
+
+                <MobileEditorDock
+                    readOnly={isViewingHistoricalVersion}
+                    onAddNode={() => setIsAddNodePanelOpen(true)}
+                    onShowSteps={() => setIsStepsOpen(true)}
+                    onAskAI={() => openAssistant(selectedNodeId)}
+                    onTest={handleOpenTester}
+                    onSettings={() => router.push(`/workflow/${workflowId}/settings`)}
+                />
+
+                <AgentStepsSheet
+                    open={isStepsOpen}
+                    onOpenChange={setIsStepsOpen}
+                    nodes={nodes}
+                    edges={edges}
+                    onEditNode={handleEditStep}
+                    onAskAI={handleAskAIAboutStep}
+                />
 
                 <AddNodePanel
                     isOpen={isAddNodePanelOpen}

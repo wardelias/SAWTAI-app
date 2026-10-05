@@ -71,7 +71,7 @@ export function HireExpertNudge({ workflowId }: HireExpertNudgeProps) {
     <div
       role="status"
       aria-live="polite"
-      className="fixed bottom-6 right-6 z-50 flex max-w-xs items-center gap-3 rounded-lg border border-primary bg-background p-3 shadow-lg animate-in fade-in slide-in-from-bottom-2"
+      className="fixed bottom-6 right-6 z-50 flex max-w-xs items-center gap-3 max-md:right-3 max-md:bottom-[calc(5.75rem+env(safe-area-inset-bottom))] max-md:left-3 max-md:max-w-none rounded-lg border border-primary bg-background p-3 shadow-lg animate-in fade-in slide-in-from-bottom-2"
     >
       <button type="button" onClick={handleClick} className="flex flex-1 items-center gap-3 text-left">
         <UserRound className="h-5 w-5 shrink-0 text-primary" />

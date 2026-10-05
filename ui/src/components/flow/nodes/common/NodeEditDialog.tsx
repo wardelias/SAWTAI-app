@@ -84,10 +84,7 @@ export const NodeEditDialog = ({
 
     return (
         <Dialog open={open} onOpenChange={handleOpenChange}>
-            <DialogContent
-                className="max-h-[85vh] overflow-y-auto"
-                style={{ maxWidth: "1200px", width: "95vw" }}
-            >
+            <DialogContent className="max-h-[85vh] w-[95vw] max-w-[1200px] overflow-y-auto sm:max-w-[1200px]">
                 <DialogHeader>
                     <div className="flex items-center justify-between">
                         <DialogTitle>{title}</DialogTitle>

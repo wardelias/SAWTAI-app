@@ -190,7 +190,7 @@ export function FolderSection({
                 </div>
 
                 <CollapsibleContent className="data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-top-1">
-                    <div className="pl-7 pt-2">
+                    <div className="pl-7 pt-2 max-md:pl-0">
                         {count > 0 ? (
                             <WorkflowTable
                                 workflows={workflows}

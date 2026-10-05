@@ -1932,24 +1932,44 @@ function WorkflowSettingsInner({
     return (
         <div className="min-h-screen">
             {/* Sticky header */}
-            <header className="sticky top-0 z-10 flex items-center gap-3 border-b bg-background/95 px-6 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+            <header className="sticky top-0 z-10 flex items-center gap-3 border-b bg-background/95 px-6 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/60 max-md:top-[calc(3.5rem+env(safe-area-inset-top))] max-md:flex-wrap max-md:gap-x-2 max-md:gap-y-2 max-md:px-3 max-md:pb-2">
                 <Button
                     variant="ghost"
                     size="icon"
+                    aria-label="Back to the agent"
                     onClick={() => confirmNavigate(() => router.push(`/workflow/${workflowId}`))}
                 >
                     <ArrowLeft className="h-4 w-4" />
                 </Button>
-                <div>
+                <div className="max-md:min-w-0 max-md:flex-1">
                     <p className="text-xs text-muted-foreground">Workflow Settings</p>
-                    <h1 className="text-sm font-semibold">{workflowName || workflow.name}</h1>
+                    <h1 className="text-sm font-semibold max-md:truncate">{workflowName || workflow.name}</h1>
                 </div>
+                {/* Phones: the "On this page" nav becomes a scrollable chip row. */}
+                <nav aria-label="Settings sections" className="no-scrollbar -mx-3 flex w-[calc(100%+1.5rem)] gap-1.5 overflow-x-auto px-3 md:hidden">
+                    {NAV_ITEMS.map((item) => (
+                        <a
+                            key={item.id}
+                            href={`#${item.id}`}
+                            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium ${
+                                activeSection === item.id
+                                    ? "border-foreground/20 bg-foreground text-background"
+                                    : "border-border/70 text-muted-foreground"
+                            }`}
+                        >
+                            {item.label}
+                            {dirtySections.has(item.id) && (
+                                <span className="h-1.5 w-1.5 rounded-full bg-orange-500" />
+                            )}
+                        </a>
+                    ))}
+                </nav>
             </header>
 
             {/* Main + right nav */}
-            <div className="mx-auto flex max-w-5xl gap-8 px-6 py-8">
-                {/* Sections */}
-                <div className="min-w-0 flex-1 space-y-8">
+            <div className="mx-auto flex max-w-5xl gap-8 px-6 py-8 max-md:px-4 max-md:py-5">
+                {/* Sections (phones: clear the two sticky bars when jumping to an anchor) */}
+                <div className="min-w-0 flex-1 space-y-8 max-md:*:scroll-mt-44">
                     {resolvedWorkflowConfigurationsForRender && (
                         <>
                             {/* General */}

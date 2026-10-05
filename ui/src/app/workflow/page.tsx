@@ -3,6 +3,7 @@ import { Suspense } from 'react';
 import { getWorkflowsApiV1WorkflowFetchGet, listFoldersApiV1FolderGet } from '@/client/sdk.gen';
 import type { FolderResponse, WorkflowListResponse } from '@/client/types.gen';
 import { Card, CardContent } from '@/components/ui/card';
+import { AIBuilderHero } from '@/components/workflow/AIBuilderHero';
 import { CreateWorkflowButton } from "@/components/workflow/CreateWorkflowButton";
 import { AgentFolderView } from '@/components/workflow/folders/AgentFolderView';
 import { CreateFolderButton } from '@/components/workflow/folders/CreateFolderButton';
@@ -75,7 +76,7 @@ async function WorkflowList() {
             <>
                 {/* Active Workflows Section */}
                 <div className="mb-8">
-                    <h2 className="text-xl font-semibold mb-4">Active Agents</h2>
+                    <h2 className="text-xl font-semibold mb-4 max-md:mb-3 max-md:text-base">Active Agents</h2>
                     {activeWorkflows.length > 0 || folders.length > 0 ? (
                         <AgentFolderView workflows={activeWorkflows} folders={folders} />
                     ) : (
@@ -110,17 +111,18 @@ async function PageContent() {
     const workflowList = await WorkflowList();
 
     return (
-        <div className="container mx-auto px-4 py-8">
+        <div className="container mx-auto px-4 py-8 max-md:py-5">
             {/* Your Workflows Section */}
             <div className="mb-6">
-                <div className="flex justify-between items-center mb-6">
-                    <h1 className="text-2xl font-bold">Your Agents</h1>
-                    <div className="flex gap-2">
+                <div className="flex justify-between items-center mb-6 max-md:mb-4 max-md:gap-2">
+                    <h1 className="text-2xl font-bold max-md:text-xl">Your Agents</h1>
+                    <div className="flex gap-2 max-md:shrink-0">
                         <UploadWorkflowButton />
                         <CreateFolderButton />
                         <CreateWorkflowButton />
                     </div>
                 </div>
+                <AIBuilderHero className="mb-6" />
                 {workflowList}
             </div>
         </div>
@@ -129,7 +131,7 @@ async function PageContent() {
 
 function WorkflowsLoading() {
     return (
-        <div className="container mx-auto px-4 py-8">
+        <div className="container mx-auto px-4 py-8 max-md:py-5">
             {/* Get Started Section Loading */}
             <div className="mb-12">
                 <div className="h-8 w-48 bg-muted rounded mb-6"></div>

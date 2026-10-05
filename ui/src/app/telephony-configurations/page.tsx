@@ -180,11 +180,11 @@ export default function TelephonyConfigurationsPage() {
 
   return (
     <div className="min-h-screen">
-      <div className="container mx-auto px-4 py-8">
-        <div className="flex items-start justify-between gap-4 mb-6">
+      <div className="container mx-auto px-4 py-8 max-md:py-5">
+        <div className="flex items-start justify-between gap-4 mb-6 max-md:flex-col max-md:items-stretch max-md:gap-4">
           <div>
-            <h1 className="text-3xl font-bold mb-2">Telephony configurations</h1>
-            <p className="text-muted-foreground">
+            <h1 className="text-3xl font-bold mb-2 max-md:text-2xl">Telephony configurations</h1>
+            <p className="text-muted-foreground max-md:text-sm">
               Connect one or more telephony provider accounts. Each campaign uses one
               configuration; inbound calls are routed to the right one by account ID.{" "}
               <a
@@ -274,8 +274,8 @@ export default function TelephonyConfigurationsPage() {
                     className="flex flex-1 items-center gap-4 min-w-0"
                   >
                     <div className="flex flex-col gap-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium truncate">{item.name}</span>
+                      <div className="flex items-center gap-2 max-md:flex-wrap">
+                        <span className="font-medium truncate max-md:max-w-full">{item.name}</span>
                         <Badge variant="secondary">{item.provider}</Badge>
                         {item.is_default_outbound && (
                           <Badge className="gap-1">

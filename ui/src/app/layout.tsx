@@ -1,7 +1,7 @@
 import "./globals.css";
 
 import { GoogleTagManager } from "@next/third-parties/google";
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import { Suspense } from "react";
@@ -36,6 +36,28 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: "SawtAI",
   description: "Open Source Voice Assistant Workflow Builder",
+  applicationName: "SawtAI",
+  // Installed to a phone's home screen, the app opens full-screen like a native app.
+  appleWebApp: {
+    capable: true,
+    title: "SawtAI",
+    statusBarStyle: "black-translucent",
+  },
+  icons: {
+    apple: "/icons/apple-touch-icon.png",
+  },
+  formatDetection: {
+    telephone: false,
+  },
+};
+
+// viewport-fit=cover lets the mobile shell paint under the notch / home
+// indicator; components pad themselves with env(safe-area-inset-*).
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#0f0e0d",
 };
 
 export default async function RootLayout({

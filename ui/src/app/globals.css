@@ -44,10 +44,14 @@
   --radius-xl: calc(var(--radius) + 4px);
   --color-cta: var(--cta);
   --color-cta-foreground: var(--cta-foreground);
+  --color-ai: var(--ai);
+  --color-ai-foreground: var(--ai-foreground);
 }
 
 :root {
   --radius: 0.625rem;
+  /* Inner padding of Card header/content/footer: 1.5rem (p-6), tighter on phones. */
+  --card-padding: 1.5rem;
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
@@ -82,6 +86,10 @@
   /* Single restrained warm accent — used only on primary CTAs + focus rings. */
   --cta: oklch(0.72 0.15 65);
   --cta-foreground: oklch(0.16 0.02 60);
+  /* AI accent — marks everything the assistant / AI builder does. Solid violet
+     (no gradients), echoing the sidebar's violet tint. */
+  --ai: oklch(0.55 0.22 293);
+  --ai-foreground: oklch(0.99 0 0);
 }
 
 .dark {
@@ -119,6 +127,8 @@
   /* Warm accent, slightly brighter against the near-black surfaces. */
   --cta: oklch(0.78 0.16 67);
   --cta-foreground: oklch(0.16 0.02 60);
+  --ai: oklch(0.68 0.19 293);
+  --ai-foreground: oklch(0.99 0 0);
 }
 
 @layer base {
@@ -128,6 +138,15 @@
 
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/* Horizontal chip/tab rows that scroll sideways without a visible scrollbar. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
   }
 }
 
@@ -351,4 +370,75 @@
   outline: none;
   box-shadow: none;
   border-bottom-color: var(--cta);
+}
+
+/* ---------------------------------------------------------------------------
+   Mobile app shell (< 768px). Everything here is scoped to phone widths so the
+   desktop layout is untouched.
+--------------------------------------------------------------------------- */
+@media (max-width: 767px) {
+  :root {
+    --card-padding: 1rem;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  /* Keep the support chat launcher clear of the bottom tab bar. */
+  html[data-mobile-tabbar] .woot-widget-bubble {
+    bottom: calc(5.75rem + env(safe-area-inset-bottom)) !important;
+  }
+}
+
+/* "Thinking" dots for AI replies. */
+.ai-typing span {
+  display: inline-block;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 9999px;
+  background-color: currentColor;
+  animation: ai-typing 1.2s ease-in-out infinite;
+}
+.ai-typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.ai-typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes ai-typing {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+/* Soft breathing halo for the primary AI entry points. */
+.ai-halo {
+  box-shadow: 0 0 0 0 color-mix(in oklch, var(--ai) 45%, transparent);
+  animation: ai-halo 2.8s ease-out infinite;
+}
+@keyframes ai-halo {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--ai) 45%, transparent);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 12px color-mix(in oklch, var(--ai) 0%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-typing span,
+  .ai-halo {
+    animation: none;
+  }
 }

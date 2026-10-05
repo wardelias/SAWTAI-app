@@ -154,11 +154,11 @@ export default function SequencesPage() {
     };
 
     return (
-        <div className="container mx-auto p-6 space-y-6">
-            <div className="flex justify-between items-center">
+        <div className="container mx-auto p-6 space-y-6 max-md:space-y-5 max-md:px-4 max-md:py-5">
+            <div className="flex justify-between items-center max-md:flex-col max-md:items-stretch max-md:gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold mb-2">Reactivation Sequences</h1>
-                    <p>Multi-step wake-up cadences that stop when a lead responds</p>
+                    <h1 className="text-3xl font-bold mb-2 max-md:text-2xl">Reactivation Sequences</h1>
+                    <p className="max-md:text-sm max-md:text-muted-foreground">Multi-step wake-up cadences that stop when a lead responds</p>
                 </div>
                 <Button onClick={() => setCreateOpen(true)}>
                     <Plus className="h-4 w-4 mr-2" />

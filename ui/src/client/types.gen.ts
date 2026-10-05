@@ -161,6 +161,76 @@ export type ActiveCallsResponse = {
 };
 
 /**
+ * AgentAssistantMessage
+ */
+export type AgentAssistantMessage = {
+    /**
+     * Role
+     */
+    role: 'user' | 'assistant';
+    /**
+     * Content
+     */
+    content: string;
+};
+
+/**
+ * AgentAssistantRequest
+ */
+export type AgentAssistantRequest = {
+    /**
+     * Messages
+     */
+    messages: Array<AgentAssistantMessage>;
+    /**
+     * Workflow Definition
+     */
+    workflow_definition?: {
+        [key: string]: unknown;
+    } | null;
+    /**
+     * Focus Node Id
+     */
+    focus_node_id?: string | null;
+};
+
+/**
+ * AgentAssistantResponse
+ */
+export type AgentAssistantResponse = {
+    /**
+     * Reply
+     */
+    reply: string;
+    /**
+     * Suggestions
+     */
+    suggestions: Array<AgentAssistantSuggestion>;
+};
+
+/**
+ * AgentAssistantSuggestion
+ */
+export type AgentAssistantSuggestion = {
+    /**
+     * Node Id
+     */
+    node_id: string;
+    /**
+     * Node Name
+     */
+    node_name: string;
+    /**
+     * Summary
+     */
+    summary: string;
+    /**
+     * Prompt
+     */
+    prompt: string;
+};
+
+/**
  * AmbientNoiseConfigurationDefaults
  */
 export type AmbientNoiseConfigurationDefaults = {
@@ -9847,6 +9917,50 @@ export type RewindTextChatSessionApiV1WorkflowWorkflowIdTextChatSessionsRunIdRew
 };
 
 export type RewindTextChatSessionApiV1WorkflowWorkflowIdTextChatSessionsRunIdRewindPostResponse = RewindTextChatSessionApiV1WorkflowWorkflowIdTextChatSessionsRunIdRewindPostResponses[keyof RewindTextChatSessionApiV1WorkflowWorkflowIdTextChatSessionsRunIdRewindPostResponses];
+
+export type ChatWithAgentAssistantApiV1WorkflowWorkflowIdAssistantPostData = {
+    body: AgentAssistantRequest;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Api-Key
+         */
+        'X-API-Key'?: string | null;
+    };
+    path: {
+        /**
+         * Workflow Id
+         */
+        workflow_id: number;
+    };
+    query?: never;
+    url: '/api/v1/workflow/{workflow_id}/assistant';
+};
+
+export type ChatWithAgentAssistantApiV1WorkflowWorkflowIdAssistantPostErrors = {
+    /**
+     * Not found
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ChatWithAgentAssistantApiV1WorkflowWorkflowIdAssistantPostError = ChatWithAgentAssistantApiV1WorkflowWorkflowIdAssistantPostErrors[keyof ChatWithAgentAssistantApiV1WorkflowWorkflowIdAssistantPostErrors];
+
+export type ChatWithAgentAssistantApiV1WorkflowWorkflowIdAssistantPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: AgentAssistantResponse;
+};
+
+export type ChatWithAgentAssistantApiV1WorkflowWorkflowIdAssistantPostResponse = ChatWithAgentAssistantApiV1WorkflowWorkflowIdAssistantPostResponses[keyof ChatWithAgentAssistantApiV1WorkflowWorkflowIdAssistantPostResponses];
 
 export type GetDefaultConfigurationsApiV1UserConfigurationsDefaultsGetData = {
     body?: never;

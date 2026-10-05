@@ -120,7 +120,7 @@ export const OnboardingTooltip = ({
             />
 
             {/* Tooltip content */}
-            <div className="relative bg-blue-500 text-white rounded-lg shadow-2xl p-6 max-w-sm">
+            <div className="relative bg-blue-500 text-white rounded-lg shadow-2xl p-6 max-w-sm max-sm:max-w-[calc(100vw-2rem)] max-sm:p-5">
                 {/* Close button */}
                 <button
                     onClick={dismiss}

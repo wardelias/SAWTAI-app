@@ -24,7 +24,7 @@ export default function RecordingsPage() {
 
     if (loading || !user) {
         return (
-            <div className="container mx-auto px-4 py-8">
+            <div className="container mx-auto px-4 py-8 max-md:py-5">
                 <div className="space-y-4">
                     <Skeleton className="h-12 w-64" />
                     <Skeleton className="h-64 w-full" />
@@ -34,9 +34,9 @@ export default function RecordingsPage() {
     }
 
     return (
-        <div className="container mx-auto px-4 py-8">
+        <div className="container mx-auto px-4 py-8 max-md:py-5">
             <div className="mb-8">
-                <h1 className="text-3xl font-bold mb-2">Recordings</h1>
+                <h1 className="text-3xl font-bold mb-2 max-md:text-2xl">Recordings</h1>
                 <p className="text-muted-foreground">
                     Manage audio recordings for your organization. Use{" "}
                     <code className="rounded bg-muted px-1 text-xs">@</code> in prompt fields to insert them,
@@ -49,7 +49,7 @@ export default function RecordingsPage() {
 
             <Card>
                 <CardHeader>
-                    <div className="flex justify-between items-center">
+                    <div className="flex justify-between items-center max-md:flex-col max-md:items-stretch max-md:gap-3">
                         <div>
                             <CardTitle>All Recordings</CardTitle>
                             <CardDescription>

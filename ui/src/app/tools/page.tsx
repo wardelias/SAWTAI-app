@@ -307,10 +307,10 @@ export default function ToolsPage() {
 
     return (
         <div className="min-h-screen">
-            <div className="container mx-auto px-4 py-8">
+            <div className="container mx-auto px-4 py-8 max-md:py-5">
                 <div className="max-w-6xl mx-auto">
                     <div className="mb-8">
-                        <h1 className="text-3xl font-bold mb-2">Tools</h1>
+                        <h1 className="text-3xl font-bold mb-2 max-md:text-2xl">Tools</h1>
                         <p className="text-muted-foreground">
                             Manage reusable tools that can be used across your workflows.{" "}
                             <a href="https://docs.dograh.com/voice-agent/tools/introduction" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 underline">
@@ -327,7 +327,7 @@ export default function ToolsPage() {
 
                     <Card className="mb-6">
                         <CardHeader>
-                            <div className="flex justify-between items-center">
+                            <div className="flex justify-between items-center max-md:flex-col max-md:items-stretch max-md:gap-3">
                                 <div>
                                     <CardTitle>Your Tools</CardTitle>
                                     <CardDescription>

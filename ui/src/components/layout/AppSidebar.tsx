@@ -279,7 +279,7 @@ export function AppSidebar() {
         asChild
         tooltip={tooltip}
         className={cn(
-          "h-9 rounded-md text-sidebar-foreground/80 transition-colors",
+          "h-9 rounded-md text-sidebar-foreground/80 transition-colors max-md:h-11",
           "hover:bg-sidebar-accent/70 hover:text-sidebar-foreground",
           isItemActive &&
             "bg-background text-foreground font-medium shadow-sm border border-sidebar-border/60 hover:bg-background"

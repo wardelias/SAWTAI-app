@@ -321,10 +321,10 @@ export default function APIKeysPage() {
 
     return (
         <div className="min-h-screen">
-            <div className="container mx-auto px-4 py-8">
+            <div className="container mx-auto px-4 py-8 max-md:py-5">
                 <div className="max-w-6xl mx-auto">
                     <div className="mb-8">
-                        <h1 className="text-3xl font-bold mb-2">Developer Portal</h1>
+                        <h1 className="text-3xl font-bold mb-2 max-md:text-2xl">Developer Portal</h1>
                         <p className="text-muted-foreground">Manage your API keys to access SawtAI services programmatically</p>
                     </div>
 
@@ -336,7 +336,7 @@ export default function APIKeysPage() {
 
                     <Card className="mb-6">
                         <CardHeader>
-                            <div className="flex justify-between items-center">
+                            <div className="flex justify-between items-center max-md:flex-col max-md:items-stretch max-md:gap-3">
                                 <div>
                                     <CardTitle>API Keys</CardTitle>
                                     <CardDescription>
@@ -445,7 +445,7 @@ export default function APIKeysPage() {
                     {/* SawtAI Service Keys Section */}
                     <Card className="mb-6">
                         <CardHeader>
-                            <div className="flex justify-between items-center">
+                            <div className="flex justify-between items-center max-md:flex-col max-md:items-stretch max-md:gap-3">
                                 <div>
                                     <CardTitle>SawtAI Service Keys</CardTitle>
                                     <CardDescription>

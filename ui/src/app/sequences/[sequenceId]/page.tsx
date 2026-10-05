@@ -111,7 +111,7 @@ export default function SequenceDetailPage() {
 
     if (isLoading) {
         return (
-            <div className="container mx-auto p-6">
+            <div className="container mx-auto p-6 max-md:px-4 max-md:py-5">
                 <div className="animate-pulse space-y-3">
                     {[...Array(4)].map((_, i) => (
                         <div key={i} className="h-12 bg-muted rounded"></div>
@@ -123,8 +123,8 @@ export default function SequenceDetailPage() {
 
     if (!sequence) {
         return (
-            <div className="container mx-auto p-6">
-                <Button variant="ghost" onClick={() => router.push('/sequences')}>
+            <div className="container mx-auto p-6 max-md:px-4 max-md:py-5">
+                <Button variant="ghost" onClick={() => router.push('/sequences')} className="max-md:hidden">
                     <ArrowLeft className="h-4 w-4 mr-2" />
                     Back
                 </Button>
@@ -134,7 +134,7 @@ export default function SequenceDetailPage() {
     }
 
     return (
-        <div className="container mx-auto p-6 space-y-6">
+        <div className="container mx-auto p-6 space-y-6 max-md:space-y-5 max-md:px-4 max-md:py-5">
             <Button variant="ghost" onClick={() => router.push('/sequences')}>
                 <ArrowLeft className="h-4 w-4 mr-2" />
                 Back to sequences
@@ -142,7 +142,7 @@ export default function SequenceDetailPage() {
 
             <div className="flex justify-between items-start">
                 <div>
-                    <h1 className="text-3xl font-bold mb-1">{sequence.name}</h1>
+                    <h1 className="text-3xl font-bold mb-1 max-md:text-2xl">{sequence.name}</h1>
                     <p className="text-muted-foreground">
                         {sequence.steps.length} step(s)
                         {sequence.quiet_hours_start != null && sequence.quiet_hours_end != null

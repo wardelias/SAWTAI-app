@@ -28,6 +28,8 @@ interface WorkflowState {
   // UI state (not tracked in history)
   isDirty: boolean;
   isAddNodePanelOpen: boolean;
+  /** A node whose edit dialog should open (set from outside the canvas, e.g. the mobile steps list). */
+  requestedEditNodeId: string | null;
 
   // Validation state
   workflowValidationErrors: WorkflowError[];
@@ -81,6 +83,8 @@ interface WorkflowActions {
   // UI state
   setIsDirty: (isDirty: boolean) => void;
   setIsAddNodePanelOpen: (isOpen: boolean) => void;
+  requestNodeEdit: (nodeId: string) => void;
+  clearNodeEditRequest: () => void;
 
   // Validation
   setWorkflowValidationErrors: (errors: WorkflowError[]) => void;
@@ -134,6 +138,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   historyIndex: -1,
   isDirty: false,
   isAddNodePanelOpen: false,
+  requestedEditNodeId: null,
   workflowValidationErrors: [],
   templateContextVariables: {},
   workflowConfigurations: null,
@@ -379,6 +384,14 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     set({ isAddNodePanelOpen });
   },
 
+  requestNodeEdit: (requestedEditNodeId) => {
+    set({ requestedEditNodeId });
+  },
+
+  clearNodeEditRequest: () => {
+    set({ requestedEditNodeId: null });
+  },
+
   setWorkflowValidationErrors: (workflowValidationErrors) => {
     set({ workflowValidationErrors });
   },
@@ -431,6 +444,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       historyIndex: -1,
       isDirty: false,
       isAddNodePanelOpen: false,
+      requestedEditNodeId: null,
       workflowValidationErrors: [],
       templateContextVariables: {},
       workflowConfigurations: null,

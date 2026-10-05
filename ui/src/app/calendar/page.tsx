@@ -83,8 +83,8 @@ export default function CalendarPage() {
     };
 
     return (
-        <div className="container mx-auto px-4 py-8">
-            <div className="mb-6 flex items-start justify-between gap-4">
+        <div className="container mx-auto px-4 py-8 max-md:py-5">
+            <div className="mb-6 flex items-start justify-between gap-4 max-md:flex-col max-md:items-stretch max-md:gap-4">
                 <div>
                     <h1 className="text-2xl font-semibold tracking-tight">Calendar</h1>
                     <p className="text-sm text-muted-foreground">
@@ -99,9 +99,9 @@ export default function CalendarPage() {
                 />
             </div>
 
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-[auto_1fr]">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-[auto_1fr] max-md:gap-4">
                 <Card>
-                    <CardContent className="p-3">
+                    <CardContent className="p-3 max-md:flex max-md:justify-center">
                         <Calendar
                             mode="single"
                             selected={selectedDate}

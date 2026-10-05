@@ -839,7 +839,7 @@ const data = await response.json();`;
     if (isLoading) {
         return (
             <div className="min-h-screen">
-                <div className="container mx-auto px-4 py-8">
+                <div className="container mx-auto px-4 py-8 max-md:py-5">
                     <div className="max-w-4xl mx-auto space-y-6">
                         <Skeleton className="h-8 w-48" />
                         <Skeleton className="h-64 w-full" />
@@ -852,7 +852,7 @@ const data = await response.json();`;
     if (!tool) {
         return (
             <div className="min-h-screen">
-                <div className="container mx-auto px-4 py-8">
+                <div className="container mx-auto px-4 py-8 max-md:py-5">
                     <div className="max-w-4xl mx-auto text-center">
                         <h1 className="text-2xl font-bold mb-4">Tool not found</h1>
                         <Button onClick={() => router.push("/tools")}>
@@ -895,7 +895,7 @@ const data = await response.json();`;
 
     return (
         <div className="min-h-screen">
-            <div className="container mx-auto px-4 py-8">
+            <div className="container mx-auto px-4 py-8 max-md:py-5">
                 <div className="max-w-4xl mx-auto">
                     {/* Header */}
                     <div className="flex items-center justify-between mb-6">

@@ -327,7 +327,7 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({
   return (
     <Card className="mb-6">
       <CardHeader>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between max-md:flex-col max-md:items-start max-md:gap-3">
           <div>
             <CardTitle>Filter Workflow Runs</CardTitle>
             <CardDescription>

@@ -216,7 +216,7 @@ export default function MarketingPage() {
     const available = SOURCES;
 
     return (
-        <div className="container mx-auto px-4 py-8">
+        <div className="container mx-auto px-4 py-8 max-md:py-5">
             <div className="mx-auto max-w-5xl space-y-8">
                 <div>
                     <h1 className="text-2xl font-semibold tracking-tight">Marketing</h1>

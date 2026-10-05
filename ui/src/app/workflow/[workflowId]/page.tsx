@@ -4,7 +4,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import posthog from 'posthog-js';
 import { useEffect, useMemo, useState } from 'react';
 
-import RenderWorkflow from '@/app/workflow/[workflowId]/RenderWorkflow';
+import RenderWorkflow, { type WorkflowEditorPanel } from '@/app/workflow/[workflowId]/RenderWorkflow';
 import { getWorkflowApiV1WorkflowFetchWorkflowIdGet } from '@/client/sdk.gen';
 import type { WorkflowResponse } from '@/client/types.gen';
 import { FlowEdge, FlowNode } from '@/components/flow/types';
@@ -75,6 +75,9 @@ export default function WorkflowDetailPage() {
 
     const stableUser = useMemo(() => user, [user]);
     const openTesterOnLoad = searchParams.get('onboarding') === 'web_call';
+    const panelParam = searchParams.get('panel');
+    const initialPanel: WorkflowEditorPanel | null =
+        panelParam === 'assistant' || panelParam === 'test' ? panelParam : null;
 
     if (loading) {
         return (
@@ -100,6 +103,7 @@ export default function WorkflowDetailPage() {
                 workflowUuid={workflow.workflow_uuid ?? undefined}
                 initialTotalRuns={workflow.total_runs ?? 0}
                 openTesterOnLoad={openTesterOnLoad}
+                initialPanel={initialPanel}
                 initialFlow={{
                     nodes: workflow.workflow_definition.nodes as FlowNode[],
                     edges: workflow.workflow_definition.edges as FlowEdge[],

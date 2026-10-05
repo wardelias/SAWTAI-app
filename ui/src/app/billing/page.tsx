@@ -228,7 +228,7 @@ export default function BillingPage() {
 
     if (loading || configLoading) {
         return (
-            <div className="container mx-auto p-6 space-y-6">
+            <div className="container mx-auto p-6 space-y-6 max-md:space-y-5 max-md:px-4 max-md:py-5">
                 <div className="space-y-2">
                     <Skeleton className="h-9 w-40" />
                     <Skeleton className="h-5 w-96 max-w-full" />
@@ -243,10 +243,10 @@ export default function BillingPage() {
     }
 
     return (
-        <div className="container mx-auto p-6 space-y-6">
+        <div className="container mx-auto p-6 space-y-6 max-md:px-4 max-md:py-5">
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold mb-2">Billing</h1>
+                    <h1 className="text-3xl font-bold mb-2 max-md:text-2xl">Billing</h1>
                     <p className="text-muted-foreground">
                         Credits, balance, and account usage for your organization.
                     </p>

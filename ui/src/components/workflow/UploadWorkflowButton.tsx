@@ -88,9 +88,11 @@ export function UploadWorkflowButton() {
             <Button
                 onClick={() => setIsOpen(true)}
                 variant="outline"
+                aria-label="Upload Agent Definition"
+                className="max-md:w-9 max-md:px-0"
             >
-                <Upload className="w-4 h-4 mr-2" />
-                Upload Agent Definition
+                <Upload className="w-4 h-4 mr-2 max-md:mr-0" />
+                <span className="max-md:hidden">Upload Agent Definition</span>
             </Button>
 
             <Dialog open={isOpen} onOpenChange={setIsOpen}>

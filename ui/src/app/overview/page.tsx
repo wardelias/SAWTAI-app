@@ -1,7 +1,7 @@
 "use client";
 
 import { formatDistanceToNow } from 'date-fns';
-import { AlertTriangle, ArrowRight, CheckCircle2, Clock, Coins, Phone, PhoneOutgoing, RotateCcw, Timer, Voicemail } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, ChevronRight, Clock, Coins, Phone, PhoneOutgoing, RotateCcw, Timer, Voicemail } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
@@ -13,8 +13,11 @@ import { MediaPreviewButton, MediaPreviewDialog } from '@/components/MediaPrevie
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { AIBuilderHero } from '@/components/workflow/AIBuilderHero';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
+
+import { AgentStrip, MobileGreeting, MobileShortcuts } from './MobileOverviewSections';
 
 const RECENT_CALLS_LIMIT = 6;
 const NEEDS_ACTION_LIMIT = 4;
@@ -138,10 +141,14 @@ export default function OverviewPage() {
     };
 
     return (
-        <div className="container mx-auto px-4 py-8">
-            <div className="mx-auto max-w-6xl space-y-8">
+        <div className="container mx-auto px-4 py-8 max-md:py-5">
+            <div className="mx-auto max-w-6xl space-y-8 max-md:space-y-6">
+                {/* Phones: greeting, AI builder and agents come first. */}
+                <MobileGreeting />
+                <AIBuilderHero />
+
                 {/* Heading */}
-                <div>
+                <div className="max-md:hidden">
                     <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
                     <p className="text-sm text-muted-foreground">
                         A snapshot of your voice agents&apos; activity.
@@ -149,24 +156,24 @@ export default function OverviewPage() {
                 </div>
 
                 {/* Stat cards */}
-                <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+                <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 max-md:gap-2.5">
                     {stats.map((stat) => {
                         const Icon = stat.icon;
                         return (
-                            <Card key={stat.label} className="overflow-hidden">
-                                <CardContent className="flex items-center gap-4 p-5">
-                                    <div className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-xl', stat.tint)}>
-                                        <Icon className="h-5 w-5" />
+                            <Card key={stat.label} className="overflow-hidden max-md:rounded-2xl">
+                                <CardContent className="flex items-center gap-4 p-5 max-md:flex-col max-md:items-start max-md:gap-2.5 max-md:p-3.5">
+                                    <div className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-xl max-md:h-8 max-md:w-8 max-md:rounded-lg', stat.tint)}>
+                                        <Icon className="h-5 w-5 max-md:h-4 max-md:w-4" />
                                     </div>
-                                    <div className="min-w-0">
+                                    <div className="min-w-0 max-md:w-full">
                                         {isLoading ? (
                                             <div className="h-7 w-16 animate-pulse rounded bg-muted" />
                                         ) : (
-                                            <p className="truncate text-2xl font-semibold leading-tight">{stat.value}</p>
+                                            <p className="truncate text-2xl font-semibold leading-tight max-md:text-xl">{stat.value}</p>
                                         )}
                                         <p className="truncate text-xs text-muted-foreground">
                                             {stat.label}
-                                            {stat.hint && <span className="text-muted-foreground/70"> · {stat.hint}</span>}
+                                            {stat.hint && <span className="text-muted-foreground/70 max-md:hidden"> · {stat.hint}</span>}
                                         </p>
                                     </div>
                                 </CardContent>
@@ -175,8 +182,10 @@ export default function OverviewPage() {
                     })}
                 </div>
 
+                <AgentStrip />
+
                 {/* Needs you */}
-                <Card className="border-amber-500/40 bg-amber-500/[0.03]">
+                <Card className="border-amber-500/40 bg-amber-500/[0.03] max-md:rounded-2xl">
                     <CardHeader className="flex flex-row items-center justify-between space-y-0">
                         <div className="space-y-1">
                             <CardTitle className="flex items-center gap-2">
@@ -212,7 +221,7 @@ export default function OverviewPage() {
                                     return (
                                         <li
                                             key={run.id}
-                                            className="group flex cursor-pointer items-center gap-4 rounded-lg border border-amber-500/20 bg-background/60 px-3 py-3 transition-colors hover:bg-accent/50"
+                                            className="group flex cursor-pointer items-center gap-4 rounded-lg border border-amber-500/20 bg-background/60 px-3 py-3 transition-colors hover:bg-accent/50 max-md:gap-3 max-md:rounded-xl"
                                             onClick={() => handleRowClick(run)}
                                         >
                                             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
@@ -236,7 +245,7 @@ export default function OverviewPage() {
                                             <Button
                                                 size="sm"
                                                 variant="outline"
-                                                className="shrink-0 border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-300"
+                                                className="shrink-0 border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-300 max-sm:hidden"
                                                 onClick={(e) => {
                                                     e.stopPropagation();
                                                     handleRowClick(run);
@@ -245,6 +254,7 @@ export default function OverviewPage() {
                                                 {action.cta}
                                                 <ArrowRight className="ml-1 h-3.5 w-3.5" />
                                             </Button>
+                                            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground sm:hidden" />
                                         </li>
                                     );
                                 })}
@@ -254,11 +264,11 @@ export default function OverviewPage() {
                 </Card>
 
                 {/* Recent calls */}
-                <Card>
+                <Card className="max-md:rounded-2xl">
                     <CardHeader className="flex flex-row items-center justify-between space-y-0">
                         <div className="space-y-1">
                             <CardTitle>Recent Calls</CardTitle>
-                            <CardDescription>The latest agent runs across your organization.</CardDescription>
+                            <CardDescription className="max-sm:hidden">The latest agent runs across your organization.</CardDescription>
                         </div>
                         <Button asChild variant="ghost" size="sm" className="text-muted-foreground">
                             <Link href="/usage">
@@ -267,7 +277,7 @@ export default function OverviewPage() {
                             </Link>
                         </Button>
                     </CardHeader>
-                    <CardContent>
+                    <CardContent className="max-md:pb-2">
                         {isLoading ? (
                             <div className="space-y-2">
                                 {Array.from({ length: 4 }).map((_, i) => (
@@ -286,7 +296,7 @@ export default function OverviewPage() {
                                     return (
                                         <li
                                             key={run.id}
-                                            className="group flex cursor-pointer items-center gap-4 px-1 py-3 transition-colors hover:bg-accent/50"
+                                            className="group flex cursor-pointer items-center gap-4 px-1 py-3 transition-colors hover:bg-accent/50 max-md:gap-3"
                                             onClick={() => handleRowClick(run)}
                                         >
                                             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border bg-muted/40">
@@ -302,6 +312,11 @@ export default function OverviewPage() {
                                                 </div>
                                                 <p className="truncate text-sm text-muted-foreground">
                                                     {phone || 'No number'}
+                                                    {/* Phones hide the duration column; keep the "when". */}
+                                                    <span className="md:hidden">
+                                                        {' · '}
+                                                        {formatDistanceToNow(new Date(run.created_at), { addSuffix: true })}
+                                                    </span>
                                                 </p>
                                             </div>
 
@@ -336,8 +351,10 @@ export default function OverviewPage() {
                     </CardContent>
                 </Card>
 
+                <MobileShortcuts />
+
                 {/* Quick Actions */}
-                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2 max-md:hidden">
                     <Card>
                         <CardHeader>
                             <CardTitle>Create and Manage your Voice Agents</CardTitle>
@@ -372,7 +389,7 @@ export default function OverviewPage() {
                 </div>
 
                 {/* Resources Section */}
-                <Card>
+                <Card className="max-md:hidden">
                     <CardHeader>
                         <CardTitle>Resources</CardTitle>
                         <CardDescription>

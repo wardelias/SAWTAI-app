@@ -69,7 +69,7 @@ export default function LeadDetailPage() {
 
     if (isLoading) {
         return (
-            <div className="container mx-auto p-6">
+            <div className="container mx-auto p-6 max-md:px-4 max-md:py-5">
                 <div className="animate-pulse space-y-3">
                     {[...Array(4)].map((_, i) => (
                         <div key={i} className="h-12 bg-muted rounded"></div>
@@ -81,8 +81,8 @@ export default function LeadDetailPage() {
 
     if (!lead) {
         return (
-            <div className="container mx-auto p-6">
-                <Button variant="ghost" onClick={() => router.push('/leads')}>
+            <div className="container mx-auto p-6 max-md:px-4 max-md:py-5">
+                <Button variant="ghost" onClick={() => router.push('/leads')} className="max-md:hidden">
                     <ArrowLeft className="h-4 w-4 mr-2" />
                     Back to leads
                 </Button>
@@ -94,7 +94,7 @@ export default function LeadDetailPage() {
     const attributeEntries = Object.entries(lead.attributes || {});
 
     return (
-        <div className="container mx-auto p-6 space-y-6">
+        <div className="container mx-auto p-6 space-y-6 max-md:space-y-5 max-md:px-4 max-md:py-5">
             <Button variant="ghost" onClick={() => router.push('/leads')}>
                 <ArrowLeft className="h-4 w-4 mr-2" />
                 Back to leads
@@ -102,7 +102,7 @@ export default function LeadDetailPage() {
 
             <div className="flex justify-between items-start">
                 <div>
-                    <h1 className="text-3xl font-bold mb-1">{leadName(lead)}</h1>
+                    <h1 className="text-3xl font-bold mb-1 max-md:text-2xl">{leadName(lead)}</h1>
                     <p className="text-muted-foreground">{lead.phone_number}</p>
                 </div>
                 <div className="flex gap-2">

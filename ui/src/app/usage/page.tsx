@@ -441,16 +441,16 @@ export default function UsagePage() {
     };
 
     return (
-        <div className="container mx-auto p-6 space-y-6">
+        <div className="container mx-auto p-6 space-y-6 max-md:space-y-5 max-md:px-4 max-md:py-5">
             <div>
-                <div className="flex justify-between items-start">
+                <div className="flex justify-between items-start max-md:flex-col max-md:items-stretch max-md:gap-4">
                     <div>
-                        <h1 className="text-3xl font-bold mb-2">Agent Runs</h1>
-                        <p className="text-muted-foreground">See all your Agent Runs across all Voice Agents. You can use filters to filter out required Agent Runs.</p>
+                        <h1 className="text-3xl font-bold mb-2 max-md:text-2xl">Agent Runs</h1>
+                        <p className="text-muted-foreground max-md:text-sm">See all your Agent Runs across all Voice Agents. You can use filters to filter out required Agent Runs.</p>
                     </div>
                         <div className="flex items-center gap-2">
                             <Globe className="h-4 w-4 text-muted-foreground" />
-                            <div className="w-[300px]">
+                            <div className="w-[300px] max-md:w-auto max-md:min-w-0 max-md:flex-1">
                                 <TimezoneSelect
                                     instanceId={timezoneSelectId}
                                     value={selectedTimezone}
@@ -462,6 +462,8 @@ export default function UsagePage() {
                                             ...base,
                                             minHeight: '36px',
                                             fontSize: '14px',
+                                            // iOS zooms into inputs smaller than 16px on focus.
+                                            '@media (max-width: 767px)': { fontSize: '16px' },
                                             backgroundColor: 'var(--background)',
                                             borderColor: state.isFocused ? 'var(--ring)' : 'var(--border)',
                                             boxShadow: state.isFocused ? '0 0 0 2px color-mix(in srgb, var(--ring) 20%, transparent)' : 'none',

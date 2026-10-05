@@ -79,9 +79,9 @@ export default function SuperadminPage() {
 
     return (
         <>
-            <main className="container mx-auto p-6 space-y-6 max-w-5xl">
+            <main className="container mx-auto p-6 space-y-6 max-w-5xl max-md:px-4 max-md:py-5">
                 <div className="text-center">
-                    <h1 className="text-3xl font-bold mb-2">Superadmin Dashboard</h1>
+                    <h1 className="text-3xl font-bold mb-2 max-md:text-2xl">Superadmin Dashboard</h1>
                     <p className="text-sm text-muted-foreground">Manage users and view system-wide data</p>
                 </div>
 

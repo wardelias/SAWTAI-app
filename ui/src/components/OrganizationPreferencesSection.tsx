@@ -29,6 +29,8 @@ const timezoneSelectStyles = {
     ...base,
     minHeight: "36px",
     fontSize: "14px",
+    // iOS zooms into inputs smaller than 16px on focus.
+    "@media (max-width: 767px)": { fontSize: "16px" },
     backgroundColor: "var(--background)",
     borderColor: state.isFocused ? "var(--ring)" : "var(--border)",
     boxShadow: state.isFocused

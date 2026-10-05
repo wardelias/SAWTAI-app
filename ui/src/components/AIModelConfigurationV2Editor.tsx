@@ -458,7 +458,7 @@ export function AIModelConfigurationV2Editor({
             )}
 
             <Tabs value={mode} onValueChange={(value) => setMode(value as ModelMode)} className="space-y-6">
-                <TabsList className="grid w-full grid-cols-3">
+                <TabsList className="grid w-full grid-cols-3 max-md:grid-cols-[auto_1fr_1fr]">
                     <TabsTrigger value="realtime">Speech to Speech</TabsTrigger>
                     <TabsTrigger value="dograh">Sawt</TabsTrigger>
                     <TabsTrigger value="byok">BYOK</TabsTrigger>

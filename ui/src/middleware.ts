@@ -13,8 +13,9 @@ const OSS_TOKEN_COOKIE = 'dograh_auth_token';
 const PUBLIC_PATHS = ['/auth/login', '/auth/signup', '/embed'];
 
 // SEO metadata routes for the public landing page; crawlers must reach these
-// without a session. The OG image URL may carry a generated suffix.
-const PUBLIC_METADATA_ROUTE = /^\/(robots\.txt|sitemap\.xml|opengraph-image)/;
+// without a session. The OG image URL may carry a generated suffix. Browsers
+// fetch the web app manifest without cookies, so it must be public too.
+const PUBLIC_METADATA_ROUTE = /^\/(robots\.txt|sitemap\.xml|opengraph-image|manifest\.webmanifest)/;
 
 let cachedAuthProvider: string | null = null;
 

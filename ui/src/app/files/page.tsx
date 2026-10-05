@@ -37,7 +37,7 @@ export default function FilesPage() {
 
     if (loading || !user) {
         return (
-            <div className="container mx-auto px-4 py-8">
+            <div className="container mx-auto px-4 py-8 max-md:py-5">
                 <div className="space-y-4">
                     <Skeleton className="h-12 w-64" />
                     <Skeleton className="h-64 w-full" />
@@ -47,9 +47,9 @@ export default function FilesPage() {
     }
 
     return (
-        <div className="container mx-auto px-4 py-8">
+        <div className="container mx-auto px-4 py-8 max-md:py-5">
             <div className="mb-8">
-                <h1 className="text-3xl font-bold mb-2">Knowledge Base Files</h1>
+                <h1 className="text-3xl font-bold mb-2 max-md:text-2xl">Knowledge Base Files</h1>
                 <p className="text-muted-foreground">
                     Upload and manage documents for your voice agents to reference.{" "}
                     <a href="https://docs.dograh.com/voice-agent/knowledge-base" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 underline">
@@ -60,7 +60,7 @@ export default function FilesPage() {
 
             <Card>
                 <CardHeader>
-                    <div className="flex justify-between items-center">
+                    <div className="flex justify-between items-center max-md:flex-col max-md:items-stretch max-md:gap-3">
                         <div>
                             <CardTitle>Your Documents</CardTitle>
                             <CardDescription>

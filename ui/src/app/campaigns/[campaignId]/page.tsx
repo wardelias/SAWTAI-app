@@ -466,7 +466,7 @@ export default function CampaignDetailPage() {
 
     if (isLoadingCampaign) {
         return (
-            <div className="container mx-auto p-6 space-y-6">
+            <div className="container mx-auto p-6 space-y-6 max-md:px-4 max-md:py-5">
                 <div className="animate-pulse">
                     <div className="h-8 bg-muted rounded w-1/4 mb-4"></div>
                     <div className="h-64 bg-muted rounded"></div>
@@ -477,26 +477,26 @@ export default function CampaignDetailPage() {
 
     if (!campaign) {
         return (
-            <div className="container mx-auto p-6 space-y-6">
+            <div className="container mx-auto p-6 space-y-6 max-md:px-4 max-md:py-5">
                 <p className="text-center text-muted-foreground">Campaign not found</p>
             </div>
         );
     }
 
     return (
-        <div className="container mx-auto p-6 space-y-6">
+        <div className="container mx-auto p-6 space-y-6 max-md:px-4 max-md:py-5">
             <div>
                 <Button
                     variant="ghost"
                     onClick={handleBack}
-                    className="mb-4"
+                    className="mb-4 max-md:hidden"
                 >
                     <ArrowLeft className="h-4 w-4 mr-2" />
                     Back to Campaigns
                 </Button>
-                <div className="flex justify-between items-start">
+                <div className="flex justify-between items-start max-md:flex-col max-md:items-stretch max-md:gap-4">
                     <div>
-                        <h1 className="text-3xl font-bold mb-2">{campaign.name}</h1>
+                        <h1 className="text-3xl font-bold mb-2 max-md:text-2xl">{campaign.name}</h1>
                             <div className="flex items-center gap-4">
                                 <Badge variant={getStateBadgeVariant(campaign.state)}>
                                     {campaign.state}
@@ -506,7 +506,7 @@ export default function CampaignDetailPage() {
                                 </span>
                             </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 max-md:flex-wrap">
                             <Popover open={isReportPopoverOpen} onOpenChange={setIsReportPopoverOpen}>
                                 <PopoverTrigger asChild>
                                     <Button variant="outline" disabled={isDownloadingReport}>

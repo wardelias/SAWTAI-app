@@ -6,6 +6,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { useWorkflow } from "@/app/workflow/[workflowId]/contexts/WorkflowContext";
+import { useWorkflowStore } from "@/app/workflow/[workflowId]/stores/workflowStore";
 import type { NodeSpec } from "@/client/types.gen";
 import { DocumentBadges } from "@/components/flow/DocumentBadges";
 import { NodeEditForm, useNodeSpecs } from "@/components/flow/renderer";
@@ -604,6 +605,17 @@ export const GenericNode = memo(({ data, selected, id, type }: GenericNodeProps)
         if (open && spec) setValues(seed());
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [data, open]);
+
+    // Open this node's editor when something outside the canvas asks for it
+    // (the mobile steps list, where double-click isn't available).
+    const editRequested = useWorkflowStore((state) => state.requestedEditNodeId === id);
+    const clearNodeEditRequest = useWorkflowStore((state) => state.clearNodeEditRequest);
+    useEffect(() => {
+        if (!editRequested) return;
+        clearNodeEditRequest();
+        handleOpenChange(true);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [editRequested]);
 
     // ── Render ──────────────────────────────────────────────────────────
     const styleVariant =

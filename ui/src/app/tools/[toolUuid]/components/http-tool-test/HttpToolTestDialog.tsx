@@ -129,7 +129,7 @@ function ParameterFields({
                                 id={inputId}
                                 value={value}
                                 onChange={(event) => onValueChange(parameter.name, event.target.value)}
-                                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm max-md:text-base"
                             >
                                 <option value="true">true</option>
                                 <option value="false">false</option>

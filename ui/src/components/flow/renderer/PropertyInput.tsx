@@ -210,11 +210,12 @@ function NumberWidget({ spec, value, onChange }: WidgetProps) {
 function BooleanWidget({ spec, value, onChange }: WidgetProps) {
     const v = !!value;
     return (
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-2 max-md:flex-wrap">
             <Switch id={`prop-${spec.name}`} checked={v} onCheckedChange={onChange} />
             <Label htmlFor={`prop-${spec.name}`}>{spec.display_name}</Label>
             {spec.description && (
-                <Label className="text-xs text-muted-foreground ml-2">
+                // Phones: description wraps onto its own line under the label.
+                <Label className="text-xs text-muted-foreground ml-2 max-md:mt-1 max-md:ml-0 max-md:basis-full max-md:pl-10">
                     {spec.description}
                 </Label>
             )}
@@ -227,7 +228,7 @@ function OptionsWidget({ spec, value, onChange }: WidgetProps) {
         <div className="grid gap-2">
             <StackedLabel spec={spec} />
             <select
-                className="border rounded-md p-2 text-sm bg-background"
+                className="border rounded-md p-2 text-sm bg-background max-md:text-base"
                 value={(value as string | number | undefined) ?? ""}
                 onChange={(e) => {
                     const raw = e.target.value;

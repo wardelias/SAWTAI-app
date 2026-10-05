@@ -6,10 +6,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 
 export default function AutomationPage() {
     return (
-        <div className="container mx-auto p-6 space-y-6">
+        <div className="container mx-auto p-6 space-y-6 max-md:space-y-5 max-md:px-4 max-md:py-5">
             <div>
-                <h1 className="text-3xl font-bold mb-2">Automation</h1>
-                <p>Automate your workflows and processes</p>
+                <h1 className="text-3xl font-bold mb-2 max-md:text-2xl">Automation</h1>
+                <p className="max-md:text-sm max-md:text-muted-foreground">Automate your workflows and processes</p>
             </div>
 
             <Card>

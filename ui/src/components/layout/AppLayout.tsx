@@ -14,12 +14,16 @@ import { cn } from "@/lib/utils";
 
 import { AppSidebar } from "./AppSidebar";
 import { GitHubStarBadge } from "./GitHubStarBadge";
+import { isWorkflowEditorPath } from "./mobile/mobileNav";
+import { MobileTabBar } from "./mobile/MobileTabBar";
+import { MobileTopBar } from "./mobile/MobileTopBar";
 
 function AppHeader() {
   const { toggleSidebar } = useSidebar();
 
   return (
-    <header className="sticky top-0 z-50 flex items-center justify-between border-b border-border/60 bg-background/70 px-4 py-2 backdrop-blur-md supports-[backdrop-filter]:bg-background/55">
+    // Phones get MobileTopBar instead.
+    <header className="sticky top-0 z-50 flex items-center justify-between border-b border-border/60 bg-background/70 px-4 py-2 backdrop-blur-md supports-[backdrop-filter]:bg-background/55 max-md:hidden">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={toggleSidebar} aria-label="Open menu">
           <Menu className="h-5 w-5" />
@@ -97,7 +101,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
   const isLandingPage = pathname === "/";
 
   // Only match the exact editor page /workflow/<id>, not sub-routes like /workflow/<id>/runs
-  const isWorkflowEditor = /^\/workflow\/\d+$/.test(pathname);
+  const isWorkflowEditor = isWorkflowEditorPath(pathname);
 
   // Always render SidebarProvider to keep the component tree shape consistent
   // across route changes (avoids React hooks ordering violations during navigation).
@@ -110,6 +114,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
             <SidebarInset className="flex-1">
               <BackendStatusBanner />
               {!isWorkflowEditor && <AppHeader />}
+              {!isWorkflowEditor && <MobileTopBar />}
               {/* Optional header area for specific pages */}
               {headerActions && (
                 <header className="sticky top-0 z-50 w-full border-b border-border/60 bg-background/70 backdrop-blur-md supports-[backdrop-filter]:bg-background/55">
@@ -133,9 +138,16 @@ const AppLayout: React.FC<AppLayoutProps> = ({
               )}
 
               {/* Main content area */}
-              <main className="app-surface flex-1">
+              <main
+                className={cn(
+                  "app-surface flex-1",
+                  // Clear the phone tab bar (plus the home-indicator inset).
+                  !isWorkflowEditor && "max-md:pb-[calc(4.5rem+env(safe-area-inset-bottom))]"
+                )}
+              >
                 {children}
               </main>
+              {!isWorkflowEditor && <MobileTabBar />}
             </SidebarInset>
           </div>
         </LeadFormsProvider>

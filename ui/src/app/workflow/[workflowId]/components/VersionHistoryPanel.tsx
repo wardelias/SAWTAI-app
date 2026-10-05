@@ -58,7 +58,7 @@ export const VersionHistoryPanel = ({
 
     return (
         <div
-            className={`fixed z-51 right-0 top-0 h-full w-80 bg-[#1a1a1a] border-l border-[#2a2a2a] shadow-lg transform transition-transform duration-300 ease-in-out ${
+            className={`fixed z-51 right-0 top-0 h-full w-80 max-md:w-full max-md:pt-[env(safe-area-inset-top)] bg-[#1a1a1a] border-l border-[#2a2a2a] shadow-lg transform transition-transform duration-300 ease-in-out ${
                 isOpen ? "translate-x-0" : "translate-x-full"
             }`}
         >

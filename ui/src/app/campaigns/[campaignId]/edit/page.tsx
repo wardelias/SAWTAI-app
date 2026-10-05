@@ -275,7 +275,7 @@ export default function EditCampaignPage() {
 
     if (isLoading) {
         return (
-            <div className="container mx-auto p-6 space-y-6 max-w-2xl">
+            <div className="container mx-auto p-6 space-y-6 max-w-2xl max-md:px-4 max-md:py-5">
                 <div className="animate-pulse">
                     <div className="h-8 bg-muted rounded w-1/4 mb-4"></div>
                     <div className="h-64 bg-muted rounded"></div>
@@ -286,24 +286,24 @@ export default function EditCampaignPage() {
 
     if (!campaign) {
         return (
-            <div className="container mx-auto p-6 space-y-6 max-w-2xl">
+            <div className="container mx-auto p-6 space-y-6 max-w-2xl max-md:px-4 max-md:py-5">
                 <p className="text-center text-muted-foreground">Campaign not found</p>
             </div>
         );
     }
 
     return (
-        <div className="container mx-auto p-6 pb-12 space-y-6 max-w-2xl">
+        <div className="container mx-auto p-6 pb-12 space-y-6 max-w-2xl max-md:px-4 max-md:py-5">
             <div>
                 <Button
                     variant="ghost"
                     onClick={handleBack}
-                    className="mb-4"
+                    className="mb-4 max-md:hidden"
                 >
                     <ArrowLeft className="h-4 w-4 mr-2" />
                     Back to Campaign
                 </Button>
-                <h1 className="text-3xl font-bold mb-2">Edit Campaign</h1>
+                <h1 className="text-3xl font-bold mb-2 max-md:text-2xl">Edit Campaign</h1>
                 <p className="text-muted-foreground">Modify campaign settings</p>
             </div>
 

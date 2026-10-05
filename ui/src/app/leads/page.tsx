@@ -160,13 +160,13 @@ export default function LeadsPage() {
         [l.first_name, l.last_name].filter(Boolean).join(' ') || '—';
 
     return (
-        <div className="container mx-auto p-6 space-y-6">
-            <div className="flex justify-between items-center">
+        <div className="container mx-auto p-6 space-y-6 max-md:space-y-5 max-md:px-4 max-md:py-5">
+            <div className="flex justify-between items-center max-md:flex-col max-md:items-stretch max-md:gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold mb-2">Leads</h1>
-                    <p>Your persistent contact database for reactivation campaigns</p>
+                    <h1 className="text-3xl font-bold mb-2 max-md:text-2xl">Leads</h1>
+                    <p className="max-md:text-sm max-md:text-muted-foreground">Your persistent contact database for reactivation campaigns</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 max-md:*:flex-1">
                     <Button variant="outline" onClick={() => setImportOpen(true)}>
                         <Upload className="h-4 w-4 mr-2" />
                         Import CSV

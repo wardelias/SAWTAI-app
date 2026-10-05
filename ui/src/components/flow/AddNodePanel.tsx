@@ -126,7 +126,7 @@ export default function AddNodePanel({ isOpen, onNodeSelect, onClose, nodes }: A
 
     return (
         <div
-            className={`fixed z-51 right-0 top-0 h-full w-80 bg-background shadow-lg transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : 'translate-x-full'
+            className={`fixed z-51 right-0 top-0 h-full w-80 bg-background shadow-lg max-md:w-full max-md:pt-[env(safe-area-inset-top)] transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : 'translate-x-full'
                 }`}
         >
             <div className="p-4 h-full overflow-y-auto">
