@@ -12,6 +12,9 @@ so a reloaded page can restore the chat.
 
 `GET/PUT /agent-copilot/settings` manage the organization's own Anthropic
 key, model, effort, daily limit, and on/off switch.
+
+`GET/POST /agent-copilot/insights` return / regenerate the AI analysis of
+the organization's last 10 calls shown on the Overview page.
 """
 
 import asyncio
@@ -30,16 +33,23 @@ from api.db.models import UserModel
 from api.services.agent_copilot import (
     EFFORT_LEVELS,
     SUPPORTED_MODELS,
+    InsightsError,
+    InsightsLimitError,
     InvalidApiKeyError,
+    acquire_insights_lock,
     acquire_turn_lock,
     build_transcript,
     consume_daily_message,
+    generate_insights,
     get_effective_settings,
+    load_insights_report,
     load_messages,
     load_stored_settings,
+    release_insights_lock,
     release_turn_lock,
     resolve_settings,
     run_turn,
+    save_insights_report,
     save_stored_settings,
     verify_api_key,
 )
@@ -137,6 +147,11 @@ def _sse(event: dict[str, Any]) -> str:
     return f"data: {json.dumps(event)}\n\n"
 
 
+class CallInsightsResponse(BaseModel):
+    # None until the organization runs its first analysis.
+    report: dict[str, Any] | None
+
+
 def _require_org(user: UserModel) -> int:
     if not user.selected_organization_id:
         raise HTTPException(status_code=400, detail="No organization selected")
@@ -218,6 +233,56 @@ async def update_copilot_settings(
     return _settings_response(value)
 
 
+async def _require_available_settings(org_id: int):
+    settings = await get_effective_settings(org_id)
+    if not settings.enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="The AI assistant is turned off for your organization. Turn it on in Settings.",
+        )
+    if settings.api_key is None:
+        raise HTTPException(
+            status_code=503,
+            detail="The AI assistant needs an Anthropic API key. Add one in Settings → AI Assistant.",
+        )
+    return settings
+
+
+@router.get("/insights")
+async def get_call_insights(
+    user: UserModel = Depends(get_user),
+) -> CallInsightsResponse:
+    """The latest AI analysis of the organization's recent calls."""
+    return CallInsightsResponse(report=await load_insights_report(_require_org(user)))
+
+
+@router.post("/insights")
+async def run_call_insights(
+    user: UserModel = Depends(get_user),
+) -> CallInsightsResponse:
+    """Analyze the organization's last 10 completed calls and store the report.
+
+    Takes up to a minute or so; counts as one message against the daily
+    AI Assistant limit (nothing is charged when there are no calls yet).
+    """
+    org_id = _require_org(user)
+    settings = await _require_available_settings(org_id)
+    if not await acquire_insights_lock(org_id):
+        raise HTTPException(
+            status_code=409, detail="An analysis is already running. Try again shortly."
+        )
+    try:
+        report = await generate_insights(org_id, settings)
+    except InsightsLimitError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+    except InsightsError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    finally:
+        await release_insights_lock(org_id)
+    await save_insights_report(org_id, report)
+    return CallInsightsResponse(report=report)
+
+
 @router.get("/conversations/{conversation_id}")
 async def get_copilot_conversation(
     conversation_id: str,
@@ -242,17 +307,7 @@ async def chat_with_copilot(
 ) -> StreamingResponse:
     """Send one message to the copilot and stream its reply."""
     org_id = _require_org(user)
-    settings = await get_effective_settings(org_id)
-    if not settings.enabled:
-        raise HTTPException(
-            status_code=403,
-            detail="The AI assistant is turned off for your organization. Turn it on in Settings.",
-        )
-    if settings.api_key is None:
-        raise HTTPException(
-            status_code=503,
-            detail="The AI assistant needs an Anthropic API key. Add one in Settings → AI Assistant.",
-        )
+    settings = await _require_available_settings(org_id)
 
     editor_workflow = None
     if request.workflow_id is not None:

@@ -474,6 +474,24 @@ class WorkflowRunClient(BaseDBClient):
             )
             return [dict(row._mapping) for row in result.all()]
 
+    async def get_recent_completed_runs_for_org(
+        self, organization_id: int, limit: int
+    ) -> list[tuple[WorkflowRunModel, str]]:
+        """The organization's most recent completed runs, newest first,
+        each paired with its workflow's name (for org-wide call insights)."""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(WorkflowRunModel, WorkflowModel.name)
+                .join(WorkflowModel, WorkflowRunModel.workflow_id == WorkflowModel.id)
+                .where(
+                    WorkflowModel.organization_id == organization_id,
+                    WorkflowRunModel.is_completed.is_(True),
+                )
+                .order_by(WorkflowRunModel.created_at.desc())
+                .limit(limit)
+            )
+            return [(run, name) for run, name in result.all()]
+
     async def ensure_public_access_token(self, workflow_run_id: int) -> Optional[str]:
         """Generate a public access token if not exists, return existing if present (idempotent).
 

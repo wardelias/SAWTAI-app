@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { getUsageHistoryApiV1OrganizationsUsageRunsGet } from '@/client/sdk.gen';
 import type { UsageHistoryResponse, WorkflowRunUsageResponse } from '@/client/types.gen';
+import { CallInsightsCard } from '@/components/agent-copilot/CallInsightsCard';
 import { CallTypeCell } from '@/components/CallTypeCell';
 import { MediaPreviewButton, MediaPreviewDialog } from '@/components/MediaPreviewDialog';
 import { Badge } from '@/components/ui/badge';
@@ -174,6 +175,9 @@ export default function OverviewPage() {
                         );
                     })}
                 </div>
+
+                {/* AI analysis of the last 10 calls */}
+                <CallInsightsCard />
 
                 {/* Needs you */}
                 <Card className="border-amber-500/40 bg-amber-500/[0.03]">

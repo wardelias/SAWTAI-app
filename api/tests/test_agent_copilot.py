@@ -203,7 +203,7 @@ _TOOLS = [
 
 async def _collect(client: _FakeClient, **kwargs: Any) -> list[dict[str, Any]]:
     with (
-        patch.object(runner, "_get_client", return_value=client),
+        patch.object(runner, "get_client", return_value=client),
         patch.object(runner, "build_tool_definitions", AsyncMock(return_value=_TOOLS)),
     ):
         kwargs.setdefault("settings", _SETTINGS)
@@ -470,7 +470,7 @@ async def test_api_error_ends_turn_with_readable_message(store):
 
     events = await _collect(client, user=_user(), conversation_id="c1", message="go")
 
-    assert events[-2] == {"type": "error", "message": runner._api_error_message(error)}
+    assert events[-2] == {"type": "error", "message": runner.api_error_message(error)}
     assert events[-1] == {"type": "done"}
 
 
@@ -1024,9 +1024,11 @@ async def test_verify_api_key_maps_anthropic_errors():
 
 
 def test_runner_keeps_one_client_per_api_key():
-    runner._clients.clear()
-    a1 = runner._get_client("sk-a")
-    a2 = runner._get_client("sk-a")
-    b = runner._get_client("sk-b")
+    from api.services.agent_copilot import client as client_mod
+
+    client_mod._clients.clear()
+    a1 = client_mod.get_client("sk-a")
+    a2 = client_mod.get_client("sk-a")
+    b = client_mod.get_client("sk-b")
     assert a1 is a2 and a1 is not b
-    runner._clients.clear()
+    client_mod._clients.clear()

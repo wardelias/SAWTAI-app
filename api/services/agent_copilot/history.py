@@ -89,3 +89,40 @@ async def consume_daily_message(organization_id: int, limit: int) -> bool:
     if used == 1:
         await client.expire(key, _QUOTA_TTL_SECONDS)
     return used <= limit
+
+
+# ─── Call insights reports ────────────────────────────────────────────────
+
+_INSIGHTS_TTL_SECONDS = 30 * 24 * 60 * 60
+_INSIGHTS_LOCK_TTL_SECONDS = 5 * 60
+
+
+def _insights_key(organization_id: int) -> str:
+    return f"agent_copilot:insights:{organization_id}"
+
+
+async def load_insights_report(organization_id: int) -> dict[str, Any] | None:
+    raw = await (await _client()).get(_insights_key(organization_id))
+    return json.loads(raw) if raw else None
+
+
+async def save_insights_report(organization_id: int, report: dict[str, Any]) -> None:
+    await (await _client()).set(
+        _insights_key(organization_id), json.dumps(report), ex=_INSIGHTS_TTL_SECONDS
+    )
+
+
+async def acquire_insights_lock(organization_id: int) -> bool:
+    """One analysis at a time per organization."""
+    return bool(
+        await (await _client()).set(
+            _insights_key(organization_id) + ":lock",
+            "1",
+            nx=True,
+            ex=_INSIGHTS_LOCK_TTL_SECONDS,
+        )
+    )
+
+
+async def release_insights_lock(organization_id: int) -> None:
+    await (await _client()).delete(_insights_key(organization_id) + ":lock")

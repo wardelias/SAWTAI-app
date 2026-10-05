@@ -175,3 +175,69 @@ export async function streamCopilotChat(options: {
         events.forEach(options.onEvent);
     }
 }
+
+// ─── Call insights (Overview) ─────────────────────────────────────────────
+
+export interface CallInsightIssue {
+    title: string;
+    severity: 'high' | 'medium' | 'low';
+    what_happened: string;
+    evidence: string;
+    suggestion: string;
+    needs_change: boolean;
+    call_ids: number[];
+    agents: { id: number; name: string }[];
+}
+
+export interface CallInsightsReport {
+    id: string;
+    generated_at: string;
+    model: string | null;
+    summary: string;
+    issues: CallInsightIssue[];
+    working_well: string[];
+    calls_analyzed: number;
+    call_ids: number[];
+    calls: { call_id: number; agent_id: number; agent: string; outcome: string | null; started_at: string | null }[];
+    period: { from: string; to: string } | null;
+}
+
+/** The latest stored analysis, or null if none has been run. */
+export async function fetchCallInsights(token: string): Promise<CallInsightsReport | null> {
+    const res = await fetch(`${apiBaseUrl()}/insights`, {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error(await errorDetail(res));
+    return ((await res.json()) as { report: CallInsightsReport | null }).report;
+}
+
+/** Analyze the last 10 calls now (takes up to a minute). */
+export async function runCallInsights(token: string): Promise<CallInsightsReport> {
+    const res = await fetch(`${apiBaseUrl()}/insights`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error(await errorDetail(res));
+    return ((await res.json()) as { report: CallInsightsReport }).report;
+}
+
+/**
+ * The assistant request for fixing one issue from a stored report. Built
+ * from the server's copy of the report (never from URL text), so a link
+ * can only point at an issue the organization's own analysis produced.
+ */
+export function insightFixPrompt(issue: CallInsightIssue): string {
+    const calls = issue.call_ids.map((id) => `#${id}`).join(', ');
+    return [
+        'Fix this issue found in my recent calls:',
+        '',
+        `Issue: ${issue.title} — ${issue.what_happened}`,
+        issue.evidence ? `Evidence: ${issue.evidence}` : '',
+        `Suggested change: ${issue.suggestion}`,
+        calls ? `Calls: ${calls}` : '',
+        '',
+        'Read those calls first, then apply the change to this agent as a draft and tell me what you changed.',
+    ]
+        .filter((line, i, all) => line !== '' || (all[i - 1] ?? '') !== '')
+        .join('\n');
+}

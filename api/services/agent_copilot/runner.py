@@ -17,7 +17,6 @@ so a dropped connection never leaves a `tool_use` without its result.
 
 from __future__ import annotations
 
-from collections import OrderedDict
 from typing import Any, AsyncIterator
 
 import anthropic
@@ -25,6 +24,7 @@ from loguru import logger
 
 from api.db.models import UserModel
 from api.services.agent_copilot import history
+from api.services.agent_copilot.client import api_error_message, get_client
 from api.services.agent_copilot.prompt import (
     COPILOT_SYSTEM_PROMPT,
     editor_context_block,
@@ -50,23 +50,6 @@ _MAX_TOKENS = 64000
 _MAX_STEPS = 40
 _MAX_JSON_RETRIES = 2
 
-# One client per API key (organizations can bring their own), reused for
-# connection pooling. Bounded so rotated keys don't accumulate.
-_MAX_CLIENTS = 64
-_clients: OrderedDict[str, anthropic.AsyncAnthropic] = OrderedDict()
-
-
-def _get_client(api_key: str) -> anthropic.AsyncAnthropic:
-    client = _clients.get(api_key)
-    if client is None:
-        client = anthropic.AsyncAnthropic(api_key=api_key)
-        _clients[api_key] = client
-        while len(_clients) > _MAX_CLIENTS:
-            _clients.popitem(last=False)
-    else:
-        _clients.move_to_end(api_key)
-    return client
-
 
 def _ui_event(event: Any) -> dict[str, Any] | None:
     """Map a raw stream event to a UI event, or None to skip it."""
@@ -82,16 +65,6 @@ def _ui_event(event: Any) -> dict[str, Any] | None:
         if event.delta.type == "thinking_delta" and event.delta.thinking:
             return {"type": "progress", "text": event.delta.thinking}
     return None
-
-
-def _api_error_message(e: anthropic.APIError) -> str:
-    if isinstance(e, anthropic.AuthenticationError):
-        return "The assistant is misconfigured (invalid Anthropic API key)."
-    if isinstance(e, anthropic.RateLimitError):
-        return "The assistant is busy right now. Please try again in a minute."
-    if isinstance(e, anthropic.APIConnectionError):
-        return "Couldn't reach the AI service. Please try again."
-    return "The assistant hit an error. Please try again."
 
 
 async def run_turn(
@@ -125,7 +98,7 @@ async def run_turn(
 
     tools = await build_tool_definitions()
     assert settings.api_key is not None, "caller checks settings.available"
-    client = _get_client(settings.api_key)
+    client = get_client(settings.api_key)
     usage = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
     json_retries = 0
     steps = 0
@@ -165,7 +138,7 @@ async def run_turn(
                     response = await stream.get_final_message()
             except anthropic.APIError as e:
                 logger.warning(f"agent copilot API error (org {org_id}): {e}")
-                yield {"type": "error", "message": _api_error_message(e)}
+                yield {"type": "error", "message": api_error_message(e)}
                 break
             except ValueError:
                 # Eagerly streamed tool input the SDK could not parse at all.

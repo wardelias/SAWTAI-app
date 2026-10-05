@@ -6,10 +6,19 @@ an external MCP client's would be.
 """
 
 from api.services.agent_copilot.history import (
+    acquire_insights_lock,
     acquire_turn_lock,
     consume_daily_message,
+    load_insights_report,
     load_messages,
+    release_insights_lock,
     release_turn_lock,
+    save_insights_report,
+)
+from api.services.agent_copilot.insights import (
+    InsightsError,
+    InsightsLimitError,
+    generate_insights,
 )
 from api.services.agent_copilot.runner import run_turn
 from api.services.agent_copilot.settings import (
@@ -27,6 +36,13 @@ from api.services.agent_copilot.transcript import build_transcript
 
 __all__ = [
     "EFFORT_LEVELS",
+    "InsightsError",
+    "InsightsLimitError",
+    "acquire_insights_lock",
+    "generate_insights",
+    "load_insights_report",
+    "release_insights_lock",
+    "save_insights_report",
     "SUPPORTED_MODELS",
     "EffectiveSettings",
     "InvalidApiKeyError",
