@@ -10,7 +10,7 @@ import { resolveBrowserBackendUrl } from '@/lib/apiClient';
 import { detailFromError } from '@/lib/apiError';
 import logger from '@/lib/logger';
 
-import { sdpFilterCodec } from "../utils";
+import { canCaptureAudio, describeMediaError, ICE_FAILED_MESSAGE, MEDIA_UNSUPPORTED_MESSAGE, sdpFilterCodec } from "../utils";
 import { useDeviceInputs } from "./useDeviceInputs";
 
 interface UseWebSocketRTCProps {
@@ -278,6 +278,7 @@ export const useWebSocketRTC = ({ workflowId, workflowRunId, accessToken, initia
             }
 
             if (pc.connectionState === 'failed' || pc.iceConnectionState === 'failed') {
+                setPermissionError(ICE_FAILED_MESSAGE);
                 cleanupConnection({ graceful: false, status: 'failed' });
                 return;
             }
@@ -297,9 +298,13 @@ export const useWebSocketRTC = ({ workflowId, workflowRunId, accessToken, initia
         pc.addEventListener('connectionstatechange', handlePeerStateChange);
 
         pc.addEventListener('track', (evt) => {
-            if (evt.track.kind === 'audio' && audioRef.current) {
-                audioRef.current.srcObject = evt.streams[0];
-            }
+            const audio = audioRef.current;
+            if (evt.track.kind !== 'audio' || !audio) return;
+            // Safari can deliver a track without an associated stream.
+            audio.srcObject = evt.streams[0] ?? new MediaStream([evt.track]);
+            // `autoPlay` alone is unreliable on mobile Safari; start playback
+            // explicitly (allowed while the page is capturing the mic).
+            audio.play().catch((e) => logger.warn('Could not start agent audio playback:', e));
         });
 
         pcRef.current = pc;
@@ -683,6 +688,15 @@ export const useWebSocketRTC = ({ workflowId, workflowRunId, accessToken, initia
         setPermissionError(null);
         setConnectionStatus('connecting');
 
+        // In-app browsers (WhatsApp, Instagram…) and non-https pages have no
+        // microphone API; fail with a clear reason instead of a bare TypeError.
+        if (useAudio && !canCaptureAudio()) {
+            setPermissionError(MEDIA_UNSUPPORTED_MESSAGE);
+            setConnectionStatus('failed');
+            setIsStarting(false);
+            return;
+        }
+
         try {
             // Fetch time-limited TURN credentials from backend API only if the
             // server reports a TURN server is configured. Skipping the request
@@ -794,7 +808,15 @@ export const useWebSocketRTC = ({ workflowId, workflowRunId, accessToken, initia
             // Get user media and negotiate
             if (constraints.audio) {
                 try {
-                    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    let stream: MediaStream;
+                    try {
+                        stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    } catch (err) {
+                        // A pinned device id can go stale (common on phones,
+                        // where ids rotate); fall back to the default mic.
+                        if ((err as { name?: string })?.name !== 'OverconstrainedError') throw err;
+                        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    }
                     // Release any stream still held from a prior attempt before
                     // retaining the new one, so re-entry can't leak a device.
                     stopLocalStream();
@@ -805,8 +827,10 @@ export const useWebSocketRTC = ({ workflowId, workflowRunId, accessToken, initia
                     await negotiate();
                 } catch (err) {
                     logger.error(`Could not acquire media: ${err}`);
-                    setPermissionError('Could not acquire media');
-                    setConnectionStatus('failed');
+                    setPermissionError(describeMediaError(err));
+                    // The socket is already open; close it so the run is not
+                    // left waiting for an offer that will never come.
+                    cleanupConnection({ graceful: false, status: 'failed' });
                 }
             } else {
                 await negotiate();
