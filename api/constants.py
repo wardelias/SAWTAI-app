@@ -79,6 +79,15 @@ DOGRAH_MPS_SECRET_KEY = os.getenv("DOGRAH_MPS_SECRET_KEY", None)
 MPS_API_URL = os.getenv("MPS_API_URL", "https://services.dograh.com")
 DOGRAH_DEVOPS_SECRET = os.getenv("DOGRAH_DEVOPS_SECRET") or None
 
+# In-app agent copilot (chat that builds and edits agents). Runs on the
+# platform's own Anthropic key, not the organization's model configuration;
+# the copilot is disabled while ANTHROPIC_API_KEY is unset. Supported models:
+# claude-opus-5-5 (default, best agent-building quality) and claude-sonnet-5-5
+# (cheaper and faster). Effort trades quality for cost and latency.
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY") or None
+AGENT_COPILOT_MODEL = os.getenv("AGENT_COPILOT_MODEL", "claude-opus-5-5")
+AGENT_COPILOT_EFFORT = os.getenv("AGENT_COPILOT_EFFORT", "medium")
+
 # Storage Configuration
 ENABLE_AWS_S3 = os.getenv("ENABLE_AWS_S3", "false").lower() == "true"
 

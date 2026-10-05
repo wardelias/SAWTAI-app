@@ -1,0 +1,582 @@
+"""Tests for the in-app agent copilot (services/agent_copilot + its route).
+
+The Anthropic client is replaced by a scripted fake that emits real SDK
+event/message types, so the runner's attribute access is checked against
+the SDK while no network calls are made. History storage is an in-memory
+dict.
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+import uuid
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import anthropic
+import httpx2
+import pytest
+from anthropic.types.beta import (
+    BetaMessage,
+    BetaRawContentBlockDeltaEvent,
+    BetaRawContentBlockStartEvent,
+)
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+from mcp.types import TextContent
+
+from api.mcp_server import mcp
+from api.mcp_server.auth import acting_as, authenticate_mcp_request
+from api.routes.agent_copilot import router
+from api.services.agent_copilot import runner
+from api.services.agent_copilot.tools import build_tool_definitions, run_tool
+from api.services.auth.depends import get_user
+
+# ─── Fakes ────────────────────────────────────────────────────────────────
+
+
+def _user(org_id: int = 11, user_id: int = 7) -> SimpleNamespace:
+    return SimpleNamespace(id=user_id, selected_organization_id=org_id)
+
+
+def _text_events(text: str, index: int = 0) -> list[Any]:
+    return [
+        BetaRawContentBlockStartEvent.model_validate(
+            {
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {"type": "text", "text": ""},
+            }
+        ),
+        BetaRawContentBlockDeltaEvent.model_validate(
+            {
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {"type": "text_delta", "text": text},
+            }
+        ),
+    ]
+
+
+def _progress_events(note: str, index: int = 0) -> list[Any]:
+    return [
+        BetaRawContentBlockStartEvent.model_validate(
+            {
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {"type": "thinking", "thinking": "", "signature": ""},
+            }
+        ),
+        BetaRawContentBlockDeltaEvent.model_validate(
+            {
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {"type": "thinking_delta", "thinking": note},
+            }
+        ),
+    ]
+
+
+def _tool_start_event(tool_id: str, name: str, index: int) -> Any:
+    return BetaRawContentBlockStartEvent.model_validate(
+        {
+            "type": "content_block_start",
+            "index": index,
+            "content_block": {
+                "type": "tool_use",
+                "id": tool_id,
+                "name": name,
+                "input": {},
+            },
+        }
+    )
+
+
+def _message(content: list[dict[str, Any]], stop_reason: str) -> BetaMessage:
+    return BetaMessage.model_validate(
+        {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": content,
+            "stop_reason": stop_reason,
+            "stop_sequence": None,
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+    )
+
+
+class _FakeStream:
+    def __init__(
+        self,
+        events: list[Any],
+        final: BetaMessage | None,
+        raise_exc: Exception | None = None,
+    ):
+        self._events = events
+        self._final = final
+        self._raise = raise_exc
+
+    async def __aenter__(self) -> _FakeStream:
+        return self
+
+    async def __aexit__(self, *exc: Any) -> bool:
+        return False
+
+    def __aiter__(self):
+        return self._iterate()
+
+    async def _iterate(self):
+        for event in self._events:
+            yield event
+        if self._raise is not None:
+            raise self._raise
+
+    async def get_final_message(self) -> BetaMessage:
+        assert self._final is not None
+        return self._final
+
+
+class _FakeClient:
+    """Plays back one scripted stream per model call and records requests."""
+
+    def __init__(self, streams: list[_FakeStream]):
+        self._streams = iter(streams)
+        self.requests: list[dict[str, Any]] = []
+        self.beta = SimpleNamespace(messages=SimpleNamespace(stream=self._stream))
+
+    def _stream(self, **kwargs: Any) -> _FakeStream:
+        self.requests.append(copy.deepcopy(kwargs))
+        return next(self._streams)
+
+
+@pytest.fixture
+def store():
+    """In-memory replacement for the Redis-backed history module."""
+    data: dict[tuple, list] = {}
+
+    async def load(org_id, user_id, conversation_id):
+        return copy.deepcopy(data.get((org_id, user_id, conversation_id), []))
+
+    async def save(org_id, user_id, conversation_id, messages):
+        data[(org_id, user_id, conversation_id)] = copy.deepcopy(messages)
+
+    with (
+        patch.object(runner.history, "load_messages", load),
+        patch.object(runner.history, "save_messages", save),
+    ):
+        yield data
+
+
+_TOOLS = [
+    {
+        "name": "list_workflows",
+        "description": "List agents",
+        "input_schema": {"type": "object"},
+    }
+]
+
+
+async def _collect(client: _FakeClient, **kwargs: Any) -> list[dict[str, Any]]:
+    with (
+        patch.object(runner, "_get_client", return_value=client),
+        patch.object(runner, "build_tool_definitions", AsyncMock(return_value=_TOOLS)),
+    ):
+        return [event async for event in runner.run_turn(**kwargs)]
+
+
+# ─── In-process MCP auth ──────────────────────────────────────────────────
+
+
+async def test_acting_as_supplies_user_without_api_key_headers():
+    user = MagicMock(id=3, selected_organization_id=44)
+    with patch("api.mcp_server.auth.get_http_headers") as get_headers:
+        with acting_as(user):
+            assert await authenticate_mcp_request() is user
+        get_headers.assert_not_called()
+
+
+async def test_header_auth_still_required_outside_acting_as():
+    with patch("api.mcp_server.auth.get_http_headers", return_value={}):
+        with pytest.raises(HTTPException) as exc_info:
+            await authenticate_mcp_request()
+    assert exc_info.value.status_code == 401
+
+
+# ─── Tool bridge ──────────────────────────────────────────────────────────
+
+
+async def test_tool_definitions_mirror_mcp_tools_in_stable_order():
+    definitions = await build_tool_definitions()
+    registered = await mcp.list_tools()
+
+    names = [d["name"] for d in definitions]
+    assert names == sorted(t.name for t in registered)
+    for definition in definitions:
+        assert definition["input_schema"]["type"] == "object"
+        assert definition["eager_input_streaming"] is True
+    assert await build_tool_definitions() == definitions
+
+
+async def test_run_tool_scopes_to_the_users_organization():
+    workflow = SimpleNamespace(id=5, name="Sales", status="active", created_at=None)
+    listing = AsyncMock(return_value=[workflow])
+    with patch(
+        "api.mcp_server.tools.workflows.db_client.get_all_workflows_for_listing",
+        listing,
+    ):
+        outcome = await run_tool(_user(org_id=11), "list_workflows", {})
+
+    assert not outcome.is_error
+    listing.assert_awaited_once_with(organization_id=11, status="active")
+    assert json.loads(outcome.content)[0]["name"] == "Sales"
+
+
+async def test_run_tool_reports_not_found_as_error_result():
+    with patch(
+        "api.mcp_server.tools.get_workflow_code.db_client.get_workflow",
+        AsyncMock(return_value=None),
+    ):
+        outcome = await run_tool(_user(), "get_workflow_code", {"workflow_id": 99})
+
+    assert outcome.is_error
+    assert "not found" in outcome.content
+
+
+async def test_run_tool_rejects_invalid_arguments_without_running():
+    get_workflow = AsyncMock()
+    with patch(
+        "api.mcp_server.tools.get_workflow_code.db_client.get_workflow", get_workflow
+    ):
+        outcome = await run_tool(_user(), "get_workflow_code", {"workflow_id": "abc"})
+        malformed = await run_tool(_user(), "get_workflow_code", "not-an-object")
+
+    assert outcome.is_error and "Invalid arguments" in outcome.content
+    assert malformed.is_error and "INVALID_JSON" in malformed.content
+    get_workflow.assert_not_awaited()
+
+
+async def test_run_tool_unknown_tool():
+    outcome = await run_tool(_user(), "drop_database", {})
+    assert outcome.is_error
+
+
+async def test_run_tool_flags_saved_workflow_for_the_ui():
+    from fastmcp.tools.tool import ToolResult
+
+    saved = {"saved": True, "workflow_id": 5, "name": "Sales", "version_number": 3}
+    fake_tool = MagicMock()
+    fake_tool.run = AsyncMock(
+        return_value=ToolResult(
+            content=[TextContent(type="text", text=json.dumps(saved))],
+            structured_content=saved,
+        )
+    )
+    with patch.object(mcp, "get_tool", AsyncMock(return_value=fake_tool)):
+        outcome = await run_tool(
+            _user(), "save_workflow", {"workflow_id": 5, "code": "x"}
+        )
+
+    assert outcome.changed_workflow_id == 5
+    assert outcome.ui_summary == {
+        "workflow_id": 5,
+        "workflow_name": "Sales",
+        "version_number": 3,
+    }
+
+
+# ─── Turn runner ──────────────────────────────────────────────────────────
+
+
+async def test_turn_runs_tool_then_answers_and_persists_history(store):
+    tool_use = {
+        "type": "tool_use",
+        "id": "toolu_1",
+        "name": "list_workflows",
+        "input": {},
+    }
+    client = _FakeClient(
+        [
+            _FakeStream(
+                _progress_events("Checking your agents.")
+                + [_tool_start_event("toolu_1", "list_workflows", 1)],
+                _message(
+                    [
+                        {
+                            "type": "thinking",
+                            "thinking": "Checking your agents.",
+                            "signature": "sig1",
+                        },
+                        tool_use,
+                    ],
+                    "tool_use",
+                ),
+            ),
+            _FakeStream(
+                _text_events("You have one agent."),
+                _message([{"type": "text", "text": "You have one agent."}], "end_turn"),
+            ),
+        ]
+    )
+    run_tool_mock = AsyncMock(
+        return_value=SimpleNamespace(
+            content='{"result": []}', is_error=False, ui_summary={}
+        )
+    )
+    with patch.object(runner, "run_tool", run_tool_mock):
+        events = await _collect(
+            client,
+            user=_user(),
+            conversation_id="c1",
+            message="What agents do I have?",
+            editor_workflow=(5, "Sales"),
+        )
+
+    assert [e["type"] for e in events] == [
+        "step_start",
+        "progress",
+        "tool_start",
+        "tool_end",
+        "step_start",
+        "text",
+        "done",
+    ]
+    assert events[3] == {
+        "type": "tool_end",
+        "id": "toolu_1",
+        "name": "list_workflows",
+        "ok": True,
+    }
+    run_tool_mock.assert_awaited_once()
+
+    first = client.requests[0]
+    assert first["model"] == runner.AGENT_COPILOT_MODEL
+    assert first["fallbacks"] == "default"
+    assert first["thinking"]["display"] == "updates"
+    assert first["tools"] == _TOOLS
+    user_blocks = first["messages"][0]["content"]
+    assert "agent #5" in user_blocks[0]["text"]
+    assert user_blocks[1]["text"] == "What agents do I have?"
+
+    # The second call replays the first response unchanged plus the result.
+    second_messages = client.requests[1]["messages"]
+    assert second_messages[1]["content"][0]["signature"] == "sig1"
+    assert second_messages[2]["content"][0]["tool_use_id"] == "toolu_1"
+
+    saved = store[(11, 7, "c1")]
+    assert [m["role"] for m in saved] == ["user", "assistant", "user", "assistant"]
+    assert saved[-1]["content"] == [{"type": "text", "text": "You have one agent."}]
+
+
+async def test_next_turn_appends_to_unchanged_history(store):
+    prior = [
+        {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+        {
+            "role": "assistant",
+            "content": [{"type": "thinking", "thinking": "", "signature": "s"}],
+        },
+    ]
+    store[(11, 7, "c1")] = copy.deepcopy(prior)
+    client = _FakeClient(
+        [
+            _FakeStream(
+                _text_events("ok"),
+                _message([{"type": "text", "text": "ok"}], "end_turn"),
+            )
+        ]
+    )
+
+    await _collect(client, user=_user(), conversation_id="c1", message="again")
+
+    sent = client.requests[0]["messages"]
+    assert sent[:2] == prior
+    assert sent[2] == {"role": "user", "content": [{"type": "text", "text": "again"}]}
+
+
+async def test_truncated_tool_call_is_never_executed(store):
+    tool_use = {
+        "type": "tool_use",
+        "id": "toolu_1",
+        "name": "save_workflow",
+        "input": {"workflow_id": 1},
+    }
+    client = _FakeClient([_FakeStream([], _message([tool_use], "max_tokens"))])
+    run_tool_mock = AsyncMock()
+    with patch.object(runner, "run_tool", run_tool_mock):
+        events = await _collect(
+            client, user=_user(), conversation_id="c1", message="rebuild it"
+        )
+
+    run_tool_mock.assert_not_awaited()
+    assert events[-2]["type"] == "error"
+    assert events[-1] == {"type": "done"}
+    # Only the user's message is kept; the dangling tool_use is not.
+    assert store[(11, 7, "c1")] == [
+        {"role": "user", "content": [{"type": "text", "text": "rebuild it"}]}
+    ]
+
+
+async def test_unparseable_tool_json_retries_the_step(store):
+    client = _FakeClient(
+        [
+            _FakeStream(
+                _text_events("partial"), None, raise_exc=ValueError("bad json")
+            ),
+            _FakeStream(
+                _text_events("done"),
+                _message([{"type": "text", "text": "done"}], "end_turn"),
+            ),
+        ]
+    )
+    events = await _collect(client, user=_user(), conversation_id="c1", message="go")
+
+    types = [e["type"] for e in events]
+    assert types == ["step_start", "text", "step_retry", "step_start", "text", "done"]
+    assert len(client.requests) == 2
+
+
+async def test_api_error_ends_turn_with_readable_message(store):
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    error = anthropic.RateLimitError(
+        "rate limited", response=httpx2.Response(429, request=request), body=None
+    )
+    client = _FakeClient([_FakeStream([], None, raise_exc=error)])
+
+    events = await _collect(client, user=_user(), conversation_id="c1", message="go")
+
+    assert events[-2] == {"type": "error", "message": runner._api_error_message(error)}
+    assert events[-1] == {"type": "done"}
+
+
+# ─── Route ────────────────────────────────────────────────────────────────
+
+
+def _app() -> FastAPI:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_user] = lambda: _user()
+    return app
+
+
+def _sse_events(body: str) -> list[dict[str, Any]]:
+    return [
+        json.loads(line[len("data: ") :])
+        for line in body.splitlines()
+        if line.startswith("data: ")
+    ]
+
+
+def test_status_reports_disabled_without_api_key():
+    with patch("api.routes.agent_copilot.is_enabled", return_value=False):
+        response = TestClient(_app()).get("/agent-copilot/status")
+    assert response.json() == {"enabled": False, "model": None}
+
+
+def test_chat_returns_503_when_not_configured():
+    with patch("api.routes.agent_copilot.is_enabled", return_value=False):
+        response = TestClient(_app()).post(
+            "/agent-copilot/chat", json={"message": "hi"}
+        )
+    assert response.status_code == 503
+
+
+def test_chat_streams_events_and_releases_lock():
+    async def fake_turn(**kwargs):
+        assert kwargs["editor_workflow"] == (5, "Sales")
+        yield {"type": "text", "text": "Hello"}
+        yield {"type": "done"}
+
+    release = AsyncMock()
+    with (
+        patch("api.routes.agent_copilot.is_enabled", return_value=True),
+        patch(
+            "api.routes.agent_copilot.acquire_turn_lock", AsyncMock(return_value=True)
+        ),
+        patch("api.routes.agent_copilot.release_turn_lock", release),
+        patch("api.routes.agent_copilot.run_turn", fake_turn),
+        patch(
+            "api.routes.agent_copilot.db_client.get_workflow",
+            AsyncMock(return_value=SimpleNamespace(id=5, name="Sales")),
+        ) as get_workflow,
+    ):
+        response = TestClient(_app()).post(
+            "/agent-copilot/chat", json={"message": "hi", "workflow_id": 5}
+        )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = _sse_events(response.text)
+    assert events[0]["type"] == "conversation"
+    assert events[1:] == [{"type": "text", "text": "Hello"}, {"type": "done"}]
+    get_workflow.assert_awaited_once_with(5, organization_id=11)
+    release.assert_awaited_once_with(11, 7, events[0]["conversation_id"])
+
+
+def test_chat_rejects_workflow_from_another_organization():
+    with (
+        patch("api.routes.agent_copilot.is_enabled", return_value=True),
+        patch(
+            "api.routes.agent_copilot.db_client.get_workflow",
+            AsyncMock(return_value=None),
+        ),
+        patch("api.routes.agent_copilot.acquire_turn_lock", AsyncMock()) as acquire,
+    ):
+        response = TestClient(_app()).post(
+            "/agent-copilot/chat", json={"message": "hi", "workflow_id": 99}
+        )
+    assert response.status_code == 404
+    acquire.assert_not_awaited()
+
+
+def test_chat_returns_409_while_a_reply_is_running():
+    with (
+        patch("api.routes.agent_copilot.is_enabled", return_value=True),
+        patch(
+            "api.routes.agent_copilot.acquire_turn_lock", AsyncMock(return_value=False)
+        ),
+    ):
+        response = TestClient(_app()).post(
+            "/agent-copilot/chat",
+            json={
+                "message": "hi",
+                "conversation_id": "6f1c2a52-8a0e-4c3e-9d3a-1f2b3c4d5e6f",
+            },
+        )
+    assert response.status_code == 409
+
+
+def test_chat_rejects_non_uuid_conversation_id():
+    with patch("api.routes.agent_copilot.is_enabled", return_value=True):
+        response = TestClient(_app()).post(
+            "/agent-copilot/chat", json={"message": "hi", "conversation_id": "x:y"}
+        )
+    assert response.status_code == 422
+
+
+# ─── History store (real Redis, as in CI) ─────────────────────────────────
+
+
+async def test_history_round_trip_is_scoped_per_user_and_locked():
+    from api.services.agent_copilot import history
+
+    conversation_id = str(uuid.uuid4())
+    messages = [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+
+    await history.save_messages(11, 7, conversation_id, messages)
+    try:
+        assert await history.load_messages(11, 7, conversation_id) == messages
+        # Another user (or org) with the same conversation id sees nothing.
+        assert await history.load_messages(11, 8, conversation_id) == []
+        assert await history.load_messages(12, 7, conversation_id) == []
+
+        assert await history.acquire_turn_lock(11, 7, conversation_id) is True
+        assert await history.acquire_turn_lock(11, 7, conversation_id) is False
+        await history.release_turn_lock(11, 7, conversation_id)
+        assert await history.acquire_turn_lock(11, 7, conversation_id) is True
+    finally:
+        await history.release_turn_lock(11, 7, conversation_id)
+        client = await history._client()
+        await client.delete(history._key(11, 7, conversation_id))

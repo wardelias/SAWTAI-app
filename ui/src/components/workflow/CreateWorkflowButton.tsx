@@ -1,11 +1,12 @@
 'use client';
 
-import { Bot, ChevronDown, LayoutTemplate, PlusIcon } from 'lucide-react';
+import { Bot, ChevronDown, LayoutTemplate, PlusIcon, Sparkles } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
 import { createWorkflowApiV1WorkflowCreateDefinitionPost } from '@/client/sdk.gen';
+import { useCopilotStatus } from '@/components/agent-copilot/AgentCopilotChat';
 import { Button } from "@/components/ui/button";
 import {
     DropdownMenu,
@@ -48,6 +49,7 @@ export function CreateWorkflowButton() {
     const router = useRouter();
     const { user, getAccessToken } = useAuth();
     const [isCreating, setIsCreating] = useState(false);
+    const copilotEnabled = useCopilotStatus();
 
     const handleAgentBuilder = () => {
         router.push('/workflow/create');
@@ -91,6 +93,15 @@ export function CreateWorkflowButton() {
                 </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+                {copilotEnabled ? (
+                    <DropdownMenuItem onClick={() => router.push('/workflow/assistant')} className="cursor-pointer">
+                        <Sparkles className="w-4 h-4 mr-2" />
+                        <div>
+                            <div className="font-medium">Chat with AI Assistant</div>
+                            <div className="text-xs text-muted-foreground">Describe your agent and refine it in conversation</div>
+                        </div>
+                    </DropdownMenuItem>
+                ) : null}
                 <DropdownMenuItem onClick={handleAgentBuilder} className="cursor-pointer">
                     <Bot className="w-4 h-4 mr-2" />
                     <div>
