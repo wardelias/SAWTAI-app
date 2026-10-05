@@ -17,18 +17,19 @@ so a dropped connection never leaves a `tool_use` without its result.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from typing import Any, AsyncIterator
 
 import anthropic
 from loguru import logger
 
-from api.constants import AGENT_COPILOT_EFFORT, AGENT_COPILOT_MODEL, ANTHROPIC_API_KEY
 from api.db.models import UserModel
 from api.services.agent_copilot import history
 from api.services.agent_copilot.prompt import (
     COPILOT_SYSTEM_PROMPT,
     editor_context_block,
 )
+from api.services.agent_copilot.settings import EffectiveSettings
 from api.services.agent_copilot.tools import build_tool_definitions, run_tool
 
 _BETAS = [
@@ -49,27 +50,22 @@ _MAX_TOKENS = 64000
 _MAX_STEPS = 40
 _MAX_JSON_RETRIES = 2
 
-# The request shape (adaptive thinking with display "updates", fallbacks
-# "default") is accepted by these models; others may reject it.
-SUPPORTED_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5")
-if AGENT_COPILOT_MODEL not in SUPPORTED_MODELS:
-    logger.warning(
-        f"AGENT_COPILOT_MODEL={AGENT_COPILOT_MODEL!r} is not one of "
-        f"{SUPPORTED_MODELS}; the agent copilot may fail."
-    )
-
-_client: anthropic.AsyncAnthropic | None = None
+# One client per API key (organizations can bring their own), reused for
+# connection pooling. Bounded so rotated keys don't accumulate.
+_MAX_CLIENTS = 64
+_clients: OrderedDict[str, anthropic.AsyncAnthropic] = OrderedDict()
 
 
-def is_enabled() -> bool:
-    return ANTHROPIC_API_KEY is not None
-
-
-def _get_client() -> anthropic.AsyncAnthropic:
-    global _client
-    if _client is None:
-        _client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-    return _client
+def _get_client(api_key: str) -> anthropic.AsyncAnthropic:
+    client = _clients.get(api_key)
+    if client is None:
+        client = anthropic.AsyncAnthropic(api_key=api_key)
+        _clients[api_key] = client
+        while len(_clients) > _MAX_CLIENTS:
+            _clients.popitem(last=False)
+    else:
+        _clients.move_to_end(api_key)
+    return client
 
 
 def _ui_event(event: Any) -> dict[str, Any] | None:
@@ -103,6 +99,7 @@ async def run_turn(
     user: UserModel,
     conversation_id: str,
     message: str,
+    settings: EffectiveSettings,
     editor_workflow: tuple[int, str] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Run one user message to completion. Caller must hold the turn lock.
@@ -127,7 +124,8 @@ async def run_turn(
         await history.save_messages(org_id, user_id, conversation_id, prior + pending)
 
     tools = await build_tool_definitions()
-    client = _get_client()
+    assert settings.api_key is not None, "caller checks settings.available"
+    client = _get_client(settings.api_key)
     usage = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
     json_retries = 0
     steps = 0
@@ -145,7 +143,7 @@ async def run_turn(
 
             try:
                 async with client.beta.messages.stream(
-                    model=AGENT_COPILOT_MODEL,
+                    model=settings.model,
                     max_tokens=_MAX_TOKENS,
                     betas=_BETAS,
                     fallbacks="default",
@@ -154,7 +152,7 @@ async def run_turn(
                         "display": "updates",
                         "block_binding": {"prefix_mismatch_behavior": "drop_block"},
                     },
-                    output_config={"effort": AGENT_COPILOT_EFFORT},
+                    output_config={"effort": settings.effort},
                     cache_control={"type": "ephemeral"},
                     system=COPILOT_SYSTEM_PROMPT,
                     tools=tools,
@@ -244,7 +242,7 @@ async def run_turn(
     finally:
         logger.info(
             f"agent copilot turn org={org_id} user={user_id} "
-            f"conversation={conversation_id} model={AGENT_COPILOT_MODEL} "
+            f"conversation={conversation_id} model={settings.model} key={settings.key_source} "
             f"steps={steps} usage={usage}"
         )
 

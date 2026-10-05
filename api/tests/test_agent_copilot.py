@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import dataclasses
 import json
 import uuid
 from types import SimpleNamespace
@@ -32,11 +33,29 @@ from api.mcp_server import mcp
 from api.mcp_server.auth import acting_as, authenticate_mcp_request
 from api.routes.agent_copilot import router
 from api.services.agent_copilot import runner
+from api.services.agent_copilot.settings import EffectiveSettings
 from api.services.agent_copilot.tools import build_tool_definitions, run_tool
 from api.services.agent_copilot.transcript import build_transcript
 from api.services.auth.depends import get_user
 
 # ─── Fakes ────────────────────────────────────────────────────────────────
+
+
+_SETTINGS = EffectiveSettings(
+    enabled=True,
+    api_key="sk-ant-org-key",
+    key_source="organization",
+    model="claude-sonnet-5-5",
+    effort="high",
+    daily_message_limit=50,
+)
+
+
+def _settings_patch(settings: EffectiveSettings = _SETTINGS):
+    return patch(
+        "api.routes.agent_copilot.get_effective_settings",
+        AsyncMock(return_value=settings),
+    )
 
 
 def _user(org_id: int = 11, user_id: int = 7) -> SimpleNamespace:
@@ -187,6 +206,7 @@ async def _collect(client: _FakeClient, **kwargs: Any) -> list[dict[str, Any]]:
         patch.object(runner, "_get_client", return_value=client),
         patch.object(runner, "build_tool_definitions", AsyncMock(return_value=_TOOLS)),
     ):
+        kwargs.setdefault("settings", _SETTINGS)
         return [event async for event in runner.run_turn(**kwargs)]
 
 
@@ -355,7 +375,8 @@ async def test_turn_runs_tool_then_answers_and_persists_history(store):
     run_tool_mock.assert_awaited_once()
 
     first = client.requests[0]
-    assert first["model"] == runner.AGENT_COPILOT_MODEL
+    assert first["model"] == _SETTINGS.model
+    assert first["output_config"] == {"effort": _SETTINGS.effort}
     assert first["fallbacks"] == "default"
     assert first["thinking"]["display"] == "updates"
     assert first["tools"] == _TOOLS
@@ -471,37 +492,57 @@ def _sse_events(body: str) -> list[dict[str, Any]]:
     ]
 
 
-def test_status_reports_disabled_without_api_key():
-    with patch("api.routes.agent_copilot.is_enabled", return_value=False):
+def test_status_reports_missing_api_key():
+    unconfigured = dataclasses.replace(_SETTINGS, api_key=None, key_source=None)
+    with _settings_patch(unconfigured):
         response = TestClient(_app()).get("/agent-copilot/status")
-    assert response.json() == {"enabled": False, "model": None}
+    assert response.json() == {"enabled": True, "configured": False, "model": None}
 
 
-def test_chat_returns_503_when_not_configured():
-    with patch("api.routes.agent_copilot.is_enabled", return_value=False):
+def test_status_reports_ready():
+    with _settings_patch():
+        response = TestClient(_app()).get("/agent-copilot/status")
+    assert response.json() == {
+        "enabled": True,
+        "configured": True,
+        "model": _SETTINGS.model,
+    }
+
+
+def test_chat_returns_503_without_api_key():
+    unconfigured = dataclasses.replace(_SETTINGS, api_key=None, key_source=None)
+    with _settings_patch(unconfigured):
         response = TestClient(_app()).post(
             "/agent-copilot/chat", json={"message": "hi"}
         )
     assert response.status_code == 503
+    assert "Settings" in response.json()["detail"]
+
+
+def test_chat_returns_403_when_turned_off():
+    with _settings_patch(dataclasses.replace(_SETTINGS, enabled=False)):
+        response = TestClient(_app()).post(
+            "/agent-copilot/chat", json={"message": "hi"}
+        )
+    assert response.status_code == 403
 
 
 def test_chat_streams_events_and_releases_lock():
     async def fake_turn(**kwargs):
         assert kwargs["editor_workflow"] == (5, "Sales")
+        assert kwargs["settings"] is _SETTINGS
         yield {"type": "text", "text": "Hello"}
         yield {"type": "done"}
 
     release = AsyncMock()
+    consume = AsyncMock(return_value=True)
     with (
-        patch("api.routes.agent_copilot.is_enabled", return_value=True),
+        _settings_patch(),
         patch(
             "api.routes.agent_copilot.acquire_turn_lock", AsyncMock(return_value=True)
         ),
         patch("api.routes.agent_copilot.release_turn_lock", release),
-        patch(
-            "api.routes.agent_copilot.consume_daily_message",
-            AsyncMock(return_value=True),
-        ),
+        patch("api.routes.agent_copilot.consume_daily_message", consume),
         patch("api.routes.agent_copilot.run_turn", fake_turn),
         patch(
             "api.routes.agent_copilot.db_client.get_workflow",
@@ -519,11 +560,12 @@ def test_chat_streams_events_and_releases_lock():
     assert events[1:] == [{"type": "text", "text": "Hello"}, {"type": "done"}]
     get_workflow.assert_awaited_once_with(5, organization_id=11)
     release.assert_awaited_once_with(11, 7, events[0]["conversation_id"])
+    consume.assert_awaited_once_with(11, _SETTINGS.daily_message_limit)
 
 
 def test_chat_rejects_workflow_from_another_organization():
     with (
-        patch("api.routes.agent_copilot.is_enabled", return_value=True),
+        _settings_patch(),
         patch(
             "api.routes.agent_copilot.db_client.get_workflow",
             AsyncMock(return_value=None),
@@ -539,7 +581,7 @@ def test_chat_rejects_workflow_from_another_organization():
 
 def test_chat_returns_409_while_a_reply_is_running():
     with (
-        patch("api.routes.agent_copilot.is_enabled", return_value=True),
+        _settings_patch(),
         patch(
             "api.routes.agent_copilot.acquire_turn_lock", AsyncMock(return_value=False)
         ),
@@ -555,7 +597,7 @@ def test_chat_returns_409_while_a_reply_is_running():
 
 
 def test_chat_rejects_non_uuid_conversation_id():
-    with patch("api.routes.agent_copilot.is_enabled", return_value=True):
+    with _settings_patch():
         response = TestClient(_app()).post(
             "/agent-copilot/chat", json={"message": "hi", "conversation_id": "x:y"}
         )
@@ -591,7 +633,7 @@ async def test_history_round_trip_is_scoped_per_user_and_locked():
 def test_chat_returns_429_when_daily_limit_reached():
     release = AsyncMock()
     with (
-        patch("api.routes.agent_copilot.is_enabled", return_value=True),
+        _settings_patch(),
         patch(
             "api.routes.agent_copilot.acquire_turn_lock", AsyncMock(return_value=True)
         ),
@@ -614,7 +656,7 @@ def test_chat_sends_keepalives_while_the_model_works():
         yield {"type": "done"}
 
     with (
-        patch("api.routes.agent_copilot.is_enabled", return_value=True),
+        _settings_patch(),
         patch(
             "api.routes.agent_copilot.acquire_turn_lock", AsyncMock(return_value=True)
         ),
@@ -754,3 +796,237 @@ async def test_daily_message_limit_counts_per_organization():
             await client.delete(key)
         for key in await client.keys(f"agent_copilot:quota:{org_id + 1}*"):
             await client.delete(key)
+
+
+# ─── Organization settings ────────────────────────────────────────────────
+
+
+def test_resolve_settings_prefers_the_organizations_key_and_limit():
+    from api.services.agent_copilot import settings as settings_mod
+
+    with (
+        patch.object(settings_mod, "ANTHROPIC_API_KEY", "sk-platform"),
+        patch.object(settings_mod, "AGENT_COPILOT_DAILY_MESSAGE_LIMIT", 200),
+    ):
+        own = settings_mod.resolve_settings(
+            {
+                "api_key": "sk-org",
+                "model": "claude-sonnet-5-5",
+                "daily_message_limit": 1000,
+            }
+        )
+        platform = settings_mod.resolve_settings({"daily_message_limit": 1000})
+        platform_lower = settings_mod.resolve_settings({"daily_message_limit": 20})
+        defaults = settings_mod.resolve_settings({})
+        off = settings_mod.resolve_settings({"enabled": False})
+        bad = settings_mod.resolve_settings({"model": "gpt-x", "effort": "turbo"})
+
+    assert (own.api_key, own.key_source, own.model) == (
+        "sk-org",
+        "organization",
+        "claude-sonnet-5-5",
+    )
+    # Their own key: their own limit, even above the platform cap.
+    assert own.daily_message_limit == 1000
+    # The platform key: the platform cap always applies; orgs may go lower.
+    assert (platform.api_key, platform.key_source) == ("sk-platform", "platform")
+    assert platform.daily_message_limit == 200
+    assert platform_lower.daily_message_limit == 20
+    assert defaults.model == "claude-opus-5-5" and defaults.enabled
+    assert off.enabled is False and off.available is False
+    assert (bad.model, bad.effort) == ("claude-opus-5-5", "medium")
+
+    with patch.object(settings_mod, "ANTHROPIC_API_KEY", None):
+        none = settings_mod.resolve_settings({})
+    assert (none.api_key, none.key_source, none.available) == (None, None, False)
+    # No key anywhere: the platform cap doesn't apply (there's no platform key).
+    assert none.daily_message_limit == 0
+
+
+def _settings_store(initial: dict | None = None):
+    """Patch the route's settings storage with an in-memory dict."""
+    store = {"value": dict(initial or {})}
+
+    async def load(org_id):
+        assert org_id == 11
+        return dict(store["value"])
+
+    async def save(org_id, value):
+        assert org_id == 11
+        store["value"] = dict(value)
+
+    return store, (
+        patch("api.routes.agent_copilot.load_stored_settings", load),
+        patch("api.routes.agent_copilot.save_stored_settings", save),
+    )
+
+
+def test_settings_get_masks_the_api_key():
+    store, (load, save) = _settings_store(
+        {"api_key": "sk-ant-secret-1234", "model": "claude-sonnet-5-5"}
+    )
+    with load, save:
+        body = TestClient(_app()).get("/agent-copilot/settings").json()
+
+    assert body["api_key"] != "sk-ant-secret-1234"
+    assert body["api_key"].endswith("1234")
+    assert body["has_own_key"] is True
+    assert body["model"] == "claude-sonnet-5-5"
+    assert body["supported_models"] == ["claude-opus-5-5", "claude-sonnet-5-5"]
+
+
+def test_settings_put_verifies_and_stores_a_new_key():
+    store, (load, save) = _settings_store()
+    verify = AsyncMock()
+    with load, save, patch("api.routes.agent_copilot.verify_api_key", verify):
+        response = TestClient(_app()).put(
+            "/agent-copilot/settings",
+            json={
+                "enabled": True,
+                "api_key": " sk-ant-new-key-9999 ",
+                "model": "claude-opus-5-5",
+                "effort": "high",
+                "daily_message_limit": 75,
+            },
+        )
+
+    assert response.status_code == 200
+    verify.assert_awaited_once_with("sk-ant-new-key-9999", "claude-opus-5-5")
+    assert store["value"] == {
+        "enabled": True,
+        "api_key": "sk-ant-new-key-9999",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "daily_message_limit": 75,
+    }
+    assert response.json()["effective_daily_message_limit"] == 75
+    assert "9999" in response.json()["api_key"]
+    assert response.json()["api_key"] != "sk-ant-new-key-9999"
+
+
+def test_settings_put_with_masked_key_keeps_it_without_reverifying():
+    from api.services.configuration.masking import mask_key
+
+    store, (load, save) = _settings_store(
+        {"api_key": "sk-ant-secret-1234", "model": "claude-opus-5-5"}
+    )
+    verify = AsyncMock()
+    with load, save, patch("api.routes.agent_copilot.verify_api_key", verify):
+        TestClient(_app()).put(
+            "/agent-copilot/settings",
+            json={
+                "api_key": mask_key("sk-ant-secret-1234"),
+                "model": "claude-opus-5-5",
+                "effort": "low",
+            },
+        )
+
+    verify.assert_not_awaited()
+    assert store["value"]["api_key"] == "sk-ant-secret-1234"
+    assert store["value"]["effort"] == "low"
+
+
+def test_settings_put_rechecks_the_key_when_the_model_changes():
+    from api.services.configuration.masking import mask_key
+
+    store, (load, save) = _settings_store(
+        {"api_key": "sk-ant-secret-1234", "model": "claude-opus-5-5"}
+    )
+    verify = AsyncMock()
+    with load, save, patch("api.routes.agent_copilot.verify_api_key", verify):
+        TestClient(_app()).put(
+            "/agent-copilot/settings",
+            json={
+                "api_key": mask_key("sk-ant-secret-1234"),
+                "model": "claude-sonnet-5-5",
+            },
+        )
+    verify.assert_awaited_once_with("sk-ant-secret-1234", "claude-sonnet-5-5")
+
+
+def test_settings_put_empty_key_removes_it():
+    store, (load, save) = _settings_store({"api_key": "sk-ant-secret-1234"})
+    with load, save:
+        response = TestClient(_app()).put(
+            "/agent-copilot/settings", json={"api_key": "", "model": "claude-opus-5-5"}
+        )
+    assert response.status_code == 200
+    assert "api_key" not in store["value"]
+    assert response.json()["has_own_key"] is False
+
+
+def test_settings_put_rejects_an_invalid_key_without_saving():
+    from api.services.agent_copilot import InvalidApiKeyError
+
+    store, (load, save) = _settings_store({"model": "claude-opus-5-5"})
+    verify = AsyncMock(
+        side_effect=InvalidApiKeyError("Anthropic rejected this API key.")
+    )
+    with load, save, patch("api.routes.agent_copilot.verify_api_key", verify):
+        response = TestClient(_app()).put(
+            "/agent-copilot/settings",
+            json={"api_key": "sk-bad", "model": "claude-opus-5-5"},
+        )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Anthropic rejected this API key."
+    assert store["value"] == {"model": "claude-opus-5-5"}
+
+
+def test_settings_put_validates_model_effort_and_limit():
+    store, (load, save) = _settings_store()
+    with load, save:
+        client = TestClient(_app())
+        bad_model = client.put("/agent-copilot/settings", json={"model": "gpt-5"})
+        bad_effort = client.put("/agent-copilot/settings", json={"effort": "turbo"})
+        bad_limit = client.put(
+            "/agent-copilot/settings", json={"daily_message_limit": -1}
+        )
+    assert [r.status_code for r in (bad_model, bad_effort, bad_limit)] == [
+        422,
+        422,
+        422,
+    ]
+
+
+async def test_verify_api_key_maps_anthropic_errors():
+    from api.services.agent_copilot import InvalidApiKeyError
+    from api.services.agent_copilot import settings as settings_mod
+
+    request = httpx2.Request("GET", "https://api.anthropic.com/v1/models/x")
+    cases = [
+        (
+            anthropic.AuthenticationError(
+                "bad", response=httpx2.Response(401, request=request), body=None
+            ),
+            "rejected",
+        ),
+        (
+            anthropic.NotFoundError(
+                "nf", response=httpx2.Response(404, request=request), body=None
+            ),
+            "can't use",
+        ),
+        (None, None),
+    ]
+    for error, expected in cases:
+        client = MagicMock()
+        client.models.retrieve = AsyncMock(side_effect=error)
+        client.close = AsyncMock()
+        with patch.object(
+            settings_mod.anthropic, "AsyncAnthropic", return_value=client
+        ):
+            if expected is None:
+                await settings_mod.verify_api_key("sk", "claude-opus-5-5")
+            else:
+                with pytest.raises(InvalidApiKeyError, match=expected):
+                    await settings_mod.verify_api_key("sk", "claude-opus-5-5")
+        client.close.assert_awaited_once()
+
+
+def test_runner_keeps_one_client_per_api_key():
+    runner._clients.clear()
+    a1 = runner._get_client("sk-a")
+    a2 = runner._get_client("sk-a")
+    b = runner._get_client("sk-b")
+    assert a1 is a2 and a1 is not b
+    runner._clients.clear()

@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect } from 'react';
 
 import { AgentCopilotChat, useCopilotStatus } from '@/components/agent-copilot/AgentCopilotChat';
@@ -8,7 +9,7 @@ import { useAuth } from '@/lib/auth';
 
 export default function AgentAssistantPage() {
     const { user, redirectToLogin, loading: authLoading } = useAuth();
-    const enabled = useCopilotStatus();
+    const status = useCopilotStatus();
 
     useEffect(() => {
         if (!authLoading && !user) {
@@ -16,7 +17,7 @@ export default function AgentAssistantPage() {
         }
     }, [authLoading, user, redirectToLogin]);
 
-    if (authLoading || !user || enabled === null) {
+    if (authLoading || !user || status === null) {
         return <SpinLoader />;
     }
 
@@ -30,14 +31,17 @@ export default function AgentAssistantPage() {
                     Describe what your voice agent should do. The assistant asks a few questions, then builds it.
                 </p>
             </div>
-            {enabled ? (
+            {status.enabled ? (
                 <div className="h-[calc(100vh-13rem)] min-h-[520px] overflow-hidden rounded-2xl border border-border/70 bg-background shadow-xl shadow-violet-500/5">
                     <AgentCopilotChat />
                 </div>
             ) : (
                 <p className="rounded-lg border p-4 text-sm text-muted-foreground">
-                    The AI assistant isn&apos;t set up on this server yet. An administrator needs to set
-                    ANTHROPIC_API_KEY for the backend.
+                    The AI Assistant is turned off for your organization. Turn it on in{' '}
+                    <Link href="/settings#ai-assistant" className="font-medium text-primary underline">
+                        Settings → AI Assistant
+                    </Link>
+                    .
                 </p>
             )}
         </div>

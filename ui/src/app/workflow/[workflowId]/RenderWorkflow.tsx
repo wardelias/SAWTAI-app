@@ -90,7 +90,7 @@ function RenderWorkflow({
     const [isTesterRailOpen, setIsTesterRailOpen] = useState(true);
     const [isTesterSheetOpen, setIsTesterSheetOpen] = useState(false);
     const [isCopilotOpen, setIsCopilotOpen] = useState(Boolean(initialCopilotConversationId));
-    const copilotEnabled = useCopilotStatus();
+    const copilotEnabled = useCopilotStatus()?.enabled ?? false;
     const setWorkflowName = useWorkflowStore((state) => state.setWorkflowName);
     const [isDesktopViewport, setIsDesktopViewport] = useState(false);
     const [versions, setVersions] = useState<WorkflowVersionResponse[]>([]);

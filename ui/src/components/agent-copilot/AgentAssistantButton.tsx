@@ -11,12 +11,12 @@ import { AgentCopilotChat, useCopilotStatus } from './AgentCopilotChat';
 
 /**
  * Agents-list entry point: opens the assistant for creating new agents or
- * editing any existing one by name. Hidden when the assistant isn't
- * configured on this deployment.
+ * editing any existing one by name. Hidden when the organization has
+ * turned the assistant off.
  */
 export function AgentAssistantButton() {
     const router = useRouter();
-    const enabled = useCopilotStatus();
+    const status = useCopilotStatus();
     const [open, setOpen] = useState(false);
 
     // Show newly created or renamed agents in the list behind the sheet.
@@ -24,7 +24,7 @@ export function AgentAssistantButton() {
         router.refresh();
     }, [router]);
 
-    if (!enabled) return null;
+    if (!status?.enabled) return null;
 
     return (
         <>

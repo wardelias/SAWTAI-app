@@ -226,8 +226,8 @@ services:
       # to your Docker bridge subnet — if that exposure matters to you.
       FORWARDED_ALLOW_IPS: "*"
 
-      # AI Assistant (chat that builds and edits agents). Set ANTHROPIC_API_KEY
-      # in .env to enable it; the assistant stays hidden while it is empty.
+      # AI Assistant (chat that builds and edits agents). Optional platform-wide
+      # key; organizations can instead add their own in Settings → AI Assistant.
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       AGENT_COPILOT_MODEL: "${AGENT_COPILOT_MODEL:-claude-opus-5-5}"
       AGENT_COPILOT_EFFORT: "${AGENT_COPILOT_EFFORT:-medium}"

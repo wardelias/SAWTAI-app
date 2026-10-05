@@ -7,10 +7,12 @@ import {
     Building2,
     CalendarClock,
     Check,
+    KeyRound,
     Loader2,
     MailPlus,
     PhoneForwarded,
     Plus,
+    Settings,
     Smile,
     Sparkles,
     Square,
@@ -23,6 +25,7 @@ import { Fragment, type ReactNode, useCallback, useEffect, useRef, useState } fr
 import { Button } from '@/components/ui/button';
 import {
     type CopilotEvent,
+    type CopilotStatus,
     fetchCopilotConversation,
     fetchCopilotStatus,
     streamCopilotChat,
@@ -297,10 +300,16 @@ function AssistantMessage({
 
 // ─── Status hook ──────────────────────────────────────────────────────────
 
-/** Whether the assistant is configured on this deployment (null while loading). */
-export function useCopilotStatus() {
+const UNAVAILABLE: CopilotStatus = { enabled: false, configured: false, model: null };
+
+/**
+ * The assistant's status for the user's organization (null while loading).
+ * `enabled` decides whether entry points show; `configured` whether it can
+ * answer yet (otherwise the chat points to Settings to add a key).
+ */
+export function useCopilotStatus(): CopilotStatus | null {
     const { user, loading: authLoading, getAccessToken } = useAuth();
-    const [enabled, setEnabled] = useState<boolean | null>(null);
+    const [status, setStatus] = useState<CopilotStatus | null>(null);
     const hasFetched = useRef(false);
 
     useEffect(() => {
@@ -308,15 +317,37 @@ export function useCopilotStatus() {
         hasFetched.current = true;
         (async () => {
             try {
-                const status = await fetchCopilotStatus(await getAccessToken());
-                setEnabled(status.enabled);
+                setStatus(await fetchCopilotStatus(await getAccessToken()));
             } catch {
-                setEnabled(false);
+                setStatus(UNAVAILABLE);
             }
         })();
     }, [authLoading, user, getAccessToken]);
 
-    return enabled;
+    return status;
+}
+
+function SetupRequired() {
+    return (
+        <div className="flex min-h-full flex-col items-center justify-center gap-4 py-6 text-center">
+            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-violet-500/15 text-violet-400">
+                <KeyRound className="h-6 w-6" />
+            </div>
+            <div className="space-y-1">
+                <h3 className="text-base font-semibold">Add an API key to get started</h3>
+                <p className="mx-auto max-w-xs text-sm text-muted-foreground">
+                    The AI Assistant runs on Claude. Add your organization&apos;s Anthropic API key in
+                    Settings to start building agents in chat.
+                </p>
+            </div>
+            <Button asChild className="gap-2 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white hover:opacity-90">
+                <Link href="/settings#ai-assistant">
+                    <Settings className="h-4 w-4" />
+                    Open AI Assistant settings
+                </Link>
+            </Button>
+        </div>
+    );
 }
 
 // ─── Chat ─────────────────────────────────────────────────────────────────
@@ -450,9 +481,11 @@ export function AgentCopilotChat({
         inputRef.current?.focus();
     };
 
+    const status = useCopilotStatus();
+    const needsSetup = status !== null && !status.configured;
     const editing = workflowId != null;
     const suggestions = editing ? EDITOR_SUGGESTIONS : BUILDER_SUGGESTIONS;
-    const inputDisabled = sending || Boolean(blockedReason);
+    const inputDisabled = sending || Boolean(blockedReason) || needsSetup;
 
     return (
         <div className={cn('flex h-full min-h-0 flex-col bg-background', className)}>
@@ -486,7 +519,9 @@ export function AgentCopilotChat({
 
             {/* Conversation */}
             <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 text-sm">
-                {restoring ? (
+                {needsSetup ? (
+                    <SetupRequired />
+                ) : restoring ? (
                     <div className="flex h-full items-center justify-center">
                         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                     </div>

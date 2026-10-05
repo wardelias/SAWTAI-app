@@ -49,7 +49,7 @@ export function CreateWorkflowButton() {
     const router = useRouter();
     const { user, getAccessToken } = useAuth();
     const [isCreating, setIsCreating] = useState(false);
-    const copilotEnabled = useCopilotStatus();
+    const copilotEnabled = useCopilotStatus()?.enabled ?? false;
 
     const handleAgentBuilder = () => {
         router.push('/workflow/create');

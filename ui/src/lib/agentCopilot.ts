@@ -32,8 +32,35 @@ export type CopilotEvent =
     | { type: 'done' };
 
 export interface CopilotStatus {
+    /** The organization hasn't switched the assistant off. */
     enabled: boolean;
+    /** An API key is available (the organization's own or the platform's). */
+    configured: boolean;
     model: string | null;
+}
+
+export interface CopilotSettings {
+    enabled: boolean;
+    /** Masked; empty when the organization has no key of its own. */
+    api_key: string;
+    has_own_key: boolean;
+    platform_key_available: boolean;
+    model: string;
+    effort: string;
+    daily_message_limit: number | null;
+    /** The limit in force right now (0 = unlimited). */
+    effective_daily_message_limit: number;
+    supported_models: string[];
+    effort_levels: string[];
+}
+
+export interface CopilotSettingsUpdate {
+    enabled: boolean;
+    /** Send the masked value back to keep the stored key, "" to remove it. */
+    api_key: string;
+    model: string;
+    effort: string;
+    daily_message_limit: number | null;
 }
 
 function apiBaseUrl(): string {
@@ -51,6 +78,28 @@ export async function fetchCopilotStatus(token: string): Promise<CopilotStatus> 
     });
     if (!res.ok) throw new Error(await errorDetail(res));
     return (await res.json()) as CopilotStatus;
+}
+
+export async function fetchCopilotSettings(token: string): Promise<CopilotSettings> {
+    const res = await fetch(`${apiBaseUrl()}/settings`, {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error(await errorDetail(res));
+    return (await res.json()) as CopilotSettings;
+}
+
+/** Save settings; a new API key is verified with Anthropic first (throws on rejection). */
+export async function saveCopilotSettings(
+    token: string,
+    update: CopilotSettingsUpdate,
+): Promise<CopilotSettings> {
+    const res = await fetch(`${apiBaseUrl()}/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(update),
+    });
+    if (!res.ok) throw new Error(await errorDetail(res));
+    return (await res.json()) as CopilotSettings;
 }
 
 /** A stored conversation as the chat displays it (see ChatMessage). */
