@@ -24,7 +24,13 @@ from loguru import logger
 
 from api.db.models import UserModel
 from api.services.agent_copilot import history
-from api.services.agent_copilot.client import api_error_message, get_client
+from api.services.agent_copilot.client import (
+    api_error_detail,
+    api_error_message,
+    get_client,
+    remember_compat_request,
+    uses_compat_request,
+)
 from api.services.agent_copilot.prompt import (
     COPILOT_SYSTEM_PROMPT,
     editor_context_block,
@@ -49,6 +55,29 @@ _MAX_TOKENS = 64000
 # save, fix-up saves) takes ~10-15; this only stops runaway loops.
 _MAX_STEPS = 40
 _MAX_JSON_RETRIES = 2
+
+
+def _request_options(settings: EffectiveSettings, compat: bool) -> dict[str, Any]:
+    """Model plus the optional features, unless running in compat mode.
+
+    The optional features (server-side refusal fallbacks, progress-note
+    display, thinking binding) need beta headers some accounts or models
+    reject; compat mode sends a plain request instead. Tools and system
+    prompt stay identical either way, so switching modes mid-conversation
+    keeps the prompt prefix (and its cache) intact.
+    """
+    if compat:
+        return {"model": settings.model}
+    return {
+        "model": settings.model,
+        "betas": _BETAS,
+        "fallbacks": "default",
+        "thinking": {
+            "type": "adaptive",
+            "display": "updates",
+            "block_binding": {"prefix_mismatch_behavior": "drop_block"},
+        },
+    }
 
 
 def _ui_event(event: Any) -> dict[str, Any] | None:
@@ -102,6 +131,8 @@ async def run_turn(
     usage = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
     json_retries = 0
     steps = 0
+    # True while re-running a step without the optional request features.
+    compat_retry = False
 
     try:
         while True:
@@ -114,17 +145,13 @@ async def run_turn(
             steps += 1
             yield {"type": "step_start"}
 
+            compat = compat_retry or uses_compat_request(
+                settings.api_key, settings.model
+            )
             try:
                 async with client.beta.messages.stream(
-                    model=settings.model,
+                    **_request_options(settings, compat),
                     max_tokens=_MAX_TOKENS,
-                    betas=_BETAS,
-                    fallbacks="default",
-                    thinking={
-                        "type": "adaptive",
-                        "display": "updates",
-                        "block_binding": {"prefix_mismatch_behavior": "drop_block"},
-                    },
                     output_config={"effort": settings.effort},
                     cache_control={"type": "ephemeral"},
                     system=COPILOT_SYSTEM_PROMPT,
@@ -136,9 +163,27 @@ async def run_turn(
                         if ui_event is not None:
                             yield ui_event
                     response = await stream.get_final_message()
+                if compat_retry:
+                    remember_compat_request(settings.api_key, settings.model)
+                    compat_retry = False
+            except anthropic.BadRequestError as e:
+                if not compat and not compat_retry:
+                    # Retry this step once without the optional features in
+                    # case this account or model doesn't accept them.
+                    logger.warning(
+                        f"agent copilot request rejected (org {org_id}, "
+                        f"model {settings.model}): {api_error_detail(e)}; "
+                        "retrying without optional features"
+                    )
+                    compat_retry = True
+                    yield {"type": "step_retry"}
+                    continue
+                logger.warning(f"agent copilot API error (org {org_id}): {e}")
+                yield {"type": "error", "message": api_error_message(e, settings.model)}
+                break
             except anthropic.APIError as e:
                 logger.warning(f"agent copilot API error (org {org_id}): {e}")
-                yield {"type": "error", "message": api_error_message(e)}
+                yield {"type": "error", "message": api_error_message(e, settings.model)}
                 break
             except ValueError:
                 # Eagerly streamed tool input the SDK could not parse at all.

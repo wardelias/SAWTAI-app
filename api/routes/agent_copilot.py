@@ -277,6 +277,13 @@ async def run_call_insights(
         raise HTTPException(status_code=429, detail=str(e))
     except InsightsError as e:
         raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:  # noqa: BLE001 — readable error with a log reference
+        ref = uuid.uuid4().hex[:8]
+        logger.exception(f"call insights failed [ref {ref}]: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"The analysis hit an unexpected error (ref {ref}). Please try again.",
+        )
     finally:
         await release_insights_lock(org_id)
     await save_insights_report(org_id, report)
@@ -347,11 +354,12 @@ async def chat_with_copilot(
             ):
                 await queue.put(event)
         except Exception as e:  # noqa: BLE001 — end the stream with a readable error
-            logger.exception(f"agent copilot turn failed: {e}")
+            ref = uuid.uuid4().hex[:8]
+            logger.exception(f"agent copilot turn failed [ref {ref}]: {e}")
             await queue.put(
                 {
                     "type": "error",
-                    "message": "The assistant hit an error. Please try again.",
+                    "message": f"The assistant hit an unexpected error (ref {ref}). Please try again.",
                 }
             )
             await queue.put({"type": "done"})

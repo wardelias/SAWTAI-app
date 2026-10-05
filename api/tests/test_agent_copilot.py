@@ -136,12 +136,17 @@ class _FakeStream:
         events: list[Any],
         final: BetaMessage | None,
         raise_exc: Exception | None = None,
+        enter_exc: Exception | None = None,
     ):
         self._events = events
         self._final = final
         self._raise = raise_exc
+        # Raised when the request is sent, as an HTTP error status is.
+        self._enter_exc = enter_exc
 
     async def __aenter__(self) -> _FakeStream:
+        if self._enter_exc is not None:
+            raise self._enter_exc
         return self
 
     async def __aexit__(self, *exc: Any) -> bool:
@@ -1032,3 +1037,150 @@ def test_runner_keeps_one_client_per_api_key():
     b = client_mod.get_client("sk-b")
     assert a1 is a2 and a1 is not b
     client_mod._clients.clear()
+
+
+# ─── Error messages and compat retry ──────────────────────────────────────
+
+
+def _api_error(cls, status: int, message: str | None):
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    body = (
+        {
+            "type": "error",
+            "error": {"type": "invalid_request_error", "message": message},
+        }
+        if message
+        else None
+    )
+    return cls(
+        "error",
+        response=httpx2.Response(status, request=request, json=body or {}),
+        body=body,
+    )
+
+
+def test_api_error_messages_explain_what_to_do():
+    from api.services.agent_copilot.client import api_error_message
+
+    billing = _api_error(
+        anthropic.BadRequestError,
+        400,
+        "Your credit balance is too low to access the Anthropic API.",
+    )
+    assert api_error_message(billing) == (
+        "Anthropic couldn't process the request: Your credit balance is too low to access the Anthropic API."
+    )
+    missing = _api_error(anthropic.NotFoundError, 404, "model: not found")
+    assert "claude-opus-5-5 isn't available for this API key" in api_error_message(
+        missing, "claude-opus-5-5"
+    )
+    assert "rejected the API key" in api_error_message(
+        _api_error(anthropic.AuthenticationError, 401, "x")
+    )
+    assert "temporary problem" in api_error_message(
+        _api_error(anthropic.OverloadedError, 529, "Overloaded")
+    )
+    assert "rate limit" in api_error_message(
+        _api_error(anthropic.RateLimitError, 429, None)
+    )
+
+
+async def test_rejected_request_is_retried_without_optional_features_and_remembered(
+    store,
+):
+    from api.services.agent_copilot import client as client_mod
+
+    client_mod._COMPAT_ONLY.clear()
+    rejected = _api_error(anthropic.BadRequestError, 400, "unsupported beta")
+    client = _FakeClient(
+        [
+            _FakeStream([], None, enter_exc=rejected),
+            _FakeStream(
+                _text_events("ok"),
+                _message([{"type": "text", "text": "ok"}], "end_turn"),
+            ),
+            _FakeStream(
+                _text_events("again"),
+                _message([{"type": "text", "text": "again"}], "end_turn"),
+            ),
+        ]
+    )
+    try:
+        first = await _collect(client, user=_user(), conversation_id="c1", message="hi")
+        second = await _collect(
+            client, user=_user(), conversation_id="c1", message="more"
+        )
+    finally:
+        client_mod._COMPAT_ONLY.clear()
+
+    assert [e["type"] for e in first] == [
+        "step_start",
+        "step_retry",
+        "step_start",
+        "text",
+        "done",
+    ]
+    full, plain, later = client.requests
+    assert (
+        full["fallbacks"] == "default"
+        and full["betas"]
+        and full["thinking"]["display"] == "updates"
+    )
+    for request in (plain, later):
+        assert (
+            "fallbacks" not in request
+            and "betas" not in request
+            and "thinking" not in request
+        )
+        # Tools and system prompt are unchanged, keeping the prompt prefix stable.
+        assert request["tools"] == full["tools"] and request["system"] == full["system"]
+    assert second[-1] == {"type": "done"}
+
+
+async def test_rejection_of_the_plain_request_is_shown_and_not_remembered(store):
+    from api.services.agent_copilot import client as client_mod
+
+    client_mod._COMPAT_ONLY.clear()
+    billing = _api_error(
+        anthropic.BadRequestError,
+        400,
+        "Your credit balance is too low to access the Anthropic API.",
+    )
+    client = _FakeClient(
+        [
+            _FakeStream([], None, enter_exc=billing),
+            _FakeStream([], None, enter_exc=billing),
+        ]
+    )
+    events = await _collect(client, user=_user(), conversation_id="c1", message="hi")
+
+    assert events[-2] == {
+        "type": "error",
+        "message": "Anthropic couldn't process the request: Your credit balance is too low to access the Anthropic API.",
+    }
+    assert client_mod._COMPAT_ONLY == set()
+
+
+def test_unexpected_failures_show_a_reference_id():
+    async def broken_turn(**kwargs):
+        raise RuntimeError("redis down")
+        yield  # pragma: no cover
+
+    with (
+        _settings_patch(),
+        patch(
+            "api.routes.agent_copilot.acquire_turn_lock", AsyncMock(return_value=True)
+        ),
+        patch("api.routes.agent_copilot.release_turn_lock", AsyncMock()),
+        patch(
+            "api.routes.agent_copilot.consume_daily_message",
+            AsyncMock(return_value=True),
+        ),
+        patch("api.routes.agent_copilot.run_turn", broken_turn),
+    ):
+        response = TestClient(_app()).post(
+            "/agent-copilot/chat", json={"message": "hi"}
+        )
+    error = _sse_events(response.text)[-2]
+    assert error["type"] == "error"
+    assert error["message"].startswith("The assistant hit an unexpected error (ref ")

@@ -165,10 +165,13 @@ def _message(text: str, stop_reason: str = "end_turn") -> BetaMessage:
 
 
 class _FakeStream:
-    def __init__(self, final):
+    def __init__(self, final, enter_exc=None):
         self._final = final
+        self._enter_exc = enter_exc
 
     async def __aenter__(self):
+        if self._enter_exc is not None:
+            raise self._enter_exc
         return self
 
     async def __aexit__(self, *exc):
@@ -179,13 +182,16 @@ class _FakeStream:
 
 
 class _FakeClient:
-    def __init__(self, final):
+    def __init__(self, final, reject_first=None):
         self.requests: list[dict[str, Any]] = []
         self.beta = SimpleNamespace(messages=SimpleNamespace(stream=self._stream))
         self._final = final
+        self._reject_first = reject_first
 
     def _stream(self, **kwargs):
         self.requests.append(copy.deepcopy(kwargs))
+        if self._reject_first is not None and len(self.requests) == 1:
+            return _FakeStream(None, enter_exc=self._reject_first)
         return _FakeStream(self._final)
 
 
@@ -434,3 +440,34 @@ async def test_recent_completed_runs_query_is_org_scoped(db_session, async_sessi
         len(await db_session.get_recent_completed_runs_for_org(orgs[0].id, limit=1))
         == 1
     )
+
+
+async def test_insights_retry_without_optional_features_when_rejected():
+    import anthropic
+    import httpx2
+
+    from api.services.agent_copilot import client as client_mod
+
+    client_mod._COMPAT_ONLY.clear()
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    body = {
+        "type": "error",
+        "error": {"type": "invalid_request_error", "message": "unsupported beta"},
+    }
+    rejected = anthropic.BadRequestError(
+        "bad", response=httpx2.Response(400, request=request, json=body), body=body
+    )
+    payload = {"summary": "ok", "issues": [], "working_well": []}
+    client = _FakeClient(_message(json.dumps(payload)), reject_first=rejected)
+    rows, get_client_patch, consume_patch = _patches([(_run(1), "Reception")], client)
+    try:
+        with rows, get_client_patch, consume_patch:
+            report = await generate_insights(11, SETTINGS)
+        full, plain = client.requests
+        assert full["fallbacks"] == "default"
+        assert "fallbacks" not in plain and "betas" not in plain
+        assert plain["output_config"]["format"]["schema"] == INSIGHTS_SCHEMA
+        assert report["summary"] == "ok"
+        assert client_mod.uses_compat_request(SETTINGS.api_key, SETTINGS.model)
+    finally:
+        client_mod._COMPAT_ONLY.clear()

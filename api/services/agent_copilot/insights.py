@@ -18,7 +18,13 @@ import anthropic
 from loguru import logger
 
 from api.db import db_client
-from api.services.agent_copilot.client import api_error_message, get_client
+from api.services.agent_copilot.client import (
+    api_error_detail,
+    api_error_message,
+    get_client,
+    remember_compat_request,
+    uses_compat_request,
+)
 from api.services.agent_copilot.history import consume_daily_message
 from api.services.agent_copilot.settings import EffectiveSettings
 from api.services.workflow.call_review import call_detail
@@ -199,28 +205,46 @@ async def generate_insights(
     calls = [_call_digest(run, name) for run, name in rows]
     assert settings.api_key is not None, "caller checks settings.available"
     client = get_client(settings.api_key)
-    try:
+    body = json.dumps({"calls": calls}, default=str)
+
+    async def request(compat: bool) -> Any:
+        # Compat mode drops the beta-gated refusal fallback for accounts or
+        # models that reject it (see runner._request_options).
+        extra = (
+            {}
+            if compat
+            else {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
+        )
         async with client.beta.messages.stream(
             model=settings.model,
             max_tokens=_MAX_TOKENS,
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
             output_config={
                 "effort": settings.effort,
                 "format": {"type": "json_schema", "schema": INSIGHTS_SCHEMA},
             },
             system=_SYSTEM_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": json.dumps({"calls": calls}, default=str),
-                }
-            ],
+            messages=[{"role": "user", "content": body}],
+            **extra,
         ) as stream:
-            response = await stream.get_final_message()
+            return await stream.get_final_message()
+
+    compat = uses_compat_request(settings.api_key, settings.model)
+    try:
+        try:
+            response = await request(compat)
+        except anthropic.BadRequestError as e:
+            if compat:
+                raise
+            logger.warning(
+                f"call insights request rejected (org {organization_id}, model "
+                f"{settings.model}): {api_error_detail(e)}; retrying without "
+                "optional features"
+            )
+            response = await request(True)
+            remember_compat_request(settings.api_key, settings.model)
     except anthropic.APIError as e:
         logger.warning(f"call insights API error (org {organization_id}): {e}")
-        raise InsightsError(api_error_message(e))
+        raise InsightsError(api_error_message(e, settings.model))
 
     if response.stop_reason == "refusal":
         raise InsightsError("The assistant declined to analyze these calls.")
