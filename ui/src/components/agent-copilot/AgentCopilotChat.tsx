@@ -1,12 +1,14 @@
 'use client';
 
 import {
+    Activity,
     AlertCircle,
     ArrowRight,
     ArrowUp,
     Building2,
     CalendarClock,
     Check,
+    ClipboardCheck,
     KeyRound,
     Loader2,
     MailPlus,
@@ -48,6 +50,8 @@ interface AgentCopilotChatProps {
     agentName?: string;
     /** Resume this conversation instead of the last one used in this scope. */
     initialConversationId?: string | null;
+    /** Start a fresh conversation and send this message as soon as it can. */
+    initialPrompt?: string | null;
     /** When set, sending is disabled and this explains why. */
     blockedReason?: string | null;
     onWorkflowChanged?: (change: WorkflowChange) => void;
@@ -61,12 +65,14 @@ interface Suggestion {
 }
 
 const EDITOR_SUGGESTIONS: Suggestion[] = [
+    { icon: <ClipboardCheck className="h-4 w-4" />, text: "Review this agent's recent calls and suggest improvements" },
     { icon: <Smile className="h-4 w-4" />, text: 'Make the greeting warmer and shorter' },
     { icon: <MailPlus className="h-4 w-4" />, text: "Ask for the caller's email before ending the call" },
     { icon: <PhoneForwarded className="h-4 w-4" />, text: 'Transfer to a human if the caller asks for one' },
 ];
 
 const BUILDER_SUGGESTIONS: Suggestion[] = [
+    { icon: <Activity className="h-4 w-4" />, text: 'Which of my agents had the most problems on calls this week?' },
     { icon: <Building2 className="h-4 w-4" />, text: 'Build a receptionist for my dental clinic' },
     { icon: <TrendingUp className="h-4 w-4" />, text: 'Create an outbound agent that qualifies sales leads' },
     { icon: <CalendarClock className="h-4 w-4" />, text: 'Build an appointment reminder agent' },
@@ -356,12 +362,15 @@ export function AgentCopilotChat({
     workflowId,
     agentName,
     initialConversationId = null,
+    initialPrompt = null,
     blockedReason = null,
     onWorkflowChanged,
     onClose,
     className,
 }: AgentCopilotChatProps) {
     const { user, loading: authLoading, getAccessToken } = useAuth();
+    const status = useCopilotStatus();
+    const needsSetup = status !== null && !status.configured;
     const [conversationId, setConversationId] = useState<string | null>(null);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [restoring, setRestoring] = useState(true);
@@ -378,7 +387,8 @@ export function AgentCopilotChat({
     useEffect(() => {
         if (authLoading || !user || hasRestored.current) return;
         hasRestored.current = true;
-        const id = initialConversationId ?? readStoredConversation(workflowId);
+        // A requested prompt starts its own conversation.
+        const id = initialPrompt ? null : initialConversationId ?? readStoredConversation(workflowId);
         if (!id) {
             setRestoring(false);
             return;
@@ -399,7 +409,7 @@ export function AgentCopilotChat({
                 setRestoring(false);
             }
         })();
-    }, [authLoading, user, getAccessToken, initialConversationId, workflowId]);
+    }, [authLoading, user, getAccessToken, initialConversationId, initialPrompt, workflowId]);
 
     useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -473,6 +483,14 @@ export function AgentCopilotChat({
         [blockedReason, conversationId, getAccessToken, sending, updateAssistant, workflowId],
     );
 
+    // Send the requested prompt once the chat is ready (and not blocked).
+    const promptSent = useRef(false);
+    useEffect(() => {
+        if (!initialPrompt || promptSent.current || restoring || !status?.configured || blockedReason) return;
+        promptSent.current = true;
+        void send(initialPrompt);
+    }, [initialPrompt, restoring, status, blockedReason, send]);
+
     const startNewChat = () => {
         abortRef.current?.abort();
         setConversationId(null);
@@ -481,8 +499,6 @@ export function AgentCopilotChat({
         inputRef.current?.focus();
     };
 
-    const status = useCopilotStatus();
-    const needsSetup = status !== null && !status.configured;
     const editing = workflowId != null;
     const suggestions = editing ? EDITOR_SUGGESTIONS : BUILDER_SUGGESTIONS;
     const inputDisabled = sending || Boolean(blockedReason) || needsSetup;

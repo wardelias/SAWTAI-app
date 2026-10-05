@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import func
@@ -435,6 +436,43 @@ class WorkflowRunClient(BaseDBClient):
 
             organization_id = workflow_run.workflow.organization_id
             return workflow_run, organization_id
+
+    async def get_workflow_runs_for_review(
+        self,
+        workflow_id: int,
+        organization_id: int,
+        since: datetime,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Newest-first runs of one workflow for call review, org-scoped.
+
+        Returns plain dicts of the summary columns only — `logs` (the full
+        event stream) is deliberately excluded; fetch one run with
+        `get_workflow_run` to read its transcript.
+        """
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(
+                    WorkflowRunModel.id,
+                    WorkflowRunModel.created_at,
+                    WorkflowRunModel.state,
+                    WorkflowRunModel.is_completed,
+                    WorkflowRunModel.call_type,
+                    WorkflowRunModel.mode,
+                    WorkflowRunModel.usage_info,
+                    WorkflowRunModel.gathered_context,
+                    WorkflowRunModel.annotations,
+                )
+                .join(WorkflowModel, WorkflowRunModel.workflow_id == WorkflowModel.id)
+                .where(
+                    WorkflowRunModel.workflow_id == workflow_id,
+                    WorkflowModel.organization_id == organization_id,
+                    WorkflowRunModel.created_at >= since,
+                )
+                .order_by(WorkflowRunModel.created_at.desc())
+                .limit(limit)
+            )
+            return [dict(row._mapping) for row in result.all()]
 
     async def ensure_public_access_token(self, workflow_run_id: int) -> Optional[str]:
         """Generate a public access token if not exists, return existing if present (idempotent).

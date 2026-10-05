@@ -65,6 +65,8 @@ interface RenderWorkflowProps {
     initialVersionStatus?: string | null;
     /** Open the AI assistant on load, resuming this conversation. */
     initialCopilotConversationId?: string | null;
+    /** Open the AI assistant on load and send this message in a new chat. */
+    initialCopilotPrompt?: string | null;
     user: { id: string; email?: string };
 }
 
@@ -80,6 +82,7 @@ function RenderWorkflow({
     initialVersionNumber,
     initialVersionStatus,
     initialCopilotConversationId = null,
+    initialCopilotPrompt = null,
     user,
 }: RenderWorkflowProps) {
     const router = useRouter();
@@ -89,7 +92,7 @@ function RenderWorkflow({
     const [isVersionPanelOpen, setIsVersionPanelOpen] = useState(false);
     const [isTesterRailOpen, setIsTesterRailOpen] = useState(true);
     const [isTesterSheetOpen, setIsTesterSheetOpen] = useState(false);
-    const [isCopilotOpen, setIsCopilotOpen] = useState(Boolean(initialCopilotConversationId));
+    const [isCopilotOpen, setIsCopilotOpen] = useState(Boolean(initialCopilotConversationId || initialCopilotPrompt));
     const copilotEnabled = useCopilotStatus()?.enabled ?? false;
     const setWorkflowName = useWorkflowStore((state) => state.setWorkflowName);
     const [isDesktopViewport, setIsDesktopViewport] = useState(false);
@@ -583,6 +586,7 @@ function RenderWorkflow({
             workflowId={workflowId}
             agentName={workflowName}
             initialConversationId={initialCopilotConversationId}
+            initialPrompt={initialCopilotPrompt}
             blockedReason={copilotBlockedReason}
             onWorkflowChanged={handleCopilotWorkflowChanged}
             onClose={() => setIsCopilotOpen(false)}

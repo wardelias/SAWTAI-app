@@ -76,6 +76,13 @@ export default function WorkflowDetailPage() {
     const stableUser = useMemo(() => user, [user]);
     const openTesterOnLoad = searchParams.get('onboarding') === 'web_call';
     const copilotConversationId = searchParams.get('copilot');
+    // "Ask AI about this call" links here with the call's id. Only a numeric
+    // id is accepted; the request itself is written here, never taken from
+    // the URL, so a crafted link can't make the assistant act on its words.
+    const reviewCallId = searchParams.get('reviewCall');
+    const copilotPrompt = reviewCallId && /^\d+$/.test(reviewCallId)
+        ? `Review call #${reviewCallId}: what happened, what went wrong or well, and what should change in this agent to handle calls like it better?`
+        : null;
 
     if (loading) {
         return (
@@ -102,6 +109,7 @@ export default function WorkflowDetailPage() {
                 initialTotalRuns={workflow.total_runs ?? 0}
                 openTesterOnLoad={openTesterOnLoad}
                 initialCopilotConversationId={copilotConversationId}
+                initialCopilotPrompt={copilotPrompt}
                 initialFlow={{
                     nodes: workflow.workflow_definition.nodes as FlowNode[],
                     edges: workflow.workflow_definition.edges as FlowEdge[],

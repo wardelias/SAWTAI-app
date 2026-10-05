@@ -85,6 +85,9 @@ const TOOL_LABELS: Record<string, string> = {
     search_docs: 'Searching the docs',
     read_doc: 'Reading the docs',
     list_docs: 'Browsing the docs',
+    get_call_stats: 'Analyzing call outcomes and QA scores',
+    list_calls: 'Looking through recent calls',
+    get_call: 'Reading a call transcript',
 };
 
 export function toolLabel(name: string): string {

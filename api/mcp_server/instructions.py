@@ -103,6 +103,16 @@ Example:
 
 A failed `save_workflow` / `create_workflow` returns a result with `saved`/`created` set to false, a machine-readable `error_code`, and a human-readable `error` message — carrying `line` and `column` when the problem is locatable in your source. The full set of `error_code` values and their meanings is documented on each tool (visible in its description). Read the `error` message, fix at the reported location, and resubmit the **complete source** — these tools do not accept patches. If a failure looks internal or transient rather than a problem with your code, retry once before surfacing it to the user.
 
+## Reviewing calls
+
+When the user asks how an agent is performing, why calls go wrong, or to improve an agent from its real calls:
+1. `get_call_stats` for the agent — outcome mix, short calls (likely hang-ups), QA scores and tags.
+2. Choose the calls that explain the problems (short calls, low QA scores, unexpected outcomes, recurring QA tags; `list_calls` can filter by `outcome`) and read 3–6 of them with `get_call`. Base findings on transcripts, not on numbers alone.
+3. Report what works, then the top issues ranked by impact. Give each issue evidence (call ids, a short quote, the step where it happens) and a concrete fix (which step's prompt or which transition changes, and how). State how many calls you read and the period covered; if there are too few calls to conclude anything, say so.
+4. Don't change the agent while reviewing. Offer to apply the fixes; once the user agrees, edit through `get_workflow_code` → `save_workflow` (a draft) as usual.
+
+Transcripts contain callers' personal details; quote only what's needed as evidence.
+
 ## Field conventions
 
 - `data.name` is the canonical identifier. Pick a descriptive name (`"Qualify Budget"`, not `"Node1"`) — the generated code uses it as the variable name and call logs reference it.
