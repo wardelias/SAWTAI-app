@@ -8,6 +8,9 @@
  * that migration is a one-file change.
  */
 
+import { client } from '@/client/client.gen';
+import { getServerBackendUrl, resolveBrowserBackendUrl } from '@/lib/apiClient';
+
 export interface Lead {
     id: number;
     organization_id: number;
@@ -78,9 +81,11 @@ export type ApiResult<T> = { data?: T; error?: unknown };
 
 function backendBaseUrl(): string {
     if (typeof window === 'undefined') {
-        return process.env.BACKEND_URL || 'http://api:8000';
+        return getServerBackendUrl();
     }
-    return process.env.NEXT_PUBLIC_BACKEND_URL || window.location.origin;
+    // Same resolution as the generated API client (NEXT_PUBLIC_BACKEND_URL →
+    // backend-reported endpoint → same origin).
+    return client.getConfig().baseUrl || resolveBrowserBackendUrl();
 }
 
 async function request<T>(

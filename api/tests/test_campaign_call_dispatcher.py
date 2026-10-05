@@ -204,6 +204,19 @@ def mock_dispatch_call():
     return mock_dispatch, processed_runs
 
 
+@pytest.fixture(autouse=True)
+def _restore_dispatcher_rate_limiter():
+    """The concurrency tests below patch the module-level ``rate_limiter``
+    inside workers that run concurrently. Overlapping patch contexts exit out
+    of order and can leave a MagicMock installed for later tests in the
+    session; put the real one back after every test."""
+    import api.services.campaign.campaign_call_dispatcher as dispatcher_module
+
+    original = dispatcher_module.rate_limiter
+    yield
+    dispatcher_module.rate_limiter = original
+
+
 @pytest.fixture
 def mock_rate_limiter():
     """Mock rate limiter to always allow calls."""

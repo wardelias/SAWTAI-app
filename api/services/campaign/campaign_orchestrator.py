@@ -23,6 +23,10 @@ from api.constants import REDIS_URL
 from api.db import db_client
 from api.db.models import CampaignModel, QueuedRunModel
 from api.enums import RedisChannel
+from api.services.background_status import (
+    ORCHESTRATOR_HEARTBEAT_KEY,
+    ORCHESTRATOR_HEARTBEAT_TTL_SECONDS,
+)
 from api.services.campaign.campaign_event_protocol import (
     BatchCompletedEvent,
     BatchFailedEvent,
@@ -461,6 +465,15 @@ class CampaignOrchestrator:
     async def _monitor_completion(self):
         """Periodically check for campaigns that should be marked complete."""
         while self._running:
+            try:
+                await self.redis.set(
+                    ORCHESTRATOR_HEARTBEAT_KEY,
+                    datetime.now(UTC).isoformat(),
+                    ex=ORCHESTRATOR_HEARTBEAT_TTL_SECONDS,
+                )
+            except Exception as e:
+                logger.warning(f"Could not write orchestrator heartbeat: {e}")
+
             try:
                 await self._check_stale_campaigns()
             except Exception as e:

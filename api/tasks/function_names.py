@@ -6,5 +6,6 @@ class FunctionNames:
     PROCESS_KNOWLEDGE_BASE_DOCUMENT = "process_knowledge_base_document"
     POLL_META_LEADS = "poll_meta_leads"
     PROCESS_DUE_ENROLLMENTS = "process_due_enrollments"
+    PROCESS_LEAD_CALL_OUTCOME = "process_lead_call_outcome"
     DELIVER_WEBHOOK = "deliver_webhook"
     COMPLETE_INACTIVE_TEXT_CHAT_SESSION = "complete_inactive_text_chat_session"

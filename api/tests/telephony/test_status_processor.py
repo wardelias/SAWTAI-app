@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 
 import pytest
 
@@ -59,9 +59,12 @@ async def test_initialized_no_answer_enqueues_workflow_completion():
         "mapped_call_disposition": "no-answer",
         "call_id": "call-123",
     }
-    mock_enqueue.assert_awaited_once_with(
-        FunctionNames.RUN_INTEGRATIONS_POST_WORKFLOW_RUN, 123
-    )
+    # Post-call integrations, plus the lead-outcome job (a no-op unless the
+    # run called a lead) so sequences can move on after an unanswered call.
+    assert mock_enqueue.await_args_list == [
+        call(FunctionNames.RUN_INTEGRATIONS_POST_WORKFLOW_RUN, 123),
+        call(FunctionNames.PROCESS_LEAD_CALL_OUTCOME, 123),
+    ]
     mock_dispatcher.release_call_slot.assert_awaited_once_with(123)
 
 
@@ -106,3 +109,49 @@ async def test_running_terminal_status_does_not_enqueue_workflow_completion():
     ]
     mock_enqueue.assert_not_awaited()
     mock_dispatcher.release_call_slot.assert_awaited_once_with(456)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "expect_lead_outcome"),
+    [
+        (WorkflowRunState.INITIALIZED.value, True),  # pipeline never started
+        (WorkflowRunState.RUNNING.value, False),  # pipeline's own completion handles it
+    ],
+)
+async def test_completed_status_enqueues_lead_outcome_only_without_pipeline(
+    state, expect_lead_outcome
+):
+    workflow_run = SimpleNamespace(
+        id=789,
+        campaign_id=None,
+        queued_run_id=None,
+        state=state,
+        is_completed=False,
+        logs={"telephony_status_callbacks": []},
+        gathered_context={},
+    )
+    status = StatusCallbackRequest(call_id="call-789", status="completed")
+
+    with (
+        patch("api.services.telephony.status_processor.db_client") as mock_db,
+        patch(
+            "api.services.telephony.status_processor.campaign_call_dispatcher"
+        ) as mock_dispatcher,
+        patch(
+            "api.services.telephony.status_processor.enqueue_job",
+            new_callable=AsyncMock,
+        ) as mock_enqueue,
+    ):
+        mock_db.get_workflow_run_by_id = AsyncMock(return_value=workflow_run)
+        mock_db.update_workflow_run = AsyncMock()
+        mock_dispatcher.release_call_slot = AsyncMock(return_value=True)
+
+        await _process_status_update(789, status)
+
+    expected = (
+        [call(FunctionNames.PROCESS_LEAD_CALL_OUTCOME, 789)]
+        if expect_lead_outcome
+        else []
+    )
+    assert mock_enqueue.await_args_list == expected

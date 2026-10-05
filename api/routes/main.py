@@ -99,6 +99,20 @@ class HealthResponse(BaseModel):
     stack_publishable_client_key: str | None = None
 
 
+class BackgroundStatusResponse(BaseModel):
+    worker: bool
+    campaign_orchestrator: bool
+
+
+@router.get("/health/background", response_model=BackgroundStatusResponse)
+async def background_health() -> BackgroundStatusResponse:
+    """Whether the background worker and campaign orchestrator are running.
+    Campaigns and sequences don't progress without them."""
+    from api.services.background_status import get_background_status
+
+    return BackgroundStatusResponse(**await get_background_status())
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     from api.constants import (

@@ -87,6 +87,9 @@ async def _enqueue_integrations_for_unconnected_run(
     configured webhooks without incurring platform-usage billing.
     """
     await enqueue_job(FunctionNames.RUN_INTEGRATIONS_POST_WORKFLOW_RUN, workflow_run_id)
+    # Calls to leads (sequence steps, leads campaigns) still need their outcome
+    # recorded so the lead's cadence can move on. No-op for other runs.
+    await enqueue_job(FunctionNames.PROCESS_LEAD_CALL_OUTCOME, workflow_run_id)
     logger.info(
         f"[run {workflow_run_id}] Enqueued post-call integrations after terminal "
         f"telephony status: {status}"
@@ -157,6 +160,11 @@ async def _process_status_update(workflow_run_id: int, status: StatusCallbackReq
                 is_completed=True,
                 state=WorkflowRunState.COMPLETED.value,
             )
+
+        # The pipeline never started, so no post-call completion will run for
+        # this call; still record a lead call's outcome (no-op otherwise).
+        if workflow_run.state == WorkflowRunState.INITIALIZED.value:
+            await enqueue_job(FunctionNames.PROCESS_LEAD_CALL_OUTCOME, workflow_run_id)
 
     elif normalized_status in TERMINAL_NOT_CONNECTED_STATUSES:
         logger.warning(

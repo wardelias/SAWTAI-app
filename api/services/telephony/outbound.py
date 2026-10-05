@@ -21,6 +21,8 @@ from api.db import db_client
 from api.db.models import WorkflowRunModel
 from api.enums import WorkflowRunState
 from api.services.quota_service import authorize_workflow_run_start
+from api.services.workflow.initial_context import merge_external_initial_context
+from api.services.workflow.run_creation import prepare_workflow_run_inputs
 from api.utils.common import get_backend_endpoints
 
 
@@ -49,26 +51,45 @@ async def place_outbound_call(
     """
     # Lazy import: importing the telephony factory at module load can trigger a
     # circular import via the provider package (mirrors the campaign dispatcher).
-    from api.services.telephony.factory import (
-        get_default_telephony_provider,
-        get_telephony_provider_by_id,
+    from api.services.telephony.factory import get_telephony_provider_by_id
+    from api.services.telephony.outbound_readiness import (
+        resolve_outbound_configuration_id,
     )
 
-    workflow = await db_client.get_workflow_by_id(workflow_id)
+    workflow = await db_client.get_workflow(
+        workflow_id, organization_id=organization_id
+    )
     if not workflow:
         raise OutboundCallError(f"Workflow {workflow_id} not found")
 
-    if telephony_configuration_id:
+    # Pin the run to the agent's published definition — the pipeline reads the
+    # graph and configs from ``workflow_run.definition`` when the call connects.
+    run_inputs = await prepare_workflow_run_inputs(db_client, workflow)
+    if run_inputs.definition_id is None:
+        raise OutboundCallError(
+            f"Agent '{workflow.name}' has no published version — publish it first"
+        )
+
+    # Resolve (and pin on the run) the exact telephony config used, so the
+    # provider webhooks resolve the same config the call was placed with —
+    # same rule as the campaign dispatcher.
+    try:
+        telephony_configuration_id = await resolve_outbound_configuration_id(
+            telephony_configuration_id, organization_id, db=db_client
+        )
         provider = await get_telephony_provider_by_id(
             telephony_configuration_id, organization_id
         )
-    else:
-        provider = await get_default_telephony_provider(organization_id)
+    except Exception as e:
+        raise OutboundCallError(
+            f"No usable telephony configuration for outbound calls: {e}"
+        ) from e
 
     initial_context: Dict[str, Any] = {
-        **(context_variables or {}),
+        **merge_external_initial_context({}, context_variables),
         "provider": provider.PROVIDER_NAME,
         "called_number": to_number,
+        "direction": "outbound",
         "telephony_configuration_id": telephony_configuration_id,
         **(extra_initial_context or {}),
     }
@@ -80,10 +101,12 @@ async def place_outbound_call(
         user_id=workflow.user_id,
         initial_context=initial_context,
         organization_id=organization_id,
+        definition_id=run_inputs.definition_id,
     )
 
     quota_result = await authorize_workflow_run_start(
         workflow_id=workflow_id,
+        organization_id=organization_id,
         workflow_run_id=workflow_run.id,
     )
     if not quota_result.has_quota:
@@ -101,7 +124,6 @@ async def place_outbound_call(
         webhook_url = (
             f"{backend_endpoint}/api/v1/telephony/{provider.WEBHOOK_ENDPOINT}"
             f"?workflow_id={workflow_id}"
-            f"&user_id={workflow.user_id}"
             f"&workflow_run_id={workflow_run.id}"
             f"&organization_id={organization_id}"
         )
@@ -112,7 +134,7 @@ async def place_outbound_call(
             workflow_run_id=workflow_run.id,
             from_number=None,  # provider selects an active caller ID
             workflow_id=workflow_id,
-            user_id=workflow.user_id,
+            organization_id=organization_id,
         )
 
         await db_client.update_workflow_run(
