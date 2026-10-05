@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { MobileList, MobileListItem } from '@/components/ui/mobile-list';
 import {
     Table,
     TableBody,
@@ -215,7 +216,31 @@ export default function LeadsPage() {
                             ))}
                         </div>
                     ) : data && data.leads.length > 0 ? (
-                        <div className="overflow-x-auto">
+                        <>
+                        <MobileList>
+                            {data.leads.map((lead) => (
+                                <MobileListItem
+                                    key={lead.id}
+                                    href={`/leads/${lead.id}`}
+                                    title={leadName(lead)}
+                                    subtitle={[lead.phone_number, lead.email].filter(Boolean).join(' · ')}
+                                    meta={
+                                        <>
+                                            <Badge variant={STATUS_VARIANTS[lead.status] ?? 'secondary'}>
+                                                {lead.status}
+                                            </Badge>
+                                            {lead.dnc && <Badge variant="destructive">DNC</Badge>}
+                                            {lead.last_contacted_at && (
+                                                <span className="text-muted-foreground">
+                                                    Contacted {formatDate(lead.last_contacted_at)}
+                                                </span>
+                                            )}
+                                        </>
+                                    }
+                                />
+                            ))}
+                        </MobileList>
+                        <div className="overflow-x-auto max-md:hidden">
                             <Table>
                                 <TableHeader>
                                     <TableRow>
@@ -272,6 +297,7 @@ export default function LeadsPage() {
                                 </TableBody>
                             </Table>
                         </div>
+                        </>
                     ) : (
                         <div className="text-center py-12 text-muted-foreground">
                             No leads yet. Import a CSV to get started.

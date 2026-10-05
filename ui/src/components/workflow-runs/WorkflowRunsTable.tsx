@@ -10,6 +10,7 @@ import { MediaPreviewButton, MediaPreviewDialog } from "@/components/MediaPrevie
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { MobileList, MobileListItem } from "@/components/ui/mobile-list";
 import {
     Table,
     TableBody,
@@ -151,7 +152,50 @@ export function WorkflowRunsTable({
                         </div>
                     </CardHeader>
                     <CardContent>
-                        <div className="bg-card border border-border rounded-lg overflow-hidden shadow-sm">
+                        <MobileList>
+                            {runs.map((run) => (
+                                <MobileListItem
+                                    key={run.id}
+                                    href={`/workflow/${workflowId}/run/${run.id}`}
+                                    leading={
+                                        <span className="flex size-10 items-center justify-center rounded-xl bg-muted">
+                                            <CallTypeCell mode={run.mode} callType={run.call_type} />
+                                        </span>
+                                    }
+                                    title={`Call #${run.id}`}
+                                    subtitle={[
+                                        formatDateTime(run.created_at, organizationTimezone),
+                                        typeof run.cost_info?.call_duration_seconds === 'number'
+                                            ? `${run.cost_info.call_duration_seconds.toFixed(1)}s`
+                                            : null,
+                                    ]
+                                        .filter(Boolean)
+                                        .join(" · ")}
+                                    meta={
+                                        <>
+                                            <Badge variant={run.is_completed ? "default" : "secondary"}>
+                                                {run.is_completed ? "Completed" : "In Progress"}
+                                            </Badge>
+                                            {run.gathered_context?.mapped_call_disposition ? (
+                                                <Badge variant="outline">
+                                                    {run.gathered_context.mapped_call_disposition as string}
+                                                </Badge>
+                                            ) : null}
+                                        </>
+                                    }
+                                    action={(run.recording_url || run.transcript_url) && (
+                                        <MediaPreviewButton
+                                            recordingUrl={run.recording_url}
+                                            transcriptUrl={run.transcript_url}
+                                            runId={run.id}
+                                            onOpenPreview={mediaPreview.openPreview}
+                                            onSelect={setSelectedRowId}
+                                        />
+                                    )}
+                                />
+                            ))}
+                        </MobileList>
+                        <div className="bg-card border border-border rounded-lg overflow-hidden shadow-sm max-md:hidden">
                             <Table>
                                 <TableHeader>
                                     <TableRow className="bg-muted/50">
@@ -235,7 +279,7 @@ export function WorkflowRunsTable({
 
                         {/* Pagination */}
                         {totalPages > 1 && (
-                            <div className="flex items-center justify-between mt-6">
+                            <div className="flex items-center justify-between mt-6 max-md:mt-4">
                                 <p className="text-sm text-muted-foreground">
                                     Page {currentPage} of {totalPages}
                                 </p>

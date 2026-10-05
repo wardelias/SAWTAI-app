@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Copy,
   ExternalLink,
+  MoreHorizontal,
   Pencil,
   Plus,
   RotateCcw,
@@ -52,6 +53,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { MobileList, MobileListItem } from "@/components/ui/mobile-list";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -245,7 +254,7 @@ export default function TelephonyConfigurationDetailPage() {
 
   return (
     <div className="container mx-auto px-4 py-8 space-y-6 max-md:py-5">
-      <div>
+      <div className="max-md:hidden">
         <Link
           href="/telephony-configurations"
           className="inline-flex items-center text-sm text-muted-foreground hover:underline"
@@ -255,7 +264,7 @@ export default function TelephonyConfigurationDetailPage() {
       </div>
 
       <Card>
-        <CardHeader className="flex flex-row items-start justify-between gap-4">
+        <CardHeader className="flex flex-row items-start justify-between gap-4 max-md:flex-col max-md:items-stretch">
           <div className="space-y-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <CardTitle className="truncate">{config.name}</CardTitle>
@@ -279,13 +288,13 @@ export default function TelephonyConfigurationDetailPage() {
                   .catch(() => toast.error("Failed to copy ID"));
               }}
               title="Click to copy"
-              className="inline-flex items-center gap-1 self-start rounded font-mono text-xs text-muted-foreground hover:text-foreground"
+              className="inline-flex items-center gap-1 self-start rounded font-mono text-xs text-muted-foreground hover:text-foreground max-md:max-w-full"
             >
               <span className="truncate">Configuration ID: {config.id}</span>
               <Copy className="h-3 w-3 shrink-0" />
             </button>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 max-md:flex-wrap">
             {config.inactive && (
               <Button variant="outline" size="sm" onClick={onReactivate}>
                 <RotateCcw className="h-4 w-4 mr-2" /> Reactivate
@@ -327,7 +336,7 @@ export default function TelephonyConfigurationDetailPage() {
               </div>
             </div>
           )}
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm max-md:grid-cols-1">
             {Object.entries(config.credentials ?? {})
               .filter(([key]) => key !== "external_pbx" || externalPbxIntegrationsEnabled)
               .filter(([key]) => key !== "stasis_app_name")
@@ -375,7 +384,7 @@ export default function TelephonyConfigurationDetailPage() {
               }}
               title="Click to copy inbound webhook URL"
               aria-label="Copy inbound webhook URL"
-              className="inline-flex items-center gap-1 self-start rounded font-mono text-xs text-muted-foreground hover:text-foreground"
+              className="inline-flex items-center gap-1 self-start rounded font-mono text-xs text-muted-foreground hover:text-foreground max-md:max-w-full"
             >
               <span className="truncate">{inboundWebhookUrl}</span>
               <Copy className="h-3 w-3 shrink-0" />
@@ -411,7 +420,7 @@ export default function TelephonyConfigurationDetailPage() {
       ) : null}
 
       <Card>
-        <CardHeader className="flex flex-row items-start justify-between gap-4">
+        <CardHeader className="flex flex-row items-start justify-between gap-4 max-md:flex-col max-md:items-stretch">
           <div className="space-y-1">
             <CardTitle>Phone numbers</CardTitle>
             <CardDescription>
@@ -438,7 +447,83 @@ export default function TelephonyConfigurationDetailPage() {
               configuration.
             </p>
           ) : (
-            <Table>
+            <>
+            <MobileList>
+              {phoneNumbers.map((n) => {
+                const trunkName =
+                  (config.trunks?.length ?? 0) > 0
+                    ? (config.trunks?.find((t) => t.id === n.telephony_trunk_id)?.name ?? "Unassigned trunk")
+                    : null;
+                return (
+                  <MobileListItem
+                    key={n.id}
+                    onClick={() => openPhoneDialog(n)}
+                    title={<span className="font-mono">{n.address}</span>}
+                    subtitle={[n.label, n.address_type, trunkName].filter(Boolean).join(" · ")}
+                    meta={
+                      <>
+                        {n.is_active ? (
+                          <Badge variant="secondary">Active</Badge>
+                        ) : (
+                          <Badge variant="outline">Inactive</Badge>
+                        )}
+                        {n.is_default_caller_id && (
+                          <Badge className="gap-1">
+                            <Star className="h-3 w-3 fill-current" /> Default caller
+                          </Badge>
+                        )}
+                        {n.inbound_workflow_id && (
+                          <span className="min-w-0 truncate text-muted-foreground">
+                            Inbound → {n.inbound_workflow_name ?? `#${n.inbound_workflow_id}`}
+                          </span>
+                        )}
+                      </>
+                    }
+                    action={
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`More actions for ${n.address}`}
+                            className="text-muted-foreground"
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-52">
+                          <DropdownMenuItem onClick={() => openPhoneDialog(n)}>
+                            <Pencil className="h-4 w-4" /> Edit
+                          </DropdownMenuItem>
+                          {!n.is_default_caller_id && n.is_active && (
+                            <DropdownMenuItem onClick={() => onSetDefaultCaller(n)}>
+                              <Star className="h-4 w-4" /> Set as default caller
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem
+                            onClick={() => {
+                              copyTextToClipboard(String(n.id))
+                                .then(() => toast.success("Phone number ID copied"))
+                                .catch(() => toast.error("Failed to copy ID"));
+                            }}
+                          >
+                            <Copy className="h-4 w-4" /> Copy ID
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            variant="destructive"
+                            onClick={() => setPhoneDeleteTarget(n)}
+                          >
+                            <Trash2 className="h-4 w-4" /> Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    }
+                  />
+                );
+              })}
+            </MobileList>
+            <Table className="max-md:hidden">
               <TableHeader>
                 <TableRow>
                   <TableHead>Address</TableHead>
@@ -569,6 +654,7 @@ export default function TelephonyConfigurationDetailPage() {
                 ))}
               </TableBody>
             </Table>
+            </>
           )}
         </CardContent>
       </Card>

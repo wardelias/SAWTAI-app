@@ -175,13 +175,13 @@ function MeetingRow({
     };
 
     return (
-        <li className="flex items-start justify-between gap-4 rounded-md border p-4">
+        <li className="flex items-start justify-between gap-4 rounded-md border p-4 max-md:gap-2 max-md:rounded-xl max-md:p-3.5">
             <div className="min-w-0 flex-1 space-y-1">
-                <div className="flex items-center gap-2">
-                    <p className="truncate font-medium">{meeting.title}</p>
+                <div className="flex items-center gap-2 max-md:flex-col-reverse max-md:items-start max-md:gap-1.5">
+                    <p className="truncate font-medium max-md:whitespace-normal">{meeting.title}</p>
                     <span
                         className={cn(
-                            "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                            "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide max-md:whitespace-nowrap",
                             meeting.booked_by === "agent"
                                 ? "bg-primary/10 text-primary"
                                 : "bg-muted text-muted-foreground"
@@ -225,6 +225,7 @@ function MeetingRow({
                 onClick={handleDelete}
                 disabled={deleting}
                 aria-label="Delete meeting"
+                className="max-md:-mr-1.5 max-md:-mt-1.5 max-md:text-muted-foreground"
             >
                 {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
             </Button>

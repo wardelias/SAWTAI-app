@@ -15,6 +15,7 @@ import { MediaPreviewButton, MediaPreviewDialog } from '@/components/MediaPrevie
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { MobileList, MobileListItem } from '@/components/ui/mobile-list';
 import {
     Table,
     TableBody,
@@ -582,7 +583,47 @@ export default function UsagePage() {
                             </div>
                         ) : usageHistory && usageHistory.runs.length > 0 ? (
                             <>
-                                <div className="bg-card border rounded-lg overflow-hidden shadow-sm">
+                                <MobileList>
+                                    {usageHistory.runs.map((run) => {
+                                        const phone = run.call_type === 'inbound' ? run.caller_number : run.called_number;
+                                        return (
+                                            <MobileListItem
+                                                key={run.id}
+                                                href={`/workflow/${run.workflow_id}/run/${run.id}`}
+                                                leading={
+                                                    <span className="flex size-10 items-center justify-center rounded-xl bg-muted">
+                                                        <CallTypeCell mode={run.mode} callType={run.call_type} />
+                                                    </span>
+                                                }
+                                                title={run.workflow_name || 'Unknown'}
+                                                subtitle={`#${run.id} · ${formatDateTime(run.created_at, effectiveTimezone)}`}
+                                                meta={
+                                                    <>
+                                                        <span className="font-medium tabular-nums">
+                                                            {formatDuration(run.call_duration_seconds)}
+                                                        </span>
+                                                        {phone && <span className="text-muted-foreground tabular-nums">{phone}</span>}
+                                                        {!!organizationPricing?.price_per_second_usd && run.charge_usd != null && (
+                                                            <span className="text-muted-foreground tabular-nums">
+                                                                ${run.charge_usd.toFixed(2)}
+                                                            </span>
+                                                        )}
+                                                        {run.disposition && <Badge variant="outline">{run.disposition}</Badge>}
+                                                    </>
+                                                }
+                                                action={(run.recording_url || run.transcript_url) && (
+                                                    <MediaPreviewButton
+                                                        recordingUrl={run.recording_url}
+                                                        transcriptUrl={run.transcript_url}
+                                                        runId={run.id}
+                                                        onOpenPreview={mediaPreview.openPreview}
+                                                    />
+                                                )}
+                                            />
+                                        );
+                                    })}
+                                </MobileList>
+                                <div className="bg-card border rounded-lg overflow-hidden shadow-sm max-md:hidden">
                                     <Table>
                                         <TableHeader>
                                             <TableRow className="bg-muted/50">
@@ -683,8 +724,8 @@ export default function UsagePage() {
 
                                 {/* Pagination */}
                                 {usageHistory.total_pages > 1 && (
-                                    <div className="flex items-center justify-between mt-6">
-                                        <p className="text-sm text-muted-foreground">
+                                    <div className="flex items-center justify-between mt-6 max-md:mt-4 max-md:gap-3">
+                                        <p className="text-sm text-muted-foreground max-md:text-xs">
                                             Page {usageHistory.page} of {usageHistory.total_pages} ({usageHistory.total_count} total runs)
                                         </p>
                                         <div className="flex gap-2">

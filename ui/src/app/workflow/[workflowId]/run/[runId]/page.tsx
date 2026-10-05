@@ -90,8 +90,8 @@ function getTranscriptMetrics(logs: WorkflowRunLogs | null, gatheredContext: Rec
 function MetricCard({ label, value }: { label: string; value: string }) {
     return (
         <div className="rounded-xl border border-border bg-muted/40 px-4 py-3">
-            <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
-            <p className="mt-2 text-lg font-semibold text-foreground">{value}</p>
+            <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground max-sm:text-[10px] max-sm:tracking-[0.1em]">{label}</p>
+            <p className="mt-2 text-lg font-semibold text-foreground max-sm:mt-1">{value}</p>
         </div>
     );
 }
@@ -552,7 +552,7 @@ function RunMetricsSection({
             <CardHeader className="pb-3">
                 <CardTitle className="text-lg">Run Metrics</CardTitle>
             </CardHeader>
-            <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 max-sm:grid-cols-2 max-sm:gap-2">
                 <MetricCard label="Duration" value={formatDuration(costInfo?.call_duration_seconds)} />
                 <MetricCard label="User Turns" value={String(metrics.userTurns)} />
                 <MetricCard label="Bot Turns" value={String(metrics.botTurns)} />
@@ -716,9 +716,9 @@ export default function WorkflowRunPage() {
     }
     else if (showRunDetailsView) {
         returnValue = (
-            <div className={`flex ${RUN_SHELL_HEIGHT_CLASS} min-h-0 w-full overflow-hidden bg-background`}>
-                <div className="min-w-0 flex-1 overflow-y-auto">
-                    <div className="mx-auto w-full max-w-4xl space-y-6 p-6">
+            <div className={`flex ${RUN_SHELL_HEIGHT_CLASS} min-h-0 w-full overflow-hidden bg-background max-md:h-auto max-md:max-h-none max-md:min-h-0 max-md:flex-col max-md:overflow-visible`}>
+                <div className="min-w-0 flex-1 overflow-y-auto max-md:overflow-visible">
+                    <div className="mx-auto w-full max-w-4xl space-y-6 p-6 max-md:space-y-4 max-md:px-4 max-md:py-5">
                     <Card className="border-border">
                         <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                             <div className="min-w-0 flex-1 space-y-2">
@@ -763,10 +763,10 @@ export default function WorkflowRunPage() {
                                 )}
                             </div>
                             <div className="flex shrink-0 items-center gap-2">
-                                <Link href={`/workflow/${params.workflowId}`}>
+                                <Link href={`/workflow/${params.workflowId}`} className="max-md:w-full">
                                     <Button
                                         ref={customizeButtonRef}
-                                        className="gap-2"
+                                        className="gap-2 max-md:w-full"
                                     >
                                         <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -777,7 +777,7 @@ export default function WorkflowRunPage() {
                             </div>
                         </CardHeader>
                         <CardContent>
-                            <p className="text-muted-foreground mb-8">
+                            <p className="text-muted-foreground mb-8 max-md:mb-5 max-md:text-sm">
                                 {isTextChatRun
                                     ? 'Review the conversation history, metrics, and context captured for this text session.'
                                     : 'Your voice agent run has been completed successfully. You can preview or download the transcript and recording.'}
@@ -795,7 +795,7 @@ export default function WorkflowRunPage() {
                                                 onOpenPreview={openPreview}
                                             />
                                         </div>
-                                        <div className="flex items-center gap-2 border-l border-border pl-4">
+                                        <div className="flex items-center gap-2 border-l border-border pl-4 max-md:border-l-0 max-md:pl-0">
                                             <span className="text-sm text-muted-foreground">Download:</span>
                                             <Button
                                                 onClick={() => downloadFile(workflowRun?.transcript_url ?? null)}
@@ -819,7 +819,7 @@ export default function WorkflowRunPage() {
                                     </>
                                 )}
                                 {workflowRun?.gathered_context?.trace_url && (
-                                    <div className={`flex items-center gap-2 ${isTextChatRun ? '' : 'border-l border-border pl-4'}`}>
+                                    <div className={`flex items-center gap-2 ${isTextChatRun ? '' : 'border-l border-border pl-4 max-md:border-l-0 max-md:pl-0'}`}>
                                         <span className="text-sm text-muted-foreground">Trace:</span>
                                         <Button
                                             asChild
@@ -855,7 +855,7 @@ export default function WorkflowRunPage() {
                             />
                         )}
 
-                        <div className="grid gap-6 md:grid-cols-2">
+                        <div className="grid gap-6 md:grid-cols-2 max-md:grid-cols-[minmax(0,1fr)] max-md:gap-4">
                             <ContextDisplay
                                 title="Initial Context"
                                 context={workflowRun?.initial_context ?? null}
@@ -875,7 +875,7 @@ export default function WorkflowRunPage() {
                     </div>
                 </div>
 
-                <div className="h-full min-h-0 w-[420px] shrink-0 border-l border-border bg-background p-5">
+                <div className="h-full min-h-0 w-[420px] shrink-0 border-l border-border bg-background p-5 max-md:h-[75dvh] max-md:w-full max-md:border-l-0 max-md:border-t max-md:px-4 max-md:pt-4 max-md:pb-6">
                     <ConversationRailFrame className="h-full">
                         <RealtimeFeedback mode="historical" logs={workflowRun?.logs ?? null} />
                     </ConversationRailFrame>

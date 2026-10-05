@@ -77,7 +77,7 @@ export function SipConnectivityCard({
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <Card>
-        <CardHeader className="flex flex-row items-start justify-between gap-4">
+        <CardHeader className="flex flex-row items-start justify-between gap-4 max-md:flex-col max-md:items-stretch">
           <div className="space-y-1">
             <CardTitle>SIP connectivity</CardTitle>
             <CardDescription>

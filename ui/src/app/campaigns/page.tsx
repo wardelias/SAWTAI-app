@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus } from 'lucide-react';
+import { Megaphone, Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
@@ -9,6 +9,7 @@ import type { CampaignsResponse } from '@/client/types.gen';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { MobileList, MobileListIcon, MobileListItem } from '@/components/ui/mobile-list';
 import {
     Table,
     TableBody,
@@ -120,7 +121,29 @@ export default function CampaignsPage() {
                                 ))}
                             </div>
                         ) : campaignsData && campaignsData.campaigns.length > 0 ? (
-                            <div className="overflow-x-auto">
+                            <>
+                            <MobileList>
+                                {campaignsData.campaigns.map((campaign) => (
+                                    <MobileListItem
+                                        key={campaign.id}
+                                        href={`/campaigns/${campaign.id}`}
+                                        leading={<MobileListIcon><Megaphone /></MobileListIcon>}
+                                        title={campaign.name}
+                                        subtitle={`${campaign.workflow_name} · ${formatDate(campaign.created_at, organizationTimezone)}`}
+                                        meta={
+                                            <>
+                                                <Badge variant={getStateBadgeVariant(campaign.state)}>
+                                                    {campaign.state}
+                                                </Badge>
+                                                <span className="text-muted-foreground tabular-nums">
+                                                    {campaign.executed_count} / {campaign.total_queued_count} called
+                                                </span>
+                                            </>
+                                        }
+                                    />
+                                ))}
+                            </MobileList>
+                            <div className="overflow-x-auto max-md:hidden">
                                 <Table>
                                     <TableHeader>
                                         <TableRow>
@@ -171,6 +194,7 @@ export default function CampaignsPage() {
                                     </TableBody>
                                 </Table>
                             </div>
+                            </>
                         ) : (
                             <div className="text-center py-8">
                                 <p className="mb-4">No campaigns found</p>

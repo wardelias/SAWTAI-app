@@ -95,7 +95,7 @@ export default function LeadDetailPage() {
 
     return (
         <div className="container mx-auto p-6 space-y-6 max-md:space-y-5 max-md:px-4 max-md:py-5">
-            <Button variant="ghost" onClick={() => router.push('/leads')}>
+            <Button variant="ghost" onClick={() => router.push('/leads')} className="max-md:hidden">
                 <ArrowLeft className="h-4 w-4 mr-2" />
                 Back to leads
             </Button>

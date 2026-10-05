@@ -898,27 +898,28 @@ const data = await response.json();`;
             <div className="container mx-auto px-4 py-8 max-md:py-5">
                 <div className="max-w-4xl mx-auto">
                     {/* Header */}
-                    <div className="flex items-center justify-between mb-6">
-                        <div className="flex items-center gap-4">
+                    <div className="flex items-center justify-between mb-6 max-md:mb-5 max-md:flex-col max-md:items-stretch max-md:gap-3">
+                        <div className="flex items-center gap-4 max-md:min-w-0">
                             <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => router.push("/tools")}
+                                className="max-md:hidden"
                             >
                                 <ArrowLeft className="w-4 h-4 mr-2" />
                                 Back
                             </Button>
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-3 max-md:min-w-0">
                                 <div
-                                    className="w-10 h-10 rounded-lg flex items-center justify-center"
+                                    className="w-10 h-10 rounded-lg flex items-center justify-center max-md:shrink-0"
                                     style={{
                                         backgroundColor: tool.icon_color || categoryConfig?.iconColor || "#3B82F6",
                                     }}
                                 >
                                     {renderToolIcon(tool.category)}
                                 </div>
-                                <div>
-                                    <h1 className="text-xl font-bold">{name}</h1>
+                                <div className="max-md:min-w-0">
+                                    <h1 className="text-xl font-bold max-md:truncate">{name}</h1>
                                     <p className="text-sm text-muted-foreground">
                                         {getToolTypeLabel(tool.category)}
                                     </p>
@@ -1161,13 +1162,13 @@ const data = await response.json();`;
                         </div>
                     )}
 
-                    <div className="flex justify-end gap-2 mt-6">
+                    <div className="flex justify-end gap-2 mt-6 max-md:mt-5 max-md:*:flex-1">
                         {isHttpApiTool && (
                             hasUnsavedHttpChanges ? (
                                 <Tooltip>
                                     <TooltipTrigger asChild>
                                         <span className="inline-flex" tabIndex={0}>
-                                            <Button type="button" variant="outline" disabled>
+                                            <Button type="button" variant="outline" disabled className="max-md:w-full">
                                                 <FlaskConical className="w-4 h-4 mr-2" />
                                                 Test Tool
                                             </Button>

@@ -19,6 +19,7 @@ import type { MpsBillingCreditsResponse, MpsCreditLedgerEntryResponse } from "@/
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { MobileList, MobileListItem } from "@/components/ui/mobile-list";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -330,7 +331,47 @@ export default function BillingPage() {
                     </CardHeader>
                     <CardContent>
                         {ledgerEntries.length > 0 ? (
-                            <div className="bg-card border rounded-lg overflow-x-auto shadow-sm">
+                            <>
+                            <MobileList>
+                                {ledgerEntries.map((entry) => {
+                                    const delta = entry.credits_delta ?? 0;
+                                    const amount = formatAmount(entry.amount_minor, entry.amount_currency);
+                                    return (
+                                        <MobileListItem
+                                            key={entry.id}
+                                            href={getRunHref(entry) ?? undefined}
+                                            title={getLedgerEntryLabel(entry)}
+                                            subtitle={[
+                                                formatDateTime(entry.created_at, organizationTimezone),
+                                                entry.workflow_run_id ? `Run #${entry.workflow_run_id}` : null,
+                                                formatBillableQuantity(entry),
+                                            ]
+                                                .filter(Boolean)
+                                                .join(" · ")}
+                                            meta={
+                                                <>
+                                                    {entry.origin && (
+                                                        <Badge variant="secondary">{formatTitleCase(entry.origin)}</Badge>
+                                                    )}
+                                                    <span className="text-muted-foreground tabular-nums">
+                                                        Balance {formatCredits(entry.balance_after)}
+                                                    </span>
+                                                    {amount !== "-" && (
+                                                        <span className="text-muted-foreground tabular-nums">{amount}</span>
+                                                    )}
+                                                </>
+                                            }
+                                            trailing={
+                                                <span className={`text-sm font-semibold tabular-nums ${delta >= 0 ? "text-green-600" : "text-destructive"}`}>
+                                                    {delta >= 0 ? "+" : ""}
+                                                    {formatCredits(delta)}
+                                                </span>
+                                            }
+                                        />
+                                    );
+                                })}
+                            </MobileList>
+                            <div className="bg-card border rounded-lg overflow-x-auto shadow-sm max-md:hidden">
                                 <Table>
                                     <TableHeader>
                                         <TableRow className="bg-muted/50">
@@ -395,6 +436,7 @@ export default function BillingPage() {
                                     </TableBody>
                                 </Table>
                             </div>
+                            </>
                         ) : (
                             <div className="rounded-lg border border-dashed p-8 text-center text-muted-foreground">
                                 No ledger entries yet

@@ -170,7 +170,7 @@ export function TrunkCard({
   return (
     <>
       <Card>
-        <CardHeader className="flex flex-row items-start justify-between gap-4">
+        <CardHeader className="flex flex-row items-start justify-between gap-4 max-md:flex-col max-md:items-stretch">
           <div className="space-y-1">
             <CardTitle>Outbound trunks</CardTitle>
             <CardDescription>

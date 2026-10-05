@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Repeat, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { MobileList, MobileListIcon, MobileListItem } from '@/components/ui/mobile-list';
 import {
     Select,
     SelectContent,
@@ -179,7 +180,31 @@ export default function SequencesPage() {
                             ))}
                         </div>
                     ) : sequences.length > 0 ? (
-                        <div className="overflow-x-auto">
+                        <>
+                        <MobileList>
+                            {sequences.map((seq) => (
+                                <MobileListItem
+                                    key={seq.id}
+                                    href={`/sequences/${seq.id}`}
+                                    leading={<MobileListIcon><Repeat /></MobileListIcon>}
+                                    title={seq.name}
+                                    subtitle={[
+                                        `${seq.steps.length} ${seq.steps.length === 1 ? 'step' : 'steps'}`,
+                                        seq.quiet_hours_start != null && seq.quiet_hours_end != null
+                                            ? `Quiet ${seq.quiet_hours_start}:00 – ${seq.quiet_hours_end}:00`
+                                            : null,
+                                    ]
+                                        .filter(Boolean)
+                                        .join(' · ')}
+                                    trailing={
+                                        <Badge variant={seq.status === 'active' ? 'default' : 'secondary'}>
+                                            {seq.status}
+                                        </Badge>
+                                    }
+                                />
+                            ))}
+                        </MobileList>
+                        <div className="overflow-x-auto max-md:hidden">
                             <Table>
                                 <TableHeader>
                                     <TableRow>
@@ -226,6 +251,7 @@ export default function SequencesPage() {
                                 </TableBody>
                             </Table>
                         </div>
+                        </>
                     ) : (
                         <div className="text-center py-12 text-muted-foreground">
                             No sequences yet. Create one to start reactivating leads.
