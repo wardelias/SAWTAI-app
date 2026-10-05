@@ -226,6 +226,13 @@ services:
       # to your Docker bridge subnet — if that exposure matters to you.
       FORWARDED_ALLOW_IPS: "*"
 
+      # AI Assistant (chat that builds and edits agents). Set ANTHROPIC_API_KEY
+      # in .env to enable it; the assistant stays hidden while it is empty.
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      AGENT_COPILOT_MODEL: "${AGENT_COPILOT_MODEL:-claude-opus-5-5}"
+      AGENT_COPILOT_EFFORT: "${AGENT_COPILOT_EFFORT:-medium}"
+      AGENT_COPILOT_DAILY_MESSAGE_LIMIT: "${AGENT_COPILOT_DAILY_MESSAGE_LIMIT:-200}"
+
       # Langfuse — credentials can be set here or per-organization via the UI
       # at /settings. Tracing is automatically active when credentials are
       # available; uncomment to set defaults for all organizations.
