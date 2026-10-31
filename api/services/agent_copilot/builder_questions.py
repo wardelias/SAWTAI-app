@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import anthropic
+from loguru import logger
+
 from api.services.agent_copilot.client import (
     api_error_detail,
     api_error_message,
@@ -27,7 +29,6 @@ from api.services.agent_copilot.client import (
 )
 from api.services.agent_copilot.history import consume_daily_message
 from api.services.agent_copilot.settings import EffectiveSettings
-from loguru import logger
 
 # AI-written questions per interview; the last request must finish.
 MAX_QUESTIONS = 10
