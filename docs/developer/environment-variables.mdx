@@ -211,6 +211,29 @@ Controls concurrency for [Campaigns](/core-concepts/campaigns), Dograh's bulk ou
 
 ---
 
+## Meta Lead Ads
+
+Powers the Marketing page's **Connect with Facebook** button: you sign in with Facebook, pick a Page and lead form, and your agent calls each new lead. Without `META_APP_ID` and `META_APP_SECRET`, the Marketing page falls back to pasting a Page access token by hand.
+
+To set it up, create an app at [developers.facebook.com](https://developers.facebook.com):
+
+1. Add the **Facebook Login** product and add `META_OAUTH_REDIRECT_URI` (by default `<UI_APP_URL>/marketing/meta/callback`) to **Valid OAuth Redirect URIs**.
+2. Optional, for calls within seconds instead of the next poll: add the **Webhooks** product, choose the **Page** object, set the callback URL to `<BACKEND_API_ENDPOINT>/api/v1/marketing/meta/webhook` with your `META_WEBHOOK_VERIFY_TOKEN`, and subscribe to the `leadgen` field. Pages you connect are subscribed to your app automatically.
+3. Before people outside your app's roles can connect, request Advanced Access to the permissions in `META_OAUTH_SCOPES` through App Review.
+
+| Variable | Default | Description |
+|---|---|---|
+| `META_APP_ID` | `null` | Meta app ID. Set together with `META_APP_SECRET` to enable Connect with Facebook |
+| `META_APP_SECRET` | `null` | Meta app secret. Also verifies webhook signatures. Keep secret |
+| `META_OAUTH_REDIRECT_URI` | `<UI_APP_URL>/marketing/meta/callback` | Where Facebook returns after sign-in. Must exactly match a Valid OAuth Redirect URI in the app |
+| `META_OAUTH_SCOPES` | `pages_show_list,pages_read_engagement,pages_manage_metadata,pages_manage_ads,leads_retrieval,business_management` | Permissions requested at sign-in |
+| `META_LOGIN_CONFIG_ID` | `null` | Facebook Login for Business configuration ID. When set it is sent instead of `META_OAUTH_SCOPES` |
+| `META_WEBHOOK_VERIFY_TOKEN` | `null` | Any random string; must match the verify token in the app's Webhooks settings. Unset disables the webhook and leads arrive by polling only |
+| `META_LEADS_POLL_INTERVAL_SECONDS` | `120` | How often connected lead forms are polled for new leads (rounded to whole minutes) |
+| `META_GRAPH_API_VERSION` | `v21.0` | Graph API version used for all Meta calls |
+
+---
+
 ## Further Customisation
 
 The variables documented here cover the standard configuration surface. For advanced customisation — such as integrating additional services or tuning internal behaviour — consult the relevant module alongside `api/constants.py` to understand how each variable is consumed.

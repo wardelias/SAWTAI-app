@@ -16,7 +16,11 @@ from loguru import logger
 from api.db import db_client
 from api.enums import WebhookCredentialType
 from api.services.campaign.runner import campaign_runner_service
-from api.services.marketing import meta_graph_client
+from api.services.marketing import (
+    meta_graph_client,
+    meta_oauth_service,
+    meta_webhook_service,
+)
 from api.tasks.arq import enqueue_job
 from api.tasks.function_names import FunctionNames
 
@@ -49,6 +53,9 @@ def _connection_view(campaign, workflow_name: Optional[str]) -> Dict[str, Any]:
         "form_id": meta.get("form_id"),
         "form_name": meta.get("form_name"),
         "page_id": meta.get("page_id"),
+        "page_name": meta.get("page_name"),
+        "connected_via": meta.get("connected_via") or "token",
+        "instant": bool(meta.get("webhook_subscribed")),
         "workflow_id": campaign.workflow_id,
         "workflow_name": workflow_name,
         "call_after_seconds": int(meta.get("call_after_seconds") or 0),
@@ -79,20 +86,54 @@ async def list_connections(organization_id: int) -> list[Dict[str, Any]]:
     return [_connection_view(c, name_map.get(c.workflow_id)) for c in active]
 
 
+async def _form_already_connected(organization_id: int, form_id: str) -> bool:
+    campaigns = await db_client.get_campaigns_by_source_type(
+        organization_id, SOURCE_TYPE
+    )
+    return any(
+        c.source_id == form_id
+        and not ((c.orchestrator_metadata or {}).get("meta") or {}).get("disconnected")
+        for c in campaigns
+    )
+
+
+async def _subscribe_leadgen_webhook(page_id: str, page_access_token: str) -> bool:
+    """Best effort: push new leads instantly. Polling still covers failures."""
+    if not meta_webhook_service.webhook_enabled():
+        return False
+    try:
+        await meta_graph_client.subscribe_page_to_leadgen(page_id, page_access_token)
+        return True
+    except ValueError as e:
+        logger.warning(
+            f"Could not subscribe Page {page_id} to leadgen webhooks ({e}); "
+            "leads will arrive via polling"
+        )
+        return False
+
+
 async def connect_meta(
     *,
     organization_id: int,
     user_id: int,
-    page_access_token: str,
     form_id: str,
     workflow_id: int,
     call_after_seconds: int,
     max_retries: int,
+    page_access_token: Optional[str] = None,
     page_id: Optional[str] = None,
     country_hint: Optional[str] = None,
     name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Validate a Meta form + token, store the token, and start an evergreen campaign."""
+    """Validate a Meta form, store its Page token, and start an evergreen campaign.
+
+    Two ways in:
+
+    * **Connected account** (no ``page_access_token``): ``page_id`` + ``form_id``
+      come from the picker; the Page token is resolved from the org's Facebook
+      login and the form must belong to that Page.
+    * **Manual token**: the operator pastes a Page access token and form id.
+    """
     # Verify the chosen agent (workflow) belongs to this org.
     workflow_name = await db_client.get_workflow_name(
         workflow_id, organization_id=organization_id
@@ -100,8 +141,37 @@ async def connect_meta(
     if not workflow_name:
         raise MetaConnectionError("Selected agent (workflow) not found")
 
-    # Validate the token can actually read the form (raises MetaGraphError/ValueError).
-    form = await meta_graph_client.get_form(form_id, page_access_token)
+    # Two connections on one form would call every lead twice.
+    if await _form_already_connected(organization_id, form_id):
+        raise MetaConnectionError(
+            "This lead form is already connected. Configure the existing "
+            "connection instead."
+        )
+
+    webhook_subscribed = False
+    page_name: Optional[str] = None
+    if page_access_token:
+        connected_via = "token"
+        # Validate the token can actually read the form (raises MetaGraphError).
+        form = await meta_graph_client.get_form(form_id, page_access_token)
+    else:
+        connected_via = "oauth"
+        if not page_id:
+            raise MetaConnectionError("Choose a Facebook Page")
+        # Raises if the Page isn't one the connected account manages.
+        page = await meta_oauth_service.get_managed_page(organization_id, page_id)
+        page_access_token = page["access_token"]
+        page_name = page.get("name")
+        forms = await meta_graph_client.list_lead_forms(page_id, page_access_token)
+        picked = next((f for f in forms if f.get("id") == form_id), None)
+        if picked is None:
+            raise MetaConnectionError(
+                "That lead form doesn't belong to the selected Facebook Page"
+            )
+        form = picked
+        webhook_subscribed = await _subscribe_leadgen_webhook(
+            page_id, page_access_token
+        )
     form_name = form.get("name") or f"Form {form_id}"
 
     # Store the Page token in the credential subsystem (org-scoped, UUID-referenced).
@@ -139,12 +209,15 @@ async def connect_meta(
         "evergreen": True,
         "meta": {
             "page_id": page_id,
+            "page_name": page_name,
             "form_id": form_id,
             "form_name": form_name,
             "credential_uuid": credential.credential_uuid,
             "call_after_seconds": call_after_seconds,
             "country_hint": country_hint,
             "last_lead_time": int(now.timestamp()),
+            "connected_via": connected_via,
+            "webhook_subscribed": webhook_subscribed,
         },
     }
     campaign = await db_client.update_campaign(
