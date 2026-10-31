@@ -774,6 +774,26 @@ class CampaignClient(BaseDBClient):
             result = await session.execute(query)
             return list(result.scalars().all())
 
+    async def get_active_campaigns_by_source_ids(
+        self, source_type: str, source_ids: list[str]
+    ) -> list[CampaignModel]:
+        """Get running campaigns of a source type whose source_id is in source_ids.
+
+        Used by the Meta leadgen webhook to find which connections a pushed
+        lead belongs to. Not org-scoped by design (the webhook carries no org);
+        each match is then polled with its own org-scoped credential.
+        """
+        if not source_ids:
+            return []
+        async with self.async_session() as session:
+            query = select(CampaignModel).where(
+                CampaignModel.source_type == source_type,
+                CampaignModel.source_id.in_(source_ids),
+                CampaignModel.state == "running",
+            )
+            result = await session.execute(query)
+            return list(result.scalars().all())
+
     async def get_existing_source_uuids(
         self, campaign_id: int, source_uuids: list[str]
     ) -> set[str]:

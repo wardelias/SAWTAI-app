@@ -1,11 +1,22 @@
 "use client";
 
-import { Check, Clock, Facebook, Globe, Instagram, Linkedin, Loader2, Lock, Plus, Settings2, Target, Webhook, Zap } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Check, Clock, Facebook, Globe, Instagram, Linkedin, Loader2, Lock, Plus, RefreshCw, Settings2, Target, Webhook, Zap } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { getWorkflowsSummaryApiV1WorkflowSummaryGet } from "@/client/sdk.gen";
 import type { WorkflowSummaryResponse } from "@/client/types.gen";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,9 +43,17 @@ import { useAuth } from "@/lib/auth";
 import {
     connectMetaForm,
     type ConnectMetaPayload,
+    disconnectMetaAccount,
     disconnectMetaConnection,
+    getMetaAccount,
     listMetaConnections,
+    listMetaLeadForms,
+    listMetaPages,
+    type MetaAccount,
     type MetaConnection,
+    type MetaLeadForm,
+    type MetaPage,
+    startMetaOAuth,
     type UpdateConnectionPayload,
     updateMetaConnection,
 } from "@/lib/marketingApi";
@@ -124,19 +143,53 @@ function callAfterLabel(seconds: number) {
     return CALL_AFTER_OPTIONS.find((o) => o.value === seconds)?.label ?? `After ${seconds}s`;
 }
 
+const FORM_STATUS_LABEL: Record<string, string> = {
+    ACTIVE: "Active",
+    DRAFT: "Draft",
+    ARCHIVED: "Archived",
+};
+
+/** Active forms first; deleted forms can never receive leads, so hide them. */
+function sortForms(forms: MetaLeadForm[]) {
+    const rank = (f: MetaLeadForm) => (f.status === "ACTIVE" ? 0 : f.status === "DRAFT" ? 1 : 2);
+    return forms.filter((f) => f.status !== "DELETED").sort((a, b) => rank(a) - rank(b));
+}
+
+function formDetail(form: MetaLeadForm) {
+    const parts = [FORM_STATUS_LABEL[form.status ?? ""] ?? form.status];
+    if (form.leads_count != null) parts.push(`${form.leads_count} lead${form.leads_count === 1 ? "" : "s"}`);
+    return parts.filter(Boolean).join(" · ");
+}
+
+type AuthHeadersFn = () => Promise<{ Authorization: string }>;
+
 type DialogState =
     | { mode: "connect" }
     | { mode: "edit"; connection: MetaConnection }
     | null;
 
 export default function MarketingPage() {
+    return (
+        <Suspense fallback={null}>
+            <MarketingPageContent />
+        </Suspense>
+    );
+}
+
+function MarketingPageContent() {
     const { user, getAccessToken, loading: authLoading } = useAuth();
+    const router = useRouter();
+    const searchParams = useSearchParams();
 
     const [agents, setAgents] = useState<WorkflowSummaryResponse[]>([]);
     const [connections, setConnections] = useState<MetaConnection[]>([]);
+    const [metaAccount, setMetaAccount] = useState<MetaAccount | null>(null);
     const [loading, setLoading] = useState(true);
     const [dialog, setDialog] = useState<DialogState>(null);
+    const [redirectingToFacebook, setRedirectingToFacebook] = useState(false);
+    const [confirmUnlink, setConfirmUnlink] = useState(false);
     const hasFetched = useRef(false);
+    const handledOAuthReturn = useRef(false);
 
     const authHeaders = useCallback(async () => {
         const token = await getAccessToken();
@@ -166,14 +219,64 @@ export default function MarketingPage() {
         setAgents(res.data ?? []);
     }, [authHeaders]);
 
+    const fetchMetaAccount = useCallback(async () => {
+        const headers = await authHeaders();
+        const res = await getMetaAccount(headers);
+        if (res.error) {
+            toast.error(detailFromError(res.error, "Failed to load Facebook connection"));
+            return;
+        }
+        setMetaAccount(res.data ?? null);
+    }, [authHeaders]);
+
     useEffect(() => {
         if (authLoading || !user || hasFetched.current) return;
         hasFetched.current = true;
         (async () => {
-            await Promise.all([fetchAgents(), fetchConnections()]);
+            await Promise.all([fetchAgents(), fetchConnections(), fetchMetaAccount()]);
             setLoading(false);
         })();
-    }, [authLoading, user, fetchAgents, fetchConnections]);
+    }, [authLoading, user, fetchAgents, fetchConnections, fetchMetaAccount]);
+
+    // Back from Facebook Login (via /marketing/meta/callback): open the lead
+    // form picker straight away, or explain why the connection failed.
+    useEffect(() => {
+        if (loading || handledOAuthReturn.current) return;
+        const status = searchParams.get("meta");
+        const error = searchParams.get("meta_error");
+        if (!status && !error) return;
+        handledOAuthReturn.current = true;
+        if (status === "connected") {
+            toast.success("Facebook connected. Pick a lead form to start calling leads.");
+            setDialog({ mode: "connect" });
+        }
+        if (error) toast.error(error);
+        router.replace("/marketing", { scroll: false });
+    }, [loading, searchParams, router]);
+
+    const handleConnectFacebook = async () => {
+        setRedirectingToFacebook(true);
+        const headers = await authHeaders();
+        const res = await startMetaOAuth(headers);
+        if (res.error || !res.data) {
+            toast.error(detailFromError(res.error, "Couldn't start Facebook sign-in"));
+            setRedirectingToFacebook(false);
+            return;
+        }
+        window.location.assign(res.data.authorize_url);
+    };
+
+    const handleUnlinkFacebook = async () => {
+        const headers = await authHeaders();
+        const res = await disconnectMetaAccount(headers);
+        if (res.error) {
+            toast.error(detailFromError(res.error, "Failed to disconnect Facebook"));
+            return;
+        }
+        toast.success("Facebook disconnected. Lead forms you already connected keep calling new leads.");
+        setConfirmUnlink(false);
+        await fetchMetaAccount();
+    };
 
     const handleConnect = async (payload: ConnectMetaPayload) => {
         const headers = await authHeaders();
@@ -182,7 +285,7 @@ export default function MarketingPage() {
             toast.error(detailFromError(res.error, "Failed to connect Meta form"));
             return;
         }
-        toast.success("Meta form connected — new leads will be called automatically.");
+        toast.success("Lead form connected — your agent will call every new lead automatically.");
         setDialog(null);
         await fetchConnections();
     };
@@ -214,6 +317,20 @@ export default function MarketingPage() {
     // All source cards are shown; Meta stays connectable (you can add multiple
     // forms), the rest render as "Coming soon".
     const available = SOURCES;
+    const connectedFormIds = useMemo(
+        () => new Set(connections.map((c) => c.form_id).filter((id): id is string => !!id)),
+        [connections],
+    );
+
+    const metaActions = (
+        <MetaCardActions
+            account={metaAccount}
+            redirecting={redirectingToFacebook}
+            onConnectFacebook={handleConnectFacebook}
+            onAddForm={() => setDialog({ mode: "connect" })}
+            onUnlink={() => setConfirmUnlink(true)}
+        />
+    );
 
     return (
         <div className="container mx-auto px-4 py-8 max-md:py-5">
@@ -244,8 +361,22 @@ export default function MarketingPage() {
                             </div>
 
                             {connections.length === 0 ? (
-                                <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                                    No sources connected yet. Connect Meta Instant Form below to start routing leads to your agents.
+                                <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground sm:p-8">
+                                    <p className="mb-4 text-center">No sources connected yet. Get your agent calling Facebook leads in three steps:</p>
+                                    <ol className="mx-auto grid max-w-2xl gap-3 sm:grid-cols-3">
+                                        {[
+                                            "Connect your Facebook account",
+                                            "Pick the lead form to pull leads from",
+                                            "Your voice agent calls every new lead",
+                                        ].map((step, i) => (
+                                            <li key={step} className="flex items-center gap-3 rounded-lg bg-muted/50 p-3 text-foreground">
+                                                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
+                                                    {i + 1}
+                                                </span>
+                                                {step}
+                                            </li>
+                                        ))}
+                                    </ol>
                                 </div>
                             ) : (
                                 <div className="space-y-3">
@@ -259,8 +390,8 @@ export default function MarketingPage() {
                                                     </div>
 
                                                     <div className="min-w-0 flex-1">
-                                                        <div className="flex items-center gap-2">
-                                                            <p className="font-medium">{conn.form_name || META_SOURCE.name}</p>
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <p className="min-w-0 break-words font-medium">{conn.form_name || META_SOURCE.name}</p>
                                                             {conn.enabled ? (
                                                                 <Badge className="bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300">
                                                                     Active
@@ -269,7 +400,16 @@ export default function MarketingPage() {
                                                                 <Badge variant="secondary">Paused</Badge>
                                                             )}
                                                         </div>
+                                                        {conn.page_name && (
+                                                            <p className="text-xs text-muted-foreground">{conn.page_name}</p>
+                                                        )}
                                                         <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                                                            {conn.instant && (
+                                                                <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
+                                                                    <Zap className="h-3.5 w-3.5" />
+                                                                    Instant
+                                                                </span>
+                                                            )}
                                                             <span className="inline-flex items-center gap-1">
                                                                 <Target className="h-3.5 w-3.5" />
                                                                 {conn.workflow_name || "Unassigned"}
@@ -320,7 +460,9 @@ export default function MarketingPage() {
                                                 <CardDescription>{source.description}</CardDescription>
                                             </CardHeader>
                                             <CardContent>
-                                                {source.connectable ? (
+                                                {source.id === "meta_instant_form" ? (
+                                                    metaActions
+                                                ) : source.connectable ? (
                                                     <Button
                                                         variant="outline"
                                                         className="w-full"
@@ -349,12 +491,92 @@ export default function MarketingPage() {
                 <ConfigureSourceDialog
                     dialog={dialog}
                     agents={agents}
+                    account={metaAccount}
+                    connectedFormIds={connectedFormIds}
+                    authHeaders={authHeaders}
                     onOpenChange={(open) => !open && setDialog(null)}
                     onConnect={handleConnect}
                     onUpdate={handleUpdate}
                     onDisconnect={handleDisconnect}
                 />
             )}
+
+            <AlertDialog open={confirmUnlink} onOpenChange={setConfirmUnlink}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Disconnect Facebook?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            You won&apos;t be able to add new lead forms until you reconnect. Lead forms you already
+                            connected keep calling new leads; disconnect those individually to stop them.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleUnlinkFacebook}>Disconnect</AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+        </div>
+    );
+}
+
+interface MetaCardActionsProps {
+    account: MetaAccount | null;
+    redirecting: boolean;
+    onConnectFacebook: () => void;
+    onAddForm: () => void;
+    onUnlink: () => void;
+}
+
+/** Meta card button: Connect with Facebook -> Add lead form (or manual token if OAuth is off). */
+function MetaCardActions({ account, redirecting, onConnectFacebook, onAddForm, onUnlink }: MetaCardActionsProps) {
+    if (!account?.oauth_configured) {
+        return (
+            <Button variant="outline" className="w-full" onClick={onAddForm}>
+                <Plus className="mr-1 h-4 w-4" />
+                Connect
+            </Button>
+        );
+    }
+
+    const facebookButton = (label: string, Icon: typeof Facebook) => (
+        <Button
+            className="w-full bg-[#1877F2] text-white hover:bg-[#166FE5]"
+            disabled={redirecting}
+            onClick={onConnectFacebook}
+        >
+            {redirecting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Icon className="mr-1 h-4 w-4" />}
+            {label}
+        </Button>
+    );
+
+    if (!account.connected) return facebookButton("Connect with Facebook", Facebook);
+
+    if (account.needs_reconnect) {
+        return (
+            <div className="space-y-2">
+                {facebookButton("Reconnect Facebook", RefreshCw)}
+                <p className="text-xs text-muted-foreground">
+                    Your Facebook connection expired. Connected forms keep calling leads.
+                </p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-2">
+            <Button variant="outline" className="w-full" onClick={onAddForm}>
+                <Plus className="mr-1 h-4 w-4" />
+                Add lead form
+            </Button>
+            <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                <span className="min-w-0 truncate">
+                    Connected as {account.meta_user_name || "your Facebook account"}
+                </span>
+                <button type="button" className="shrink-0 underline-offset-2 hover:underline" onClick={onUnlink}>
+                    Disconnect
+                </button>
+            </div>
         </div>
     );
 }
@@ -362,6 +584,9 @@ export default function MarketingPage() {
 interface ConfigureSourceDialogProps {
     dialog: Exclude<DialogState, null>;
     agents: WorkflowSummaryResponse[];
+    account: MetaAccount | null;
+    connectedFormIds: Set<string>;
+    authHeaders: AuthHeadersFn;
     onOpenChange: (open: boolean) => void;
     onConnect: (payload: ConnectMetaPayload) => Promise<void>;
     onUpdate: (id: number, patch: UpdateConnectionPayload) => Promise<void>;
@@ -371,6 +596,9 @@ interface ConfigureSourceDialogProps {
 function ConfigureSourceDialog({
     dialog,
     agents,
+    account,
+    connectedFormIds,
+    authHeaders,
     onOpenChange,
     onConnect,
     onUpdate,
@@ -378,6 +606,64 @@ function ConfigureSourceDialog({
 }: ConfigureSourceDialogProps) {
     const isConnect = dialog.mode === "connect";
     const existing = dialog.mode === "edit" ? dialog.connection : null;
+    const canPick = !!account?.connected && !account.needs_reconnect;
+
+    // Connected account -> pick Page + form; otherwise paste a token by hand.
+    const [manual, setManual] = useState(!canPick);
+    const usePicker = isConnect && !manual;
+
+    const [pages, setPages] = useState<MetaPage[] | null>(null);
+    const [pickerError, setPickerError] = useState<string | null>(null);
+    const [selectedPageId, setSelectedPageId] = useState("");
+    const [forms, setForms] = useState<MetaLeadForm[] | null>(null);
+    const [pickedFormId, setPickedFormId] = useState("");
+
+    useEffect(() => {
+        if (!usePicker || pages !== null) return;
+        let cancelled = false;
+        (async () => {
+            const res = await listMetaPages(await authHeaders());
+            if (cancelled) return;
+            if (res.error) {
+                setPickerError(detailFromError(res.error, "Couldn't load your Facebook Pages"));
+                setPages([]);
+                return;
+            }
+            const list = res.data?.pages ?? [];
+            setPages(list);
+            const readable = list.filter((p) => p.can_read_leads);
+            if (readable.length === 1) setSelectedPageId(readable[0].id);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [usePicker, pages, authHeaders]);
+
+    useEffect(() => {
+        if (!selectedPageId) return;
+        let cancelled = false;
+        (async () => {
+            setForms(null);
+            setPickedFormId("");
+            setPickerError(null);
+            const res = await listMetaLeadForms(selectedPageId, await authHeaders());
+            if (cancelled) return;
+            if (res.error) {
+                setPickerError(detailFromError(res.error, "Couldn't load lead forms for this Page"));
+                setForms([]);
+                return;
+            }
+            const list = sortForms(res.data?.forms ?? []);
+            setForms(list);
+            const available = list.filter((f) => !connectedFormIds.has(f.id));
+            const active = available.filter((f) => f.status === "ACTIVE");
+            if (available.length === 1) setPickedFormId(available[0].id);
+            else if (active.length === 1) setPickedFormId(active[0].id);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedPageId, authHeaders, connectedFormIds]);
 
     const [pageToken, setPageToken] = useState("");
     const [formId, setFormId] = useState("");
@@ -392,14 +678,24 @@ function ConfigureSourceDialog({
 
     const Icon = META_SOURCE.icon;
 
-    const canSubmit = isConnect
-        ? pageToken.trim().length > 0 && formId.trim().length > 0 && workflowId !== ""
-        : workflowId !== "";
+    const canSubmit = !isConnect
+        ? workflowId !== ""
+        : usePicker
+          ? selectedPageId !== "" && pickedFormId !== "" && workflowId !== ""
+          : pageToken.trim().length > 0 && formId.trim().length > 0 && workflowId !== "";
 
     const handleSubmit = async () => {
         setSaving(true);
         try {
-            if (isConnect) {
+            if (usePicker) {
+                await onConnect({
+                    page_id: selectedPageId,
+                    form_id: pickedFormId,
+                    workflow_id: Number(workflowId),
+                    call_after_seconds: callAfter,
+                    max_retries: maxRetries,
+                });
+            } else if (isConnect) {
                 await onConnect({
                     page_access_token: pageToken.trim(),
                     form_id: formId.trim(),
@@ -432,14 +728,101 @@ function ConfigureSourceDialog({
                         {existing?.form_name || META_SOURCE.name}
                     </DialogTitle>
                     <DialogDescription>
-                        {isConnect
-                            ? "Paste your Meta Page access token and lead form ID, then choose which agent calls new leads."
-                            : "Choose which voice agent handles these leads and when it should call."}
+                        {usePicker
+                            ? "Pick the Facebook Page and lead form to pull leads from, then choose which agent calls them."
+                            : isConnect
+                              ? "Paste your Meta Page access token and lead form ID, then choose which agent calls new leads."
+                              : "Choose which voice agent handles these leads and when it should call."}
                     </DialogDescription>
                 </DialogHeader>
 
                 <div className="grid gap-5 py-4">
-                    {isConnect && (
+                    {usePicker && (
+                        <>
+                            <div className="grid gap-2">
+                                <Label>Facebook Page</Label>
+                                <Select value={selectedPageId} onValueChange={setSelectedPageId} disabled={pages === null}>
+                                    <SelectTrigger>
+                                        <SelectValue
+                                            placeholder={
+                                                pages === null
+                                                    ? "Loading your Pages…"
+                                                    : pages.length
+                                                      ? "Select a Page"
+                                                      : "No Pages found"
+                                            }
+                                        />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {(pages ?? []).map((page) => (
+                                            <SelectItem key={page.id} value={page.id} disabled={!page.can_read_leads}>
+                                                {page.name}
+                                                {!page.can_read_leads && " (no lead access)"}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                {pages?.length === 0 && !pickerError && (
+                                    <p className="text-xs text-muted-foreground">
+                                        No Pages were shared. Reconnect Facebook and allow access to the Page that runs
+                                        your lead ads.
+                                    </p>
+                                )}
+                            </div>
+
+                            {selectedPageId && (
+                                <div className="grid gap-2">
+                                    <Label>Lead form</Label>
+                                    <Select value={pickedFormId} onValueChange={setPickedFormId} disabled={forms === null}>
+                                        <SelectTrigger>
+                                            <SelectValue
+                                                placeholder={
+                                                    forms === null
+                                                        ? "Loading lead forms…"
+                                                        : forms.length
+                                                          ? "Select a lead form"
+                                                          : "No lead forms on this Page"
+                                                }
+                                            />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {(forms ?? []).map((form) => {
+                                                const taken = connectedFormIds.has(form.id);
+                                                return (
+                                                    <SelectItem key={form.id} value={form.id} disabled={taken}>
+                                                        <span>{form.name}</span>
+                                                        <span className="ml-2 text-xs text-muted-foreground">
+                                                            {taken ? "Already connected" : formDetail(form)}
+                                                        </span>
+                                                    </SelectItem>
+                                                );
+                                            })}
+                                        </SelectContent>
+                                    </Select>
+                                    {forms?.length === 0 && !pickerError && (
+                                        <p className="text-xs text-muted-foreground">
+                                            Create an Instant Form for this Page in Meta Ads Manager, then come back.
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+
+                            {pickerError && <p className="text-xs text-destructive">{pickerError}</p>}
+
+                            <p className="text-xs text-muted-foreground">
+                                Only leads submitted from now on are called.{" "}
+                                <button
+                                    type="button"
+                                    className="underline underline-offset-2 hover:text-foreground"
+                                    onClick={() => setManual(true)}
+                                >
+                                    Paste a Page access token instead
+                                </button>
+                            </p>
+                        </>
+                    )}
+
+                    {isConnect && !usePicker && (
                         <>
                             <div className="grid gap-2">
                                 <Label htmlFor="page-token">Page access token</Label>
@@ -473,6 +856,15 @@ function ConfigureSourceDialog({
                                     onChange={(e) => setPageId(e.target.value)}
                                 />
                             </div>
+                            {canPick && (
+                                <button
+                                    type="button"
+                                    className="justify-self-start text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                                    onClick={() => setManual(false)}
+                                >
+                                    Pick a lead form from Facebook instead
+                                </button>
+                            )}
                         </>
                     )}
 
@@ -564,7 +956,7 @@ function ConfigureSourceDialog({
                         ) : (
                             <Check className="mr-1 h-4 w-4" />
                         )}
-                        {isConnect ? "Connect source" : "Save changes"}
+                        {isConnect ? "Start calling leads" : "Save changes"}
                     </Button>
                 </DialogFooter>
             </DialogContent>

@@ -97,14 +97,11 @@ async def sync_campaign_source(ctx: Dict, campaign_id: int) -> None:
         raise
 
 
-async def poll_meta_leads(ctx: Dict, campaign_id: int) -> None:
-    """Poll a single Meta Instant Form connection for new leads.
+META_POLL_LOCK_TTL_SECONDS = 300
+_META_POLL_MAX_RERUNS = 3
 
-    Delegates to the meta_instant_form sync service, which appends new leads as
-    scheduled queued_runs. The campaign orchestrator's periodic sweep dispatches
-    them once due. Failures are logged, never raised, so one bad connection
-    doesn't break the poller sweep.
-    """
+
+async def _poll_meta_once(campaign_id: int) -> None:
     try:
         service = get_sync_service("meta_instant_form")
         count = await service.sync_source_data(campaign_id)
@@ -114,6 +111,46 @@ async def poll_meta_leads(ctx: Dict, campaign_id: int) -> None:
             )
     except Exception as e:
         logger.error(f"poll_meta_leads failed for campaign {campaign_id}: {e}")
+
+
+async def poll_meta_leads(ctx: Dict, campaign_id: int) -> None:
+    """Poll a single Meta Instant Form connection for new leads.
+
+    Delegates to the meta_instant_form sync service, which appends new leads as
+    scheduled queued_runs. The campaign orchestrator's periodic sweep dispatches
+    them once due. Failures are logged, never raised, so one bad connection
+    doesn't break the poller sweep.
+
+    Polls for one connection never overlap: overlapping polls could both see a
+    lead as new and queue (and call) it twice. Webhook bursts make overlap
+    likely, so a request that finds a poll in flight leaves a rerun flag and
+    the holder polls again before releasing the lock.
+    """
+    redis = ctx.get("redis")
+    if redis is None:
+        await _poll_meta_once(campaign_id)
+        return
+
+    lock_key = f"meta_poll_lock:{campaign_id}"
+    rerun_key = f"meta_poll_rerun:{campaign_id}"
+    if not await redis.set(lock_key, "1", nx=True, ex=META_POLL_LOCK_TTL_SECONDS):
+        await redis.set(rerun_key, "1", ex=META_POLL_LOCK_TTL_SECONDS)
+        return
+
+    try:
+        for _ in range(_META_POLL_MAX_RERUNS):
+            await redis.delete(rerun_key)
+            await _poll_meta_once(campaign_id)
+            if not await redis.exists(rerun_key):
+                break
+    finally:
+        await redis.delete(lock_key)
+
+    # A request may have landed between the last check and the release.
+    if await redis.exists(rerun_key):
+        from api.tasks.arq import enqueue_job
+
+        await enqueue_job(FunctionNames.POLL_META_LEADS, campaign_id)
 
 
 async def poll_all_meta_connections(ctx: Dict) -> None:

@@ -290,3 +290,29 @@ META_GRAPH_API_BASE_URL = os.getenv(
 META_LEADS_POLL_INTERVAL_SECONDS = int(
     os.getenv("META_LEADS_POLL_INTERVAL_SECONDS", "120")
 )
+# "Connect with Facebook" (OAuth). Leave META_APP_ID/META_APP_SECRET unset to
+# disable one-click connect; the Marketing page then falls back to pasting a
+# Page access token by hand.
+META_APP_ID = os.getenv("META_APP_ID", "")
+META_APP_SECRET = os.getenv("META_APP_SECRET", "")
+META_OAUTH_DIALOG_BASE_URL = os.getenv(
+    "META_OAUTH_DIALOG_BASE_URL", "https://www.facebook.com"
+)
+# Must exactly match a "Valid OAuth Redirect URI" in the Meta app settings.
+META_OAUTH_REDIRECT_URI = os.getenv(
+    "META_OAUTH_REDIRECT_URI", f"{UI_APP_URL.rstrip('/')}/marketing/meta/callback"
+)
+# Permissions to read Pages, list their lead forms, read leads, and subscribe
+# the Page to the app's leadgen webhook.
+META_OAUTH_SCOPES = os.getenv(
+    "META_OAUTH_SCOPES",
+    "pages_show_list,pages_read_engagement,pages_manage_metadata,"
+    "pages_manage_ads,leads_retrieval,business_management",
+)
+# Optional Facebook Login for Business configuration id. When set it is sent
+# instead of META_OAUTH_SCOPES (the configuration carries the permissions).
+META_LOGIN_CONFIG_ID = os.getenv("META_LOGIN_CONFIG_ID", "")
+# Verify token for the leadgen webhook handshake (must match the value entered
+# in the Meta app's Webhooks settings). Unset disables the webhook endpoint;
+# leads still arrive through the poller.
+META_WEBHOOK_VERIFY_TOKEN = os.getenv("META_WEBHOOK_VERIFY_TOKEN", "")

@@ -162,6 +162,9 @@ class OrganizationConfigurationKey(Enum):
     AGENT_COPILOT_SETTINGS = (
         "AGENT_COPILOT_SETTINGS"  # Org-level AI assistant key, model, and limits
     )
+    META_ADS_ACCOUNT = (
+        "META_ADS_ACCOUNT"  # Facebook account linked via OAuth (user token + profile)
+    )
 
 
 class UserConfigurationKey(Enum):
