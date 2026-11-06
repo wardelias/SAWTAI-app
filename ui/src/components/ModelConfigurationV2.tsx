@@ -20,7 +20,14 @@ import { detailFromError } from "@/lib/apiError";
 import { useAuth } from "@/lib/auth";
 import { fetchModelConfigurationPricing } from "@/lib/modelConfigurationPricing";
 
-export default function ModelConfigurationV2({ docsUrl }: { docsUrl?: string }) {
+export default function ModelConfigurationV2({
+    docsUrl,
+    onReady,
+}: {
+    docsUrl?: string;
+    /** Called once the editor (or its load error) has replaced the skeleton. */
+    onReady?: () => void;
+}) {
     const auth = useAuth();
     const { refreshConfig } = useUserConfig();
     const hasFetched = useRef(false);
@@ -72,6 +79,10 @@ export default function ModelConfigurationV2({ docsUrl }: { docsUrl?: string }) 
 
     }, [auth.loading, auth.user]);
 
+    useEffect(() => {
+        if (!loading) onReady?.();
+    }, [loading, onReady]);
+
     const saveConfiguration = async (configuration: OrganizationAiModelConfigurationV2) => {
         if (!defaults) return;
         setError(null);
@@ -110,7 +121,12 @@ export default function ModelConfigurationV2({ docsUrl }: { docsUrl?: string }) 
                 <div>
                     <h1 className="text-3xl font-bold max-md:text-2xl">AI Models Configuration</h1>
                     <p className="mt-2 text-sm text-muted-foreground">
-                        Organization-scoped model settings.{" "}
+                        Organization-scoped model settings for your voice agents. The AI
+                        Assistant&apos;s Anthropic API key is{" "}
+                        <a href="#ai-assistant" className="underline">
+                            further down
+                        </a>
+                        .{" "}
                         {docsUrl && (
                             <a href={docsUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 underline">
                                 Learn more <ExternalLink className="h-3 w-3" />

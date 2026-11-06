@@ -26,6 +26,7 @@ import { Fragment, type ReactNode, useCallback, useEffect, useRef, useState } fr
 
 import { Button } from '@/components/ui/button';
 import {
+    AI_ASSISTANT_SETTINGS_HREF,
     type CopilotEvent,
     type CopilotStatus,
     fetchCopilotConversation,
@@ -343,11 +344,11 @@ function SetupRequired() {
                 <h3 className="text-base font-semibold">Add an API key to get started</h3>
                 <p className="mx-auto max-w-xs text-sm text-muted-foreground">
                     The AI Assistant runs on Claude. Add your organization&apos;s Anthropic API key in
-                    Settings to start building agents in chat.
+                    Models → AI Assistant to start building agents in chat.
                 </p>
             </div>
             <Button asChild className="gap-2 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white hover:opacity-90">
-                <Link href="/settings#ai-assistant">
+                <Link href={AI_ASSISTANT_SETTINGS_HREF}>
                     <Settings className="h-4 w-4" />
                     Open AI Assistant settings
                 </Link>

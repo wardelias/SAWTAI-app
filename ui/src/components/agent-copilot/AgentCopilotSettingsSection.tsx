@@ -26,7 +26,7 @@ const EFFORT_LABELS: Record<string, string> = {
 };
 
 /** Organization settings for the AI Assistant: API key, model, effort, limits. */
-export function AgentCopilotSettingsSection() {
+export function AgentCopilotSettingsSection({ onReady }: { onReady?: () => void } = {}) {
     const { user, loading: authLoading, getAccessToken } = useAuth();
     const [settings, setSettings] = useState<CopilotSettings | null>(null);
     const [enabled, setEnabled] = useState(true);
@@ -59,6 +59,11 @@ export function AgentCopilotSettingsSection() {
             }
         })();
     }, [authLoading, user, getAccessToken]);
+
+    const loaded = settings !== null || loadError !== null;
+    useEffect(() => {
+        if (loaded) onReady?.();
+    }, [loaded, onReady]);
 
     async function save(keyOverride?: string) {
         setSaving(true);

@@ -11,6 +11,9 @@ import { client } from '@/client/client.gen';
 import { resolveBrowserBackendUrl } from '@/lib/apiClient';
 import { detailFromError } from '@/lib/apiError';
 
+/** Where the AI Assistant's API key, model and limits are set. */
+export const AI_ASSISTANT_SETTINGS_HREF = '/model-configurations#ai-assistant';
+
 export type CopilotEvent =
     | { type: 'conversation'; conversation_id: string }
     | { type: 'step_start' }

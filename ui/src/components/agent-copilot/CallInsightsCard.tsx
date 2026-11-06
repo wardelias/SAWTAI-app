@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
+    AI_ASSISTANT_SETTINGS_HREF,
     type CallInsightIssue,
     type CallInsightsReport,
     fetchCallInsights,
@@ -206,7 +207,7 @@ export function CallInsightsCard() {
                             Add an Anthropic API key to let AI review your calls.
                         </span>
                         <Button asChild size="sm" variant="outline">
-                            <Link href="/settings#ai-assistant">Open AI Assistant settings</Link>
+                            <Link href={AI_ASSISTANT_SETTINGS_HREF}>Open AI Assistant settings</Link>
                         </Button>
                     </div>
                 ) : running ? (

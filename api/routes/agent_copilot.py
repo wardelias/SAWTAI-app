@@ -293,7 +293,7 @@ async def _require_available_settings(org_id: int):
     if settings.api_key is None:
         raise HTTPException(
             status_code=503,
-            detail="The AI assistant needs an Anthropic API key. Add one in Settings → AI Assistant.",
+            detail="The AI assistant needs an Anthropic API key. Add one in Models → AI Assistant.",
         )
     return settings
 
