@@ -38,7 +38,7 @@ export default function AgentAssistantPage() {
             ) : (
                 <p className="rounded-lg border p-4 text-sm text-muted-foreground">
                     The AI Assistant is turned off for your organization. Turn it on in{' '}
-                    <Link href="/settings#ai-assistant" className="font-medium text-primary underline">
+                    <Link href="/settings/ai-assistant" className="font-medium text-primary underline">
                         Settings → AI Assistant
                     </Link>
                     .

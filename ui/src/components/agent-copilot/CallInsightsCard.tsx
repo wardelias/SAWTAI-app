@@ -206,7 +206,7 @@ export function CallInsightsCard() {
                             Add an Anthropic API key to let AI review your calls.
                         </span>
                         <Button asChild size="sm" variant="outline">
-                            <Link href="/settings#ai-assistant">Open AI Assistant settings</Link>
+                            <Link href="/settings/ai-assistant">Open AI Assistant settings</Link>
                         </Button>
                     </div>
                 ) : running ? (

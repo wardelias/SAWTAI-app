@@ -134,6 +134,11 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         icon: Brain,
       },
       {
+        title: "AI Assistant",
+        url: "/settings/ai-assistant",
+        icon: Sparkles,
+      },
+      {
         title: "Telephony",
         url: "/telephony-configurations",
         icon: Phone,

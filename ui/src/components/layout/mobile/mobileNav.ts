@@ -27,6 +27,7 @@ export function getMobileSectionTitle(pathname: string): string {
     if (segments[0] === "workflow" && segments[2] === "runs") return "Agent runs";
     if (segments[0] === "workflow" && segments[2] === "run") return "Call";
     if (segments[0] === "workflow" && segments[2] === "settings") return "Agent settings";
+    if (segments[0] === "settings" && segments[1] === "ai-assistant") return "AI Assistant";
     return SECTION_TITLES[segments[0] ?? ""] ?? "SawtAI";
 }
 

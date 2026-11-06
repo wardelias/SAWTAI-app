@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, CreditCard, LogOut, Moon, Settings, Sun, User } from "lucide-react";
+import { ChevronLeft, CreditCard, LogOut, Moon, Settings, Sparkles, Sun, User } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -78,6 +78,10 @@ function AccountMenu() {
                         Account settings
                     </DropdownMenuItem>
                 )}
+                <DropdownMenuItem className="h-10" onClick={() => router.push("/settings/ai-assistant")}>
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    AI Assistant
+                </DropdownMenuItem>
                 <DropdownMenuItem className="h-10" onClick={() => router.push("/settings")}>
                     <Settings className="mr-2 h-4 w-4" />
                     Platform settings

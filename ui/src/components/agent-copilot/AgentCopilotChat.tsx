@@ -35,6 +35,7 @@ import {
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
+import { ApiKeyQuickSetup } from './ApiKeyQuickSetup';
 import { applyCopilotEvent, type AssistantPart, type ChatMessage, toolLabel } from './transcript';
 
 export interface WorkflowChange {
@@ -333,7 +334,7 @@ export function useCopilotStatus(): CopilotStatus | null {
     return status;
 }
 
-function SetupRequired() {
+function SetupRequired({ onKeySaved }: { onKeySaved: () => void }) {
     return (
         <div className="flex min-h-full flex-col items-center justify-center gap-4 py-6 text-center">
             <div className="grid h-12 w-12 place-items-center rounded-2xl bg-violet-500/15 text-violet-400">
@@ -342,14 +343,15 @@ function SetupRequired() {
             <div className="space-y-1">
                 <h3 className="text-base font-semibold">Add an API key to get started</h3>
                 <p className="mx-auto max-w-xs text-sm text-muted-foreground">
-                    The AI Assistant runs on Claude. Add your organization&apos;s Anthropic API key in
-                    Settings to start building agents in chat.
+                    The AI Assistant runs on Claude. Paste your organization&apos;s Anthropic API key
+                    to start building agents in chat.
                 </p>
             </div>
-            <Button asChild className="gap-2 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white hover:opacity-90">
-                <Link href="/settings#ai-assistant">
-                    <Settings className="h-4 w-4" />
-                    Open AI Assistant settings
+            <ApiKeyQuickSetup onSaved={onKeySaved} />
+            <Button asChild variant="ghost" size="sm" className="gap-2 text-xs text-muted-foreground">
+                <Link href="/settings/ai-assistant">
+                    <Settings className="h-3.5 w-3.5" />
+                    Model and limit settings
                 </Link>
             </Button>
         </div>
@@ -370,7 +372,9 @@ export function AgentCopilotChat({
 }: AgentCopilotChatProps) {
     const { user, loading: authLoading, getAccessToken } = useAuth();
     const status = useCopilotStatus();
-    const needsSetup = status !== null && !status.configured;
+    // Set once a key is added from the chat, so it opens without a reload.
+    const [keySaved, setKeySaved] = useState(false);
+    const needsSetup = status !== null && !status.configured && !keySaved;
     const [conversationId, setConversationId] = useState<string | null>(null);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [restoring, setRestoring] = useState(true);
@@ -536,7 +540,7 @@ export function AgentCopilotChat({
             {/* Conversation */}
             <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 text-sm">
                 {needsSetup ? (
-                    <SetupRequired />
+                    <SetupRequired onKeySaved={() => setKeySaved(true)} />
                 ) : restoring ? (
                     <div className="flex h-full items-center justify-center">
                         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
