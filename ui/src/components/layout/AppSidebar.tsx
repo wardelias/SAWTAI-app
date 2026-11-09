@@ -13,7 +13,6 @@ import {
   CreditCard,
   Database,
   FileText,
-  HelpCircle,
   Home,
   Key,
   LogOut,
@@ -639,37 +638,19 @@ export function AppSidebar() {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {/* Help | Updates */}
+            {/* Settings | theme */}
             <div className="flex items-center justify-around gap-1 pt-1 text-xs text-muted-foreground">
-              <a
-                href="https://docs.dograh.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 transition-colors hover:bg-sidebar-accent/70 hover:text-foreground"
-              >
-                <HelpCircle className="h-3.5 w-3.5" />
-                Help
-              </a>
-              <span aria-hidden className="h-4 w-px bg-sidebar-border/60" />
-              <a
-                href={
-                  latestRelease
-                    ? "https://github.com/dograh/dograh/releases"
-                    : "https://docs.dograh.com"
-                }
-                target="_blank"
-                rel="noopener noreferrer"
-                className="relative inline-flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 transition-colors hover:bg-sidebar-accent/70 hover:text-foreground"
-              >
-                <Megaphone className="h-3.5 w-3.5" />
-                Updates
-                {isBehind && (
-                  <span
-                    aria-label="Update available"
-                    className="ml-0.5 h-1.5 w-1.5 rounded-full bg-foreground"
-                  />
+              <Link
+                href="/settings"
+                aria-current={pathname.startsWith("/settings") ? "page" : undefined}
+                className={cn(
+                  "inline-flex flex-[2] items-center justify-center gap-1.5 rounded-md py-1 transition-colors hover:bg-sidebar-accent/70 hover:text-foreground",
+                  pathname.startsWith("/settings") && "bg-sidebar-accent/70 font-medium text-foreground"
                 )}
-              </a>
+              >
+                <Settings className="h-3.5 w-3.5" />
+                Settings
+              </Link>
               <span aria-hidden className="h-4 w-px bg-sidebar-border/60" />
               <div className="flex flex-1 items-center justify-center">
                 <ThemeToggle showLabel={false} className="h-7 w-7" />
