@@ -282,7 +282,7 @@ OSS_JWT_EXPIRY_HOURS = int(os.getenv("OSS_JWT_EXPIRY_HOURS", "720"))  # 30 days
 TUNER_BASE_URL = os.getenv("TUNER_BASE_URL", "https://api.usetuner.ai")
 
 # Meta (Facebook) Lead Ads / Instant Form ingestion
-META_GRAPH_API_VERSION = os.getenv("META_GRAPH_API_VERSION", "v21.0")
+META_GRAPH_API_VERSION = os.getenv("META_GRAPH_API_VERSION", "v26.0")
 META_GRAPH_API_BASE_URL = os.getenv(
     "META_GRAPH_API_BASE_URL", "https://graph.facebook.com"
 )
