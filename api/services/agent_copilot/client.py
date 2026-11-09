@@ -45,7 +45,7 @@ def api_error_message(e: anthropic.APIError, model: str | None = None) -> str:
     """
     detail = api_error_detail(e)
     if isinstance(e, anthropic.AuthenticationError):
-        return "Anthropic rejected the API key. Check it in Settings → AI Assistant."
+        return "Anthropic rejected the API key. Check it in Models → AI Assistant."
     if isinstance(e, anthropic.PermissionDeniedError):
         return "This API key isn't allowed to make this request" + (
             f": {detail}" if detail else "."
@@ -53,7 +53,7 @@ def api_error_message(e: anthropic.APIError, model: str | None = None) -> str:
     if isinstance(e, anthropic.NotFoundError):
         return (
             f"{model or 'The selected model'} isn't available for this API key. "
-            "Choose another model in Settings → AI Assistant."
+            "Choose another model in Models → AI Assistant."
         )
     if isinstance(e, anthropic.RateLimitError):
         return "The assistant is busy right now (rate limit). Please try again in a minute."

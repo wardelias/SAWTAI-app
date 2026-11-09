@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 
 import { AgentCopilotChat, useCopilotStatus } from '@/components/agent-copilot/AgentCopilotChat';
 import SpinLoader from '@/components/SpinLoader';
+import { AI_ASSISTANT_SETTINGS_HREF } from '@/lib/agentCopilot';
 import { useAuth } from '@/lib/auth';
 
 export default function AgentAssistantPage() {
@@ -38,8 +39,8 @@ export default function AgentAssistantPage() {
             ) : (
                 <p className="rounded-lg border p-4 text-sm text-muted-foreground">
                     The AI Assistant is turned off for your organization. Turn it on in{' '}
-                    <Link href="/settings#ai-assistant" className="font-medium text-primary underline">
-                        Settings → AI Assistant
+                    <Link href={AI_ASSISTANT_SETTINGS_HREF} className="font-medium text-primary underline">
+                        Models → AI Assistant
                     </Link>
                     .
                 </p>

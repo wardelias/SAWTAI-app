@@ -1,11 +1,12 @@
 "use client";
 
-import { ExternalLink, Sparkles } from "lucide-react";
+import { ExternalLink, KeyRound, Sparkles } from "lucide-react";
+import Link from "next/link";
 
-import { AgentCopilotSettingsSection } from "@/components/agent-copilot/AgentCopilotSettingsSection";
 import { MCPSection } from "@/components/MCPSection";
 import { OrganizationPreferencesSection } from "@/components/OrganizationPreferencesSection";
 import { TelemetrySection } from "@/components/TelemetrySection";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -13,6 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { AI_ASSISTANT_SETTINGS_HREF } from "@/lib/agentCopilot";
 
 export default function SettingsPage() {
   return (
@@ -38,7 +40,7 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        <Card id="ai-assistant" className="scroll-mt-6">
+        <Card id="ai-assistant" className="scroll-mt-20">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <span className="grid h-7 w-7 place-items-center rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500">
@@ -47,12 +49,17 @@ export default function SettingsPage() {
               AI Assistant
             </CardTitle>
             <CardDescription>
-              The chat that creates and edits your voice agents. Bring your own
-              Anthropic API key and choose the model and limits.
+              The Anthropic API key, model and limits for the AI Assistant are
+              now set on the Models page, next to your voice agent models.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <AgentCopilotSettingsSection />
+            <Button asChild variant="outline" className="gap-2">
+              <Link href={AI_ASSISTANT_SETTINGS_HREF}>
+                <KeyRound className="h-4 w-4" />
+                Open Models → AI Assistant
+              </Link>
+            </Button>
           </CardContent>
         </Card>
 

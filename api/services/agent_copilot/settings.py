@@ -1,7 +1,7 @@
 """Per-organization AI assistant settings.
 
 An organization can bring its own Anthropic API key and choose the model,
-effort, and a daily message limit from the Settings page. Without its own
+effort, and a daily message limit on the Models page. Without its own
 key it falls back to the platform key (``ANTHROPIC_API_KEY``), and then
 the platform's daily limit always applies so one tenant can't run up the
 platform's bill. Stored like other org secrets (Langfuse, model keys) in

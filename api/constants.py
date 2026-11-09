@@ -80,7 +80,7 @@ MPS_API_URL = os.getenv("MPS_API_URL", "https://services.dograh.com")
 DOGRAH_DEVOPS_SECRET = os.getenv("DOGRAH_DEVOPS_SECRET") or None
 
 # In-app agent copilot (chat that builds and edits agents). Organizations can
-# add their own Anthropic key, model, effort, and limit in Settings → AI
+# add their own Anthropic key, model, effort, and limit in Models → AI
 # Assistant; these values are the platform-wide fallback and defaults
 # (ANTHROPIC_API_KEY may be left unset). Supported models:
 # claude-opus-5-5 (default, best agent-building quality) and claude-sonnet-5-5
